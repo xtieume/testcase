@@ -68,7 +68,8 @@ stated value, write the proposed edit into the report and stop.
 2. If the documents are not in version control, say so explicitly and list the files you are
    about to change before changing them.
 
-Do not commit. The user commits, unless they asked otherwise.
+Do not commit. The user commits, unless they asked otherwise. If they do ask you to commit,
+stage only the documents you edited — never the review report, which is a working artifact.
 
 ## After editing
 

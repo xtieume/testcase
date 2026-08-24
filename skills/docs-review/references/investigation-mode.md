@@ -57,11 +57,13 @@ Lead with the direct answer to the original question, then the sub-question tabl
 `## What the documents do not say` — the `Absent` and `Conflicting` rows collected together.
 That section is the deliverable the user cannot get from reading the docs themselves.
 
-Write it to a file (`docs-review.md` unless the user names one), not only to chat, and match
-the language of the question unless the user asks otherwise.
+Write it to `.testcases/docs-review/docs-review.md` (unless the user names a path), not only to
+chat, and match the language of the question unless the user asks otherwise. Same rule as Mode A:
+the report is a working artifact — the directory is excluded via `.git/info/exclude` and the
+report is never committed.
 
 Then lint it:
 
 ```bash
-python3 scripts/check_report.py docs-review.md --mode b
+python3 scripts/check_report.py .testcases/docs-review/docs-review.md --mode b
 ```

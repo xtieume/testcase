@@ -18,7 +18,9 @@ subagents (roughly 10 documents each) and have each return one row per document:
 * **Values asserted** — every number, limit, threshold, state name, role name, time, format,
   and ID pattern the document states. Copy them verbatim with their section.
 
-Write the map to `docs-index.md`. It is an input to every later step and to the conflict sweep.
+Write the map to `.testcases/docs-review/docs-index.md` — a working artifact like the report:
+never in the docs tree, never committed. It is an input to every later step and to the conflict
+sweep.
 
 **Why this comes first:** a requirement written as "second approver" in the spec and
 "dual sign-off" in the manual is invisible to a spec-term grep. Without the index, that
@@ -48,7 +50,8 @@ unchanged), then dispatch one subagent per shard. Each shard subagent gets:
 Each shard returns two things:
 
 1. Its verdict rows, in the standard `SKILL.md` step 3 format, written to its own file
-   (`shard-<chapter>.md`). Never have shards edit one shared table.
+   (`.testcases/docs-review/shard-<chapter>.md`, alongside the index). Never have shards edit
+   one shared table.
 2. A **coverage declaration**:
 
    | Doc ID | Read | What was read |

@@ -49,7 +49,7 @@ Before reading closely, list every document in scope:
 Say explicitly what you could **not** access (missing file, external link, image-only PDF).
 An unread document is a hole in the audit, and hiding it makes the report worse than useless.
 
-**Check for a previous report** (`docs-review.md` or the file the user names) in the same step.
+**Check for a previous report** (`.testcases/docs-review/*.md`, or the file the user names) in the same step.
 If one exists, load its `Req ID`s — they are permanent and this is the only moment you can
 preserve them.
 
@@ -175,7 +175,7 @@ report again.
 Do not check the table by hand.
 
 ```bash
-python3 scripts/check_report.py docs-review.md
+python3 scripts/check_report.py .testcases/docs-review/docs-review.md
 ```
 
 Fix everything it reports (duplicate IDs, invalid verdicts, missing citations, empty quotes),
@@ -190,7 +190,24 @@ Give the user, in this order:
 3. **Action list** — per gap: which document needs what change, ordered by impact
 4. **`## Open Questions`** — every `Undecided`, and every assumption you had to make
 
-Write it to a file (`docs-review.md` unless the user names one), not only to chat.
+**The report is a working artifact, not a project document.** It exists to fix the real docs and
+is stale the moment they change. Never write it into the docs tree under audit, never `git add`
+or commit it.
+
+Everything this skill writes goes under `.testcases/docs-review/` at the repo root — one excluded
+root, one subdirectory per skill. Create it and exclude it locally:
+
+```bash
+root=$(git rev-parse --show-toplevel) && gitdir=$(git rev-parse --git-dir)
+mkdir -p "$root/.testcases/docs-review"
+grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
+  || echo '/.testcases/' >> "$gitdir/info/exclude"
+```
+
+`.git/info/exclude` is local-only — it leaves the project's `.gitignore` untouched, so the
+exclusion produces no diff. Not a git repo, or the commands fail: just create the directory and
+say the report is untracked-by-convention. If the user names a path themselves, use theirs and
+say once whether it is excluded.
 
 **Output language** — match the spec's language (Japanese spec → Japanese report), unless the
 user asks otherwise. Same rule in Mode B, keyed to the question's language.

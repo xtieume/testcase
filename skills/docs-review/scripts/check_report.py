@@ -10,18 +10,65 @@ NO_EVIDENCE_NEEDED = {"Missing", "Undecided", "Absent"}
 ID_RE = re.compile(r"^(REQ|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
 
 
+VERDICT_HEADERS = {"verdict", "answer", "confidence"}
+
+
 def rows(path):
+    """Yield (line number, cells) for data rows of tables that have a verdict column.
+
+    The report also contains the requirement checklist and the round log, whose rows carry
+    IDs but no verdict. Linting those reports every checklist row as a duplicate with a
+    missing verdict, so tables are selected by their header.
+    """
+    header = None
     for n, line in enumerate(open(path, encoding="utf-8"), 1):
         line = line.strip()
-        if not line.startswith("|") or set(line) <= set("|- :"):
+        if not line.startswith("|"):
+            header = None
+            continue
+        if set(line) <= set("|- :"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
-        yield n, cells
+        if header is None:
+            header = {c.lower() for c in cells}
+            continue
+        if header & VERDICT_HEADERS:
+            yield n, cells
 
 
-def main():
-    path = sys.argv[1]
-    verdicts = VERDICTS_B if "--mode" in sys.argv and "b" in sys.argv[-1].lower() else VERDICTS_A
+def selfcheck():
+    import tempfile
+
+    report = """## Requirement checklist
+
+| Req ID | Requirement | Dimension | Source |
+| ------ | ----------- | --------- | ------ |
+| REQ-A-001 | first | Behavior | spec |
+| REQ-A-002 | second | Behavior | spec |
+
+## Traceability
+
+| Req ID | Requirement | Verdict | Evidence | Quote |
+| ------ | ----------- | ------- | -------- | ----- |
+| REQ-A-001 | first | Covered | D1:1 | "x" |
+| REQ-A-002 | second | Missing | searched: x, y |
+
+## Source inventory
+## Round findings
+## Round log
+"""
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(report)
+    assert lint(f.name)[0] == [], lint(f.name)[0]
+
+    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        f.write(report.replace("| REQ-A-002 | second | Missing | searched: x, y |",
+                               "| REQ-A-002 | second | Missing | |"))
+    assert any("without the search terms" in p for p in lint(f.name)[0]), "search-term check did not fire"
+    print("selfcheck ok")
+
+
+def lint(path, verdicts=VERDICTS_A):
     problems, seen, counts = [], Counter(), Counter()
 
     for n, cells in rows(path):
@@ -52,6 +99,17 @@ def main():
         problems.append(f"{path}: no source inventory — which documents were read, and which were not?")
     if re.search(r"\bshard|not-accessed\b", text, re.I) and "coverage" not in text.lower():
         problems.append(f"{path}: sharded audit with no coverage declaration")
+
+    return problems, counts
+
+
+def main():
+    if "--selfcheck" in sys.argv:
+        selfcheck()
+        return 0
+    path = sys.argv[1]
+    verdicts = VERDICTS_B if "--mode" in sys.argv and "b" in sys.argv[-1].lower() else VERDICTS_A
+    problems, counts = lint(path, verdicts)
 
     print(f"{sum(counts.values())} rows: " + ", ".join(f"{v}={c}" for v, c in counts.most_common()))
     for p in problems:

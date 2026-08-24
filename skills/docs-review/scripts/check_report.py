@@ -37,34 +37,98 @@ def rows(path):
 
 
 def selfcheck():
+    """Every problem the linter can report, plus the clean case, checked against a report
+    written in the exact format SKILL.md prescribes."""
+    import os
     import tempfile
 
-    report = """## Requirement checklist
+    report = """## Source inventory
+
+| Doc ID | Path | What it is |
+| ------ | ---- | ---------- |
+| D1 | a.md | a document |
+
+## Requirement checklist
 
 | Req ID | Requirement | Dimension | Source |
 | ------ | ----------- | --------- | ------ |
 | REQ-A-001 | first | Behavior | spec |
 | REQ-A-002 | second | Behavior | spec |
+| REQ-A-003 | third | Behavior | spec |
 
 ## Traceability
 
 | Req ID | Requirement | Verdict | Evidence | Quote |
 | ------ | ----------- | ------- | -------- | ----- |
 | REQ-A-001 | first | Covered | D1:1 | "x" |
-| REQ-A-002 | second | Missing | searched: x, y |
+| REQ-A-002 | second | Missing | searched: x, y | |
+| REQ-A-003 | third | Undecided | | |
 
-## Source inventory
 ## Round findings
-## Round log
-"""
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-        f.write(report)
-    assert lint(f.name)[0] == [], lint(f.name)[0]
 
-    with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
-        f.write(report.replace("| REQ-A-002 | second | Missing | searched: x, y |",
-                               "| REQ-A-002 | second | Missing | |"))
-    assert any("without the search terms" in p for p in lint(f.name)[0]), "search-term check did not fire"
+## Round log
+
+| Round | New rows | Verdict changes | Citations rejected | Nits |
+| ----- | -------- | --------------- | ------------------ | ---- |
+| 1 | 0 | 0 | 0 | 0 |
+"""
+
+    def run(text, verdicts=VERDICTS_A):
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+            f.write(text)
+        try:
+            return lint(f.name, verdicts)
+        finally:
+            os.unlink(f.name)
+
+    def fires(text, needle, case):
+        problems, _ = run(text)
+        assert any(needle in p for p in problems), f"{case}: expected {needle!r}, got {problems}"
+
+    problems, counts = run(report)
+    assert problems == [], f"clean report should lint clean, got {problems}"
+    assert counts == Counter({"Covered": 1, "Missing": 1, "Undecided": 1}), counts
+
+    # The checklist and the round log carry IDs and numbers but no verdict column.
+    # Counting their rows is the bug this header selection exists to prevent.
+    assert sum(counts.values()) == 3, "non-verdict tables were linted"
+
+    fires(report.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
+                         "| REQ-A-001 | first | Coverd | D1:1 | \"x\" |"),
+          "has no valid verdict", "typo in verdict")
+    fires(report.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
+                         "| REQ-A-001 | first | Covered | | |"),
+          "with no evidence or quote", "Covered without a citation")
+    fires(report.replace("| REQ-A-002 | second | Missing | searched: x, y | |",
+                         "| REQ-A-002 | second | Missing | | |"),
+          "without the search terms", "Missing without search terms")
+    fires(report.replace("| REQ-A-003 | third | Undecided | | |",
+                         "| REQ-A-001 | third | Undecided | | |"),
+          "duplicate ID REQ-A-001", "duplicate ID")
+    fires(report.replace("## Round findings", "## Nothing"), "no '## Round findings'", "no round findings")
+    fires(report.replace("## Round log", "## Nothing"), "no '## Round log'", "no round log")
+    fires(report.replace("## Source inventory", "## Nothing"), "no source inventory", "no inventory")
+    fires("# empty\n", "no verdict rows found", "no table at all")
+    fires(report + "\nThis audit was sharded across subagents.\n",
+          "sharded audit with no coverage declaration", "shard without coverage")
+
+    # Undecided needs neither citation nor search terms; Missing needs search terms only.
+    problems, _ = run(report.replace("| REQ-A-003 | third | Undecided | | |",
+                                     "| REQ-A-003 | third | Undecided | | |"))
+    assert problems == [], problems
+
+    mode_b = report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
+                            "| Q ID | Sub-question | Answer | Evidence | Quote |")
+    mode_b = mode_b.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
+                            "| Q-1 | first | Stated | D1:1 | \"x\" |")
+    mode_b = mode_b.replace("| REQ-A-002 | second | Missing | searched: x, y | |",
+                            "| Q-2 | second | Absent | searched: x, y | |")
+    mode_b = mode_b.replace("| REQ-A-003 | third | Undecided | | |",
+                            "| Q-3 | third | Inferred | D1:2 | \"y\" |")
+    problems, counts = run(mode_b, VERDICTS_B)
+    assert problems == [], f"clean mode B report should lint clean, got {problems}"
+    assert sum(counts.values()) == 3, counts
+
     print("selfcheck ok")
 
 

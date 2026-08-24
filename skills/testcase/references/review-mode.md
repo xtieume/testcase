@@ -42,7 +42,8 @@ Findings table:
 | -- | ------- | ------- | ------------- |
 
 Then the missing cases, as new proposed cases in the standard generation format from
-`SKILL.md`. Number them continuing from the highest existing ID — do not renumber the
+`SKILL.md`. The findings file is a working artifact — write it to `.testcases/testcase/` excluded via
+`.git/info/exclude`, never into the project's docs tree and never committed. Number them continuing from the highest existing ID — do not renumber the
 user's cases.
 
 **5. Leave good cases alone.**

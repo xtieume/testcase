@@ -4,7 +4,7 @@
 Counting rows by hand is the step a model gets wrong, so it is done here instead.
 
     python3 summarize.py testcases.md
-    python3 summarize.py testcases.md --csv out.csv
+    python3 summarize.py testcases.md --csv .testcases/testcase/out.csv
     python3 summarize.py --selfcheck
 """
 

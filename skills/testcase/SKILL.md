@@ -49,7 +49,27 @@ Output of this step is analysis, not test cases: which dimensions carry real ris
 
 ### 3. Generate pass-1 test cases
 
-Write them to a file (`testcases.md` unless the user names one) using this table:
+Write them to `testcases.md` at the repo root, unless the user names a path, using this table:
+
+**The test cases are a deliverable — they belong in the repo.** They are the point of running
+this skill, so they are committed like any other project document. Everything else the skill
+produces is a working artifact and goes under `.testcases/testcase/`: the CSV export
+(regenerable from the table) and review-mode findings. Never `git add` or commit those, and never
+write them into the project's docs tree:
+
+```bash
+root=$(git rev-parse --show-toplevel) && gitdir=$(git rev-parse --git-dir)
+mkdir -p "$root/.testcases/testcase"
+grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
+  || echo '/.testcases/' >> "$gitdir/info/exclude"
+```
+
+`.git/info/exclude` is local-only, so the project's `.gitignore` stays untouched and the
+exclusion produces no diff. Not a git repo, or the commands fail: create the directory anyway and
+say the output is untracked-by-convention.
+
+The coverage map from step 2 is analysis, not a file — keep it in the reply. Persist it only if
+the user asks, and then to `.testcases/testcase/coverage-map.md`.
 
 | ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Priority |
 | -- | --- | -------- | --------- | ------------- | ----- | --------------- | -------- |
@@ -115,8 +135,8 @@ Never claim "all cases are covered." Absolute completeness cannot be guaranteed.
 Do not count rows by hand.
 
 ```bash
-python3 scripts/summarize.py testcases.md            # counts + lint findings
-python3 scripts/summarize.py testcases.md --csv out.csv   # export for TestRail/Excel
+python3 scripts/summarize.py testcases.md                                 # counts + lint findings
+python3 scripts/summarize.py testcases.md --csv .testcases/testcase/out.csv   # export for TestRail/Excel
 ```
 
 Fix every problem it reports (duplicate IDs, empty expected results, invalid priority/category, vague steps), then re-run until clean.

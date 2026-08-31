@@ -104,13 +104,23 @@ def get(row, idx):
     return row[idx] if idx is not None and idx < len(row) else ""
 
 
-def is_obsolete(row):
-    return OBSOLETE in " ".join(row)
+def is_obsolete(headers, row):
+    """The marker counts only in the ID or Test Case cell. Anywhere else it is
+    content — an expected result may legitimately quote the word."""
+    for idx in (col(headers, "id"), col(headers, "test case")):
+        if OBSOLETE in get(row, idx):
+            return True
+    return False
 
 
-def live_rows(rows):
+def live_rows(headers, rows):
     """Rows still in force. Obsolete cases stay in the file but are not counted."""
-    return [r for r in rows if not is_obsolete(r)]
+    return [r for r in rows if not is_obsolete(headers, r)]
+
+
+def norm(key):
+    """Comparison form for Req values, requirement-list IDs and coverage-ok keys."""
+    return key.strip().casefold()
 
 
 def suppressions(text):
@@ -118,7 +128,7 @@ def suppressions(text):
     found, problems = {}, []
     for m in SUPPRESS_RE.finditer(text):
         parts = SUPPRESS_SPLIT.split(m.group("body").strip(), maxsplit=1)
-        key = parts[0].strip()
+        key = re.sub(r"[\s—–-]+$", "", parts[0].strip())
         reason = parts[1].strip() if len(parts) > 1 else ""
         if not key:
             problems.append("coverage-ok comment with no key")
@@ -154,7 +164,7 @@ def lint(headers, rows):
         tc_id = get(row, i_id) or f"row {n}"
         if not get(row, i_id):
             problems.append(f"row {n}: empty ID")
-        if is_obsolete(row):
+        if is_obsolete(headers, row):
             continue
         if not get(row, i_exp):
             problems.append(f"{tc_id}: empty Expected Result")
@@ -187,33 +197,35 @@ def coverage(headers, rows, suppressed):
     problems, notes = [], []
     i_cat = col(headers, "category")
     i_req = col(headers, "req", "requirement")
-    live = live_rows(rows)
+    live = live_rows(headers, rows)
+
+    sup = {norm(k): (k, v) for k, v in suppressed.items()}
 
     if len(live) >= RATIO_MIN_ROWS:
         pos = sum(1 for r in live if get(r, i_cat) == "Positive")
         share = pos / len(live)
         over = share > POSITIVE_SHARE_LIMIT
-        if over and "positive-ratio" not in suppressed:
+        if over and "positive-ratio" not in sup:
             problems.append(
                 f"happy-path heavy: {pos}/{len(live)} live cases are Positive "
                 f"({share:.0%} > {POSITIVE_SHARE_LIMIT:.0%}) — add risk cases, or accept it with "
                 "<!-- coverage-ok: positive-ratio — reason -->")
         elif over:
-            notes.append(f"Positive share {share:.0%} accepted: {suppressed['positive-ratio']}")
+            notes.append(f"Positive share {share:.0%} accepted: {sup['positive-ratio'][1]}")
         else:
             notes.append(f"Positive share: {share:.0%} of {len(live)} live cases")
 
     by_req = {}
     for row in live:
         req = get(row, i_req)
-        if req and req.upper() != "REG":
-            by_req.setdefault(req, set()).add(get(row, i_cat))
+        if req and norm(req) != "reg":
+            by_req.setdefault(norm(req), (req, set()))[1].add(get(row, i_cat))
 
-    for req, cats in by_req.items():
+    for key, (req, cats) in by_req.items():
         if cats & RISK_CATEGORIES:
             continue
-        if req in suppressed:
-            notes.append(f"{req} success-path only, accepted: {suppressed[req]}")
+        if key in sup:
+            notes.append(f"{req} success-path only, accepted: {sup[key][1]}")
             continue
         have = "/".join(sorted(c for c in cats if c)) or "uncategorized"
         problems.append(
@@ -221,25 +233,29 @@ def coverage(headers, rows, suppressed):
             f"Negative/Boundary/Validation/Error/Permission case, or accept it with "
             f"<!-- coverage-ok: {req} — reason -->")
 
-    for key in suppressed:
+    for key, (orig, _) in sup.items():
         if key == "positive-ratio":
             continue
         if key not in by_req:
-            problems.append(f"stale coverage-ok: {key} has no live case, remove the comment")
-        elif by_req[key] & RISK_CATEGORIES:
-            problems.append(f"stale coverage-ok: {key} now has risk cases, remove the comment")
+            problems.append(f"stale coverage-ok: {orig} has no live case, remove the comment")
+        elif by_req[key][1] & RISK_CATEGORIES:
+            problems.append(f"stale coverage-ok: {orig} now has risk cases, remove the comment")
 
     return problems, notes
 
 
 def read_requirements(path):
-    """Requirement IDs, one per line. '#' comments and 'ID: description' both fine."""
-    ids = []
+    """Requirement IDs, one per line. '#' comments and 'ID: description' both fine.
+    Duplicates keep their first occurrence."""
+    ids, seen = [], set()
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
-                ids.append(re.split(r"[:\s]", line, maxsplit=1)[0])
+                rid = re.split(r"[:\s]", line, maxsplit=1)[0]
+                if norm(rid) not in seen:
+                    seen.add(norm(rid))
+                    ids.append(rid)
     return ids
 
 
@@ -250,17 +266,19 @@ def requirement_coverage(headers, rows, req_ids):
     requirement nothing traces to is the gap a second pass over the table cannot see.
     """
     i_req = col(headers, "req", "requirement")
-    counts = Counter(get(r, i_req) for r in live_rows(rows))
+    counts = Counter(norm(get(r, i_req)) for r in live_rows(headers, rows))
+    listed = {norm(r) for r in req_ids}
 
     problems, out = [], ["## Requirement Coverage", ""]
     for rid in req_ids:
-        n = counts.get(rid, 0)
+        n = counts.get(norm(rid), 0)
         out.append(f"{rid}: {n} case(s)" if n else f"{rid}: 0  <- no test case traces here")
         if not n:
             problems.append(f"requirement {rid}: no test case traces to it")
 
-    for req in sorted(r for r in counts if r and r.upper() != "REG" and r not in req_ids):
-        problems.append(f"Req {req!r} is not in the requirement list — typo, or the list is stale")
+    originals = {norm(get(r, i_req)): get(r, i_req) for r in live_rows(headers, rows) if get(r, i_req)}
+    for key in sorted(k for k in counts if k and k != "reg" and k not in listed):
+        problems.append(f"Req {originals[key]!r} is not in the requirement list — typo, or the list is stale")
 
     return problems, "\n".join(out)
 
@@ -280,13 +298,15 @@ def diff_tables(old_text, new_text):
     added = [k for k in new if k not in old]
     removed = [k for k in old if k not in new]
 
+    new_cols = [h for h in n_head if col(o_head, h.lower()) is None]
     obsoleted, changed = [], []
     for tc_id in (k for k in new if k in old):
         fields = [h for h in n_head
-                  if get(old[tc_id], col(o_head, h.lower())) != get(new[tc_id], col(n_head, h.lower()))]
+                  if col(o_head, h.lower()) is not None
+                  and get(old[tc_id], col(o_head, h.lower())) != get(new[tc_id], col(n_head, h.lower()))]
         if not fields:
             continue
-        if is_obsolete(new[tc_id]) and not is_obsolete(old[tc_id]):
+        if is_obsolete(n_head, new[tc_id]) and not is_obsolete(o_head, old[tc_id]):
             obsoleted.append(tc_id)
         else:
             changed.append((tc_id, fields))
@@ -294,6 +314,8 @@ def diff_tables(old_text, new_text):
     out = ["## Diff", "",
            f"added: {len(added)}   changed: {len(changed)}   "
            f"marked obsolete: {len(obsoleted)}   deleted: {len(removed)}", ""]
+    for h in new_cols:
+        out.append(f"new column: {h} (not compared)")
     for tc_id in added:
         out.append(f"+ {tc_id}")
     for tc_id in obsoleted:
@@ -312,7 +334,7 @@ def summary(headers, rows):
     i_cat = col(headers, "category")
     i_pri = col(headers, "priority")
     i_auto = col(headers, "automatable")
-    live = live_rows(rows)
+    live = live_rows(headers, rows)
     cats = Counter(get(r, i_cat) for r in live)
     pris = Counter(get(r, i_pri) for r in live)
 
@@ -363,7 +385,7 @@ RATIO_SAMPLE = """
 ) + """| TC-B-009 | R4 | Boundary | enter `0` | rejected | P0 |
 | TC-B-010 | R4 | Positive | enter `1` | saved | P1 |
 | TC-B-011 | REG | Regression | reopen | unchanged | P2 |
-| TC-B-012 | R5 | Positive | old | saved | P2 [OBSOLETE] |
+| TC-B-012 [OBSOLETE] | R5 | Positive | old | saved | P2 |
 """
 
 
@@ -391,7 +413,7 @@ def selfcheck():
 
     # Ratio and per-requirement risk cover.
     r_head, r_rows = parse_table(RATIO_SAMPLE)
-    assert len(live_rows(r_rows)) == 11, r_rows
+    assert len(live_rows(r_head, r_rows)) == 11, r_rows
     assert "Obsolete, not counted: 1" in summary(r_head, r_rows)
     cov, notes = coverage(r_head, r_rows, {})
     joined = "\n".join(cov)
@@ -417,10 +439,24 @@ def selfcheck():
     found, sup_problems = suppressions(
         "<!-- coverage-ok: R7 — display only -->\n"
         "<!-- coverage-ok: R8 -->\n"
+        "<!-- coverage-ok: R9 —  -->\n"
         "<!-- coverage-ok:  -->\n")
     assert found == {"R7": "display only"}, found
     assert "coverage-ok: R8 — no reason given" in "\n".join(sup_problems), sup_problems
+    assert "coverage-ok: R9 — no reason given" in "\n".join(sup_problems), sup_problems
     assert "coverage-ok comment with no key" in "\n".join(sup_problems), sup_problems
+
+    # Case-insensitive matching: table R3 vs suppression r3, requirement list r4.
+    cov, notes = coverage(r_head, r_rows, {"positive-ratio": "why", "r3": "no invalid input"})
+    assert cov == [], cov
+    assert any("R3 success-path only, accepted" in n for n in notes), notes
+    req_problems, _ = requirement_coverage(r_head, r_rows, ["r3", "r4"])
+    assert req_problems == [], req_problems
+
+    # The marker only counts in the ID / Test Case cell, not in content.
+    quoted = SAMPLE.replace("| saved | P2 | Y |", "| error says [OBSOLETE] per spec | P2 | Y |")
+    q_head, q_rows = parse_table(quoted)
+    assert len(live_rows(q_head, q_rows)) == len(q_rows), "content mention treated as obsolete"
 
     # Two-way traceability.
     req_problems, report = requirement_coverage(r_head, r_rows, ["R3", "R4", "R6"])
@@ -444,6 +480,14 @@ def selfcheck():
     edited = SAMPLE.replace("| saved | P2 | Y |", "| saved and logged | P0 | Y |")
     report, _ = diff_tables(SAMPLE, edited)
     assert "* TC-A-004: Expected Result, Priority" in report, report
+
+    # A column OLD never had is announced once, never reported as a per-row change.
+    without_auto = "\n".join(
+        "|".join(line.split("|")[:-2]) + "|" if line.strip().startswith("|") else line
+        for line in SAMPLE.splitlines())
+    report, diff_problems = diff_tables(without_auto, SAMPLE)
+    assert "new column: Automatable (not compared)" in report, report
+    assert "* TC-" not in report and diff_problems == [], report
     assert diff_tables("nope", SAMPLE)[1] == ["--diff needs a markdown test case table in both files"]
 
     with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as f:

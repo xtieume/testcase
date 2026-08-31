@@ -78,7 +78,7 @@ the user asks, and then to `.testcases/testcase/coverage-map.md`.
 | ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Priority | Automatable |
 | -- | --- | -------- | --------- | ------------- | ----- | --------------- | -------- | ----------- |
 
-**ID** — format `TC-<area>-<3 digits>`, e.g. `TC-DROPDOWN-001`. IDs are permanent: when re-running against an updated requirement, keep existing IDs for unchanged cases, append new ones at the end, and mark removed cases `[OBSOLETE]` rather than deleting. Never renumber — downstream test tools hold these IDs.
+**ID** — format `TC-<area>-<3 digits>`, e.g. `TC-DROPDOWN-001`. IDs are permanent: when re-running against an updated requirement, keep existing IDs for unchanged cases, append new ones at the end, and mark removed cases `[OBSOLETE]` — appended to the ID or Test Case cell, where the script looks for it — rather than deleting. Never renumber — downstream test tools hold these IDs.
 
 **Req** — the requirement / ticket / spec-section ID this case traces to. Every case traces to something. A case with no requirement is either regression (mark `REG`) or a question for the requirement owner.
 

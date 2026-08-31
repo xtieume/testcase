@@ -6,12 +6,16 @@ Three Claude Code skills — `testcase` generates manual test cases, `docs-revie
 
 Generates comprehensive manual test cases and performs a mandatory missing-test-case review.
 
-It systematically analyzes: positive, negative, boundary, validation, state, permission, error, data, UI, integration, and regression scenarios — then runs a second adversarial pass **in an independent subagent** to catch missed cases before returning the result.
+It systematically analyzes: positive, negative, boundary, validation, state, permission, error, data, UI, integration, and regression scenarios — then runs a second adversarial pass **in an independent subagent** to catch missed cases before returning the result. The pass runs two reviewers per round with different lenses (trace the requirement / attack the feature) and repeats until a round adds nothing, rather than accepting one round as proof.
 
 Extras:
 
 - **Japanese i18n coverage** — 全角/半角, surrogate pairs, Unicode normalization, byte-vs-character length limits, export/search round-trips
 - **Review mode** — audit an existing test case list against the requirement, not against itself
+- **Enforced risk coverage** — the lint *fails* when the table is happy-path heavy (over 40% `Positive`) or when a requirement is covered by success-path cases only. Accepting either needs a `<!-- coverage-ok: R7 — reason -->` comment in the file; no reason, or a stale one, is itself a lint error
+- **Two-way traceability** — `--requirements reqs.txt` reports the requirements *nothing* traces to. That gap is invisible to any review of the table, because the table cannot show what was never written down
+- **Stable IDs across re-runs** — `--diff old.md new.md` reports added, changed and newly `[OBSOLETE]` cases, and fails on an ID deleted outright, which is what silently breaks the test tools holding those IDs
+- **Automation handoff** — an `Automatable` Y/N column per case, so the decision is made once during design instead of re-litigated when someone builds the suite
 - **Lint + CSV export** — a script counts the cases and flags duplicate IDs, missing expected results, invalid priorities, and vague steps
 
 ## docs-review
@@ -88,7 +92,9 @@ Test cases are written to a file, so they can be linted and exported:
 
 ```bash
 python3 skills/testcase/scripts/summarize.py testcases.md
+python3 skills/testcase/scripts/summarize.py testcases.md --requirements reqs.txt
 python3 skills/testcase/scripts/summarize.py testcases.md --csv out.csv
+python3 skills/testcase/scripts/summarize.py --diff previous.md testcases.md
 ```
 
 The CSV is UTF-8 with BOM, so Excel opens Japanese text correctly.
@@ -122,7 +128,7 @@ skills/testcase/
   references/coverage-map.md      — the coverage dimensions + worked example
   references/i18n-jp.md           — Japanese charset coverage
   references/review-mode.md       — auditing an existing test case list
-  scripts/summarize.py            — count, lint, export CSV (stdlib only)
+  scripts/summarize.py            — count, lint, requirement coverage, diff, export CSV (stdlib only)
 skills/docs-review/
   SKILL.md                        — mode selection, gap workflow, review loop, rules
   references/dimensions.md        — requirement dimensions + how to make a row atomic

@@ -55,7 +55,9 @@ needed attention.
 **6. Lint the merged list.**
 
 Run `scripts/summarize.py` on the combined file to catch duplicate IDs, invalid
-priorities, and vague steps mechanically.
+priorities, and vague steps mechanically. Add `--requirements` with the requirement IDs from
+step 2 — in review mode this is the highest-value check, because a list someone else wrote is
+exactly where a whole requirement turns out to have no case at all.
 
 ## Reporting
 

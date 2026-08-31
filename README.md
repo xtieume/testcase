@@ -2,6 +2,8 @@
 
 Three Claude Code skills. The two QA skills end with a mandatory review pass in an independent subagent.
 
+[Tiếng Việt](README.vi.md)
+
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
 | 🧪 `testcase` | Manual test cases from a requirement, then attacks its own output for missed cases | "write test cases for…" |

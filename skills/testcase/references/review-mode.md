@@ -1,27 +1,20 @@
 # Review Mode — Auditing Existing Test Cases
 
-Read this when the user hands you an existing test case list and asks to review, improve,
-or check it, instead of generating from scratch.
+Read this when the user hands you an existing test case list to review, improve, or check.
 
 ## The trap
 
-Reviewing test cases by reading the test cases finds formatting problems. It cannot find
-what is missing, because the gap is invisible from inside the list. Build the coverage map
-from the **requirement**, then map the existing cases onto it.
+Reading the test cases finds formatting problems; it cannot find what is missing — the gap is invisible from inside the list. Build the coverage map from the **requirement**, then map the cases onto it.
 
 ## Steps
 
 **1. Get the requirement.**
 
-If the user did not provide it, ask. Say plainly why: without the requirement you can only
-check wording, not coverage. Do not proceed on the assumption that the existing cases
-describe the requirement — that assumption is what lets a whole missing dimension survive
-the review.
+Not provided → ask, saying why: without it you can only check wording, not coverage. Never assume the existing cases describe the requirement — that assumption is what lets a missing dimension survive review.
 
 **2. Build the coverage map from the requirement.**
 
-Follow `coverage-map.md` (and `i18n-jp.md` if applicable) exactly as in generation mode.
-Do this before reading the existing cases closely.
+Follow `coverage-map.md` (+ `i18n-jp.md` if applicable) as in generation mode, before reading the existing cases closely.
 
 **3. Map each existing case onto the map.**
 
@@ -41,27 +34,19 @@ Findings table:
 | ID | Verdict | Problem | Suggested fix |
 | -- | ------- | ------- | ------------- |
 
-Then the missing cases, as new proposed cases in the standard generation format from
-`SKILL.md`. The findings file is a working artifact — write it to `.testcases/testcase/` excluded via
-`.git/info/exclude`, never into the project's docs tree and never committed. Number them continuing from the highest existing ID — do not renumber the
-user's cases.
+Then the missing cases, in the standard generation format from `SKILL.md`, numbered from the highest existing ID — never renumber the user's cases. The findings file is a working artifact: write it to `.testcases/testcase/` (excluded via `.git/info/exclude`), never into the docs tree, never committed.
 
 **5. Leave good cases alone.**
 
-Do not rewrite a case that is already fine. A review that touches everything is
-indistinguishable from a rewrite, and the user loses the ability to see what actually
-needed attention.
+Do not rewrite a case that is fine. A review touching everything is indistinguishable from a rewrite — the user loses sight of what actually needed attention.
 
 **6. Lint the merged list.**
 
-Run `scripts/summarize.py` on the combined file to catch duplicate IDs, invalid
-priorities, and vague steps mechanically. Add `--requirements` with the requirement IDs from
-step 2 — in review mode this is the highest-value check, because a list someone else wrote is
-exactly where a whole requirement turns out to have no case at all.
+Run `scripts/summarize.py` on the combined file. Add `--requirements` with the step-2 IDs — the highest-value check in review mode: a list someone else wrote is exactly where a whole requirement has no case at all.
 
 ## Reporting
 
-State the coverage verdict per dimension, not just per case:
+Verdict per dimension, not just per case:
 
 ```text
 Boundary:   partially covered — max tested, min and max+1 missing
@@ -69,4 +54,4 @@ Permission: not covered — no role-based cases at all
 State:      N/A — feature is stateless
 ```
 
-That table is the deliverable. The per-case verdicts are supporting detail.
+That table is the deliverable; per-case verdicts are supporting detail.

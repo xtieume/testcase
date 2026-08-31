@@ -1,10 +1,8 @@
 # Coverage Map
 
-Work through these dimensions **before** writing any test case. The point is not to
-mechanically produce a case for every bullet — it is to make sure every real risk was
-consciously considered and consciously accepted or rejected.
+Work through these dimensions **before** writing any case — not to produce a case per bullet, but so every real risk is consciously accepted or rejected.
 
-For each dimension, decide one of three things:
+Per dimension, decide one of:
 
 * **Covered** — a case exists
 * **N/A** — does not apply, and you can say why
@@ -85,8 +83,7 @@ last allowed date
 after allowed date
 ```
 
-Do not mechanically create every combination when it carries no meaningful risk. Use
-risk-based judgment.
+Skip combinations that carry no real risk.
 
 ---
 
@@ -108,14 +105,13 @@ Then ask:
 * What happens after refresh? After reopening the page?
 * What happens if another user changes the state concurrently?
 
-State cases are the single most frequently missed area. Treat this as mandatory review.
+The single most frequently missed area — mandatory review.
 
 ---
 
 ## E. Permission / role
 
-List every relevant role and fill in the matrix — do not assume permissions from the
-requirement:
+Fill the matrix for every relevant role — do not assume permissions:
 
 | Role | View | Create | Edit | Delete | Execute |
 | ---- | ---- | ------ | ---- | ------ | ------- |
@@ -131,8 +127,7 @@ Check:
 * Direct URL / API access despite hidden UI
 * Access to another user's data
 
-If permission behavior is unspecified, record it as a question. Do not invent the
-expected behavior.
+Unspecified permission behavior is a question, not an invention.
 
 ---
 
@@ -157,8 +152,7 @@ For every important backend operation, identify both the success and the failure
 
 ## G. Data consistency
 
-If the operation touches persistent data, a test that stops at *"value changed on screen"*
-is not finished. Also verify:
+For persistent data, *"value changed on screen"* is not finished. Also verify:
 
 * UI value vs database value vs API response
 * Reopen / reload behavior
@@ -239,7 +233,7 @@ For each dependency:
 * Existing calculations
 * Existing integrations
 
-Add regression cases where the risk is realistic — not for everything the code touches.
+Only where the risk is realistic — not everything the code touches.
 
 ---
 
@@ -279,5 +273,4 @@ Then walk the map:
 | Regression | Existing records; other fields depending on 工種コード |
 | i18n | Option labels with 全角 characters; see `i18n-jp.md` |
 
-The purpose is not to blindly test every row. The purpose is that no important risk went
-unconsidered.
+Not every row must become a case — but no important risk goes unconsidered.

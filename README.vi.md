@@ -42,7 +42,15 @@ claude plugin marketplace add xtieume/testcase
 claude plugin install testcase@testcase-marketplace
 ```
 
-Hoặc copy tay: `cp -R .agents/skills/<name> ~/.claude/.agents/skills/<name>`. Skill kích hoạt bằng ngôn ngữ tự nhiên hoặc `/testcase`, `/docs-review`, `/playwright-notion`.
+Hoặc copy tay: `cp -R .agents/skills/<name> ~/.claude/skills/<name>`. Skill kích hoạt bằng ngôn ngữ tự nhiên hoặc `/testcase`, `/docs-review`, `/playwright-notion`.
+
+**Cursor & Antigravity** — skill nằm trong thư mục chuẩn `.agents/skills/` mà cả hai IDE đọc trực tiếp. Clone repo này vào project (hoặc symlink):
+
+```bash
+git clone https://github.com/xtieume/testcase.git
+ln -s $(pwd)/testcase/.agents/skills .agents/skills   # mức project
+# hoặc toàn cục: cp -R testcase/.agents/skills/* ~/.gemini/antigravity/skills/
+```
 
 ```bash
 python3 .agents/skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]

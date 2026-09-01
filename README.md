@@ -44,7 +44,15 @@ claude plugin marketplace add xtieume/testcase
 claude plugin install testcase@testcase-marketplace
 ```
 
-Or copy manually: `cp -R .agents/skills/<name> ~/.claude/.agents/skills/<name>`. Skills trigger on natural language or `/testcase`, `/docs-review`, `/playwright-notion`.
+Or copy manually: `cp -R .agents/skills/<name> ~/.claude/skills/<name>`. Skills trigger on natural language or `/testcase`, `/docs-review`, `/playwright-notion`.
+
+**Cursor & Antigravity** — skills live in the standard `.agents/skills/` directory, which both editors read natively. Clone this repo into your project (or symlink it):
+
+```bash
+git clone https://github.com/xtieume/testcase.git
+ln -s $(pwd)/testcase/.agents/skills .agents/skills   # project-level
+# or global: cp -R testcase/.agents/skills/* ~/.gemini/antigravity/skills/
+```
 
 ```bash
 python3 .agents/skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]

@@ -44,14 +44,14 @@ claude plugin marketplace add xtieume/testcase
 claude plugin install testcase@testcase-marketplace
 ```
 
-Or copy manually: `cp -R skills/<name> ~/.claude/skills/<name>`. Skills trigger on natural language or `/testcase`, `/docs-review`, `/playwright-notion`.
+Or copy manually: `cp -R .agents/skills/<name> ~/.claude/.agents/skills/<name>`. Skills trigger on natural language or `/testcase`, `/docs-review`, `/playwright-notion`.
 
 ```bash
-python3 skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]
-python3 skills/testcase/scripts/summarize.py --diff previous.md testcases.md
+python3 .agents/skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]
+python3 .agents/skills/testcase/scripts/summarize.py --diff previous.md testcases.md
 ```
 
-`playwright-notion` needs `cd skills/playwright-notion/scripts && npm install` once; manual commands in its `SKILL.md`.
+`playwright-notion` needs `cd .agents/skills/playwright-notion/scripts && npm install` once; manual commands in its `SKILL.md`.
 
 ## Layout
 

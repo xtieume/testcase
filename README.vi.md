@@ -42,14 +42,14 @@ claude plugin marketplace add xtieume/testcase
 claude plugin install testcase@testcase-marketplace
 ```
 
-Hoặc copy tay: `cp -R skills/<name> ~/.claude/skills/<name>`. Skill kích hoạt bằng ngôn ngữ tự nhiên hoặc `/testcase`, `/docs-review`, `/playwright-notion`.
+Hoặc copy tay: `cp -R .agents/skills/<name> ~/.claude/.agents/skills/<name>`. Skill kích hoạt bằng ngôn ngữ tự nhiên hoặc `/testcase`, `/docs-review`, `/playwright-notion`.
 
 ```bash
-python3 skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]
-python3 skills/testcase/scripts/summarize.py --diff previous.md testcases.md
+python3 .agents/skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]
+python3 .agents/skills/testcase/scripts/summarize.py --diff previous.md testcases.md
 ```
 
-`playwright-notion` cần `cd skills/playwright-notion/scripts && npm install` một lần; lệnh chạy tay xem trong `SKILL.md` của nó.
+`playwright-notion` cần `cd .agents/skills/playwright-notion/scripts && npm install` một lần; lệnh chạy tay xem trong `SKILL.md` của nó.
 
 ## Cấu trúc
 

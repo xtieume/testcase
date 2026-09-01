@@ -2,6 +2,6 @@
 .DS_Store
 
 # playwright-notion skill: local deps + downloaded docs
-skills/playwright-notion/scripts/node_modules/
-skills/playwright-notion/scripts/package-lock.json
+.agents/skills/playwright-notion/scripts/node_modules/
+.agents/skills/playwright-notion/scripts/package-lock.json
 __pycache__/

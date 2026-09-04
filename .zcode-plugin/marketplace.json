@@ -8,7 +8,7 @@
     {
       "name": "testcase",
       "description": "QA and docs skills for ZCode, Cursor, and Antigravity: a test-case generator covering positive, negative, boundary, validation, state, permission, error, data, UI, integration, and regression scenarios; a docs-review skill auditing documentation against a spec; and a playwright-notion skill downloading Notion pages to markdown through an already-logged-in browser when no API token or Export button is available.",
-      "version": "1.6.3",
+      "version": "1.7.0",
       "source": "./",
       "author": {
         "name": "xtieume"

@@ -27,7 +27,7 @@ Thêm: cột `Automatable` Y/N mỗi case, export CSV (UTF-8 BOM, Excel mở ti�
 
 ## 📋 docs-review
 
-Tách spec thành các requirement nguyên tử *trước khi* đọc tài liệu; mỗi requirement được gán `Covered` / `Partial` / `Missing` / `Contradict` / `Conflict` / `Stale` / `Undecided` kèm trích dẫn bắt buộc. Không có spec → chế độ investigation tự suy checklist từ câu hỏi của bạn.
+Tách spec thành các requirement nguyên tử *trước khi* đọc tài liệu; mỗi requirement được gán `Covered` / `Partial` / `Missing` / `Contradict` / `Conflict` / `Stale` / `Undecided` kèm trích dẫn bắt buộc. Một lượt quét ngược đánh dấu những gì tài liệu nói vượt ngoài spec (`Unspecified`). Không có spec → chế độ investigation tự suy checklist từ câu hỏi của bạn.
 
 Subagent độc lập tự dựng lại checklist và tấn công report đến khi một round hội tụ (round 5 vẫn còn biến động → báo unconverged). Trên ~15 tài liệu thì chuyển sang workflow index/shard. `--fix` áp các dòng `Missing`/`Partial`/`Stale` vào tài liệu được audit — không bao giờ sửa spec. Có script lint kiểm verdict, trích dẫn, và việc loop đã thực sự chạy.
 

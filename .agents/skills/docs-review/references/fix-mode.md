@@ -38,10 +38,12 @@ safe to edit:
 | `Stale` | Update the superseded value or name to the spec's current one, and update the document's revision line. |
 | `Contradict` | In a deliverable being drafted: apply — the requirement is authoritative. In documentation of a running system: **propose, do not apply**, unless the contradiction is a value the spec unambiguously owns (a limit, format, ID pattern, cutoff time). |
 | `Conflict` | **Propose, do not apply.** Two documents disagreeing means someone has to decide which is right; the spec may be the stale one. |
+| `Unspecified` | **Never fix.** The document says something the spec is silent on. Deleting it may delete real behavior; keeping it may bless a drifted doc. That is the spec owner's call. |
 | `Undecided` | Never fix. The spec is ambiguous — that is a question for its owner. |
 
 **The trap in `Contradict`, for documentation of a running system:** a document describing
-behavior the spec puts out of scope may be describing what the system actually does. Deleting that paragraph makes the documentation match
+behavior the spec explicitly puts out of scope may be describing what the system actually does.
+(Behavior the spec is merely silent on is `Unspecified`, not `Contradict`.) Deleting that paragraph makes the documentation match
 the spec and stop matching reality. When a `Contradict` row is about behavior rather than a
 stated value, write the proposed edit into the report and stop.
 

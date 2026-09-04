@@ -29,7 +29,7 @@ Plus: `Automatable` Y/N per case, CSV export (UTF-8 BOM, Excel-safe for Japanese
 
 ## 📋 docs-review
 
-Decomposes the spec into atomic requirements *before* reading the docs; each maps to `Covered` / `Partial` / `Missing` / `Contradict` / `Conflict` / `Stale` / `Undecided` with a mandatory citation. No spec → investigation mode derives the checklist from your question.
+Decomposes the spec into atomic requirements *before* reading the docs; each maps to `Covered` / `Partial` / `Missing` / `Contradict` / `Conflict` / `Stale` / `Undecided` with a mandatory citation. A reverse sweep then flags what the docs claim beyond the spec (`Unspecified`). No spec → investigation mode derives the checklist from your question.
 
 An independent subagent re-derives the checklist and attacks the report until a round converges (still moving at round 5 → reported unconverged). Over ~15 docs it switches to index/shard. `--fix` applies `Missing`/`Partial`/`Stale` rows to the audited document — never the spec. A lint script checks verdicts, citations, and that the loop ran.
 

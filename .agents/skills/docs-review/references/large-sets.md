@@ -51,7 +51,9 @@ Each shard returns two things:
 
 1. Its verdict rows, in the standard `SKILL.md` step 3 format, written to its own file
    (`.testcases/docs-review/shard-<chapter>.md`, alongside the index). Never have shards edit
-   one shared table.
+   one shared table. A shard that read a document `full` also returns the reverse
+   sweep for it — `DOC-` rows for claims with no spec backing. A `searched` shard cannot: say so
+   rather than implying the document holds none.
 2. A **coverage declaration**:
 
    | Doc ID | Read | What was read |

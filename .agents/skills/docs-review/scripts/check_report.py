@@ -4,10 +4,11 @@ import re
 import sys
 from collections import Counter
 
-VERDICTS_A = {"Covered", "Partial", "Missing", "Contradict", "Conflict", "Stale", "Undecided"}
+VERDICTS_A = {"Covered", "Partial", "Missing", "Contradict", "Conflict", "Stale",
+              "Unspecified", "Undecided"}
 VERDICTS_B = {"Stated", "Inferred", "Conflicting", "Absent"}
 NO_EVIDENCE_NEEDED = {"Missing", "Undecided", "Absent"}
-ID_RE = re.compile(r"^(REQ|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
+ID_RE = re.compile(r"^(REQ|DOC|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
 
 
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
@@ -63,6 +64,7 @@ def selfcheck():
 | REQ-A-001 | first | Covered | D1:1 | "x" |
 | REQ-A-002 | second | Missing | searched: x, y | |
 | REQ-A-003 | third | Undecided | | |
+| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |
 
 ## Round findings
 
@@ -87,11 +89,12 @@ def selfcheck():
 
     problems, counts = run(report)
     assert problems == [], f"clean report should lint clean, got {problems}"
-    assert counts == Counter({"Covered": 1, "Missing": 1, "Undecided": 1}), counts
+    assert counts == Counter({"Covered": 1, "Missing": 1, "Undecided": 1,
+                              "Unspecified": 1}), counts
 
     # The checklist and the round log carry IDs and numbers but no verdict column.
     # Counting their rows is the bug this header selection exists to prevent.
-    assert sum(counts.values()) == 3, "non-verdict tables were linted"
+    assert sum(counts.values()) == 4, "non-verdict tables were linted"
 
     fires(report.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
                          "| REQ-A-001 | first | Coverd | D1:1 | \"x\" |"),
@@ -105,6 +108,9 @@ def selfcheck():
     fires(report.replace("| REQ-A-003 | third | Undecided | | |",
                          "| REQ-A-001 | third | Undecided | | |"),
           "duplicate ID REQ-A-001", "duplicate ID")
+    fires(report.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |',
+                         "| DOC-A-001 | doc says fourth | Unspecified | | |"),
+          "with no evidence or quote", "Unspecified without a citation")
     fires(report.replace("## Round findings", "## Nothing"), "no '## Round findings'", "no round findings")
     fires(report.replace("## Round log", "## Nothing"), "no '## Round log'", "no round log")
     fires(report.replace("## Source inventory", "## Nothing"), "no source inventory", "no inventory")
@@ -125,6 +131,7 @@ def selfcheck():
                             "| Q-2 | second | Absent | searched: x, y | |")
     mode_b = mode_b.replace("| REQ-A-003 | third | Undecided | | |",
                             "| Q-3 | third | Inferred | D1:2 | \"y\" |")
+    mode_b = mode_b.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |\n', "")
     problems, counts = run(mode_b, VERDICTS_B)
     assert problems == [], f"clean mode B report should lint clean, got {problems}"
     assert sum(counts.values()) == 3, counts

@@ -127,6 +127,9 @@ you have run.
    * the report **with the `## Round findings` section removed**
    * the path to `references/dimensions.md`
 
+   Not the source tree — the reviewer holds the same two oracles you do (rule 6). The one
+   exception is rule 6's own: when the code *is* the spec, it is the spec text above.
+
    **Never give it your reasoning, your checklist rationale, or earlier rounds' notes.** Shared
    analysis is what makes a reviewer rubber-stamp your blind spots.
 
@@ -153,7 +156,12 @@ you have run.
 4. Log the round in a `## Round log` table before deciding anything — convergence has to be
    visible to the reader, not asserted:
 
-   | Round | New rows | Verdict changes | Citations rejected | Nits |
+   | Round | Status | New rows | Verdict changes | Citations rejected | Nits |
+
+   Add the row **before** spawning the round's subagent, with `Status` = `reviewer dispatched`
+   and the counts blank; set it to `merged` and fill the counts when the findings come back. A
+   context compaction mid-round then leaves a visible marker of where the loop stood, instead of
+   a round that silently ran twice or was assumed finished.
 
    A **material** finding adds a row, changes a verdict, or rejects a citation. Wording and
    formatting nits never justify another round.
@@ -253,6 +261,12 @@ not check. Completeness cannot be proven.
 **5 — Never invent a finding.** Every row carries a citation or it does not go in the report. A
 short report over a genuinely clean document set is the correct output, not a failed audit.
 
+**6 — Two oracles, and code is neither.** Requirements come only from the spec; coverage comes
+only from the documents. Do not read source code during the audit. Code implementing a
+requirement does not make it `Covered`; behavior in code the spec omits does not create a
+requirement. Only exception: the document's subject *is* the code (an API or CLI reference) —
+then the code is the spec, and a mismatch is `Stale`, never a coverage verdict.
+
 ## Skipping the review loop — rationalizations and reality
 
 | Excuse | Reality |
@@ -268,6 +282,7 @@ short report over a genuinely clean document set is the correct output, not a fa
 | "The user is in a hurry" | Deliver fewer requirements audited, not an unreviewed report. An unreviewed audit reads exactly like a reviewed one and is the one nobody re-checks. |
 | "Round 3 came back with real findings, but three rounds is the limit" | There is no round limit, only convergence. Material findings at round 3 mean round 4 exists. |
 | "The round found something, so I have to keep going forever" | Only material findings extend the loop — new row, changed verdict, rejected citation. Nits do not, and an oscillating row gets frozen `Undecided`. |
+| "Let me check the code to see whether this is actually implemented" | Wrong oracle. The question is whether the *document* states it, and code cannot answer that in either direction — it neither covers a requirement nor creates one. |
 | "The docs cover every requirement, so the audit is done" | That is one direction. What the docs claim beyond the spec is the other, and it never appears in a requirement-keyed table. |
 | "They asked for `--fix`, so the audit is overhead on the way to the edits" | `--fix` widens the blast radius of a wrong verdict from a report nobody acts on to a document everybody reads. The loop matters more in fix mode, not less. |
 
@@ -287,5 +302,6 @@ short report over a genuinely clean document set is the correct output, not a fa
 - About to write a finding you cannot cite, to keep a round from looking empty
 - About to edit a document without `--fix`, or before the review loop finished
 - About to write a value into a document that the spec does not state
+- About to open a source file to decide a verdict, or to confirm a gap is "real"
 
 **All of these mean: run step 4 as written.**

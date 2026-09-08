@@ -155,6 +155,11 @@ you have run.
 
    | Round | New rows | Verdict changes | Citations rejected | Nits |
 
+   Add the row **before** spawning the round's subagent, with the counts blank and a note
+   `reviewer dispatched`; fill the counts when the findings are merged. A context compaction
+   mid-round then leaves a visible marker of where the loop stood, instead of a round that
+   silently ran twice or was assumed finished.
+
    A **material** finding adds a row, changes a verdict, or rejects a citation. Wording and
    formatting nits never justify another round.
 

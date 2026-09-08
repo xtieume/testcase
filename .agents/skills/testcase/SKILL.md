@@ -98,6 +98,10 @@ Run **two reviewers per round, in parallel** — one holding both lenses finds t
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
 
+Tell each reviewer plainly: **an empty round is a valid result.** Every finding cites the requirement line it violates; a finding it cannot cite does not come back. Do not fill a round to avoid returning nothing.
+
+A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 7) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
+
 **Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop, and still finding P0/P1 gaps at round 4 → report **unconverged**, not finished.
 
 No subagent tool: do pass 2 inline, one lens at a time, re-deriving the coverage map from the requirement before looking at your table.

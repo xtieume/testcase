@@ -127,7 +127,8 @@ you have run.
    * the report **with the `## Round findings` section removed**
    * the path to `references/dimensions.md`
 
-   Not the source tree — the reviewer holds the same two oracles you do (rule 6).
+   Not the source tree — the reviewer holds the same two oracles you do (rule 6). The one
+   exception is rule 6's own: when the code *is* the spec, it is the spec text above.
 
    **Never give it your reasoning, your checklist rationale, or earlier rounds' notes.** Shared
    analysis is what makes a reviewer rubber-stamp your blind spots.
@@ -155,12 +156,12 @@ you have run.
 4. Log the round in a `## Round log` table before deciding anything — convergence has to be
    visible to the reader, not asserted:
 
-   | Round | New rows | Verdict changes | Citations rejected | Nits |
+   | Round | Status | New rows | Verdict changes | Citations rejected | Nits |
 
-   Add the row **before** spawning the round's subagent, with the counts blank and a note
-   `reviewer dispatched`; fill the counts when the findings are merged. A context compaction
-   mid-round then leaves a visible marker of where the loop stood, instead of a round that
-   silently ran twice or was assumed finished.
+   Add the row **before** spawning the round's subagent, with `Status` = `reviewer dispatched`
+   and the counts blank; set it to `merged` and fill the counts when the findings come back. A
+   context compaction mid-round then leaves a visible marker of where the loop stood, instead of
+   a round that silently ran twice or was assumed finished.
 
    A **material** finding adds a row, changes a verdict, or rejects a citation. Wording and
    formatting nits never justify another round.

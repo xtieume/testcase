@@ -1,69 +1,95 @@
 # testcase
 
-Three Claude Code skills. The two QA skills end with a mandatory review pass in an independent subagent.
+[![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
+[![Skills](https://img.shields.io/badge/skills-3-8957e5)](#skills)
+[![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
+[![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
+
+Skills for QA and documentation work — write the test cases, audit the docs, fetch the pages. Install once, use them in Claude Code, ZCode, Cursor or Antigravity.
 
 [Tiếng Việt](README.vi.md)
 
-| Skill | Does | Trigger |
-| ----- | ---- | ------- |
-| 🧪 `testcase` | Manual test cases from a requirement, then attacks its own output for missed cases | "write test cases for…" |
-| 📋 `docs-review` | Audits docs against a spec: required vs actually written | "review the docs against spec.md" |
-| 📥 `playwright-notion` | Notion → markdown through a logged-in browser, when API token and Export are both unavailable | "download these Notion pages" |
+## Install
 
-## 🧪 testcase
-
-Coverage map first (positive / negative / boundary / validation / state / permission / error / data / UI / integration / regression, plus Japanese 全角/半角 when relevant) → cases → independent second pass: two reviewer subagents per round (trace the requirement / attack the feature), repeated until a round adds nothing.
-
-The lint script enforces the rules:
-
-| Check | Fails when |
-| ----- | ---------- |
-| Happy-path ratio | >40% `Positive` live cases |
-| Risk cover | A requirement has success-path cases only |
-| Suppression | `<!-- coverage-ok: R7 — reason -->` missing a reason, or stale |
-| `--requirements reqs.txt` | A requirement has **no** case at all |
-| `--diff old.md new.md` | An ID was deleted instead of marked `[OBSOLETE]` |
-| Row lint | Duplicate ID, empty expected result, invalid priority, vague steps |
-
-Plus: `Automatable` Y/N per case, CSV export (UTF-8 BOM, Excel-safe for Japanese), review mode for auditing an existing case list against the requirement.
-
-## 📋 docs-review
-
-Decomposes the spec into atomic requirements *before* reading the docs; each maps to `Covered` / `Partial` / `Missing` / `Contradict` / `Conflict` / `Stale` / `Undecided` with a mandatory citation. A reverse sweep then flags what the docs claim beyond the spec (`Unspecified`). No spec → investigation mode derives the checklist from your question.
-
-An independent subagent re-derives the checklist and attacks the report until a round converges (still moving at round 5 → reported unconverged). Over ~15 docs it switches to index/shard. `--fix` applies `Missing`/`Partial`/`Stale` rows to the audited document — never the spec. A lint script checks verdicts, citations, and that the loop ran.
-
-## 📥 playwright-notion
-
-Attaches to your **running** Brave/Chrome/Edge over CDP, calls Notion's endpoints from inside the logged-in tab. Read-only. Native markdown export first (greyed-out Export is often a client-side check only), block-JSON conversion as fallback. Batch-safe: recycles tabs, retries crashes, logs per page. Refuses two dead ends: profile copying (Chromium 127+ App-Bound Encryption drops the session) and DOM scraping (tripled tables, lost properties).
-
-## Install & use
+**Claude Code** — marketplace install, gets every skill in the repo:
 
 ```bash
 claude plugin marketplace add xtieume/testcase
 claude plugin install testcase@testcase-marketplace
 ```
 
-Or copy manually: `cp -R .agents/skills/<name> ~/.claude/skills/<name>`. Skills trigger on natural language or `/testcase`, `/docs-review`, `/playwright-notion`.
+**ZCode** — same flow, reading `.zcode-plugin/`:
 
-**Cursor & Antigravity** — skills live in the standard `.agents/skills/` directory, which both editors read natively. Clone this repo into your project (or symlink it):
+```bash
+zcode plugin marketplace add xtieume/testcase
+zcode plugin install testcase@testcase-marketplace
+```
+
+**Cursor / Antigravity** — both read `.agents/skills/` natively. Clone once, then symlink it into a project or copy it globally:
 
 ```bash
 git clone https://github.com/xtieume/testcase.git
-ln -s $(pwd)/testcase/.agents/skills .agents/skills   # project-level
-# or global: cp -R testcase/.agents/skills/* ~/.gemini/antigravity/skills/
+
+# project level (either editor)
+ln -s "$(pwd)/testcase/.agents/skills" .agents/skills
+
+# global
+cp -R testcase/.agents/skills/* ~/.cursor/skills/              # Cursor
+cp -R testcase/.agents/skills/* ~/.gemini/antigravity/skills/  # Antigravity
 ```
+
+**Any host, one skill only** — copy the folder you want:
 
 ```bash
-python3 .agents/skills/testcase/scripts/summarize.py testcases.md [--requirements reqs.txt] [--csv out.csv]
-python3 .agents/skills/testcase/scripts/summarize.py --diff previous.md testcases.md
+cp -R .agents/skills/<name> ~/.claude/skills/<name>
 ```
 
-`playwright-notion` needs `cd .agents/skills/playwright-notion/scripts && npm install` once; manual commands in its `SKILL.md`.
+Skills trigger on natural language, or explicitly as `/<name>`.
+
+## Skills
+
+Each name links to its `SKILL.md`, which is the reference for that skill — triggers, workflow, flags, scripts.
+
+### QA
+
+| Skill | Does | Trigger |
+| ----- | ---- | ------- |
+| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Manual test cases from a requirement, then attacks its own output for missed cases | "write test cases for…" |
+| 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
+
+### Data capture
+
+| Skill | Does | Trigger |
+| ----- | ---- | ------- |
+| 📥 [`playwright-notion`](.agents/skills/playwright-notion/SKILL.md) | Notion → markdown through a logged-in browser, when API token and Export are both unavailable | "download these Notion pages" |
+
+## House rules
+
+Conventions every skill here follows, so a new one is predictable before you open it:
+
+- **`SKILL.md` stays small.** Detail goes in `references/`, loaded only when the task needs it.
+- **Review before returning.** Skills that produce a deliverable end with an independent subagent pass that re-derives the work and attacks it, repeating until a round adds nothing.
+- **Scripts are stdlib.** Python or Node, no install step unless the skill says otherwise; they lint the output rather than trusting it.
+- **Verdicts carry evidence.** Any claim about a document or requirement cites the line it came from.
+
+Setup beyond cloning, where a skill needs it:
+
+```bash
+cd .agents/skills/playwright-notion/scripts && npm install   # once
+```
+
+## Adding a skill
+
+Drop a folder into `.agents/skills/<name>/` with a `SKILL.md` (frontmatter `name` + `description`), plus optional `references/` and `scripts/`. No manifest edit: both `plugin.json` files point at the directory, not a list. Add a row to the table above and bump the skill count in the badge. Versions are not edited by hand: merging to `main` bumps all four manifests, tags the commit and publishes a release — `feat:` gives a minor bump, `!` or `BREAKING CHANGE` a major one, anything else a patch.
 
 ## Layout
 
-Each skill: `SKILL.md` (small on purpose) + `references/` loaded only when needed + `scripts/` (stdlib Python / Node). `.claude-plugin/` holds the manifests.
+```
+.agents/skills/<name>/     SKILL.md + references/ + scripts/
+.claude-plugin/            Claude Code manifests
+.zcode-plugin/             ZCode manifests
+```
 
 ## License
 

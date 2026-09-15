@@ -8,7 +8,7 @@
     {
       "name": "testcase",
       "description": "QA and documentation skills for Claude Code, ZCode, Cursor and Antigravity. Installs the whole .agents/skills catalog: test-case generation, documentation auditing against a spec, and browser-based Notion export — each skill ending in an independent review pass. See the repository README for the current skill list.",
-      "version": "1.7.1",
+      "version": "1.8.0",
       "source": "./",
       "author": {
         "name": "xtieume"

@@ -1,5 +1,3 @@
-# testcase
-
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
 [![Skills](https://img.shields.io/badge/skills-3-8957e5)](#skills)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)

@@ -74,5 +74,5 @@ jobs:
           git add .claude-plugin .zcode-plugin
           git commit -m "chore: bump plugin version to $VERSION"
           git tag "v$VERSION"
-          git push origin HEAD --follow-tags
+          git push origin HEAD "v$VERSION"
           gh release create "v$VERSION" --title "v$VERSION" --generate-notes

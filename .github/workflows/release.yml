@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # Skip the bot's own bump commit so the workflow doesn't retrigger itself.
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump plugin version')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Decide next version
+        id: bump
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json, re, subprocess
+
+          def sh(*args):
+              return subprocess.run(args, capture_output=True, text=True).stdout.strip()
+
+          current = json.load(open(".claude-plugin/plugin.json"))["version"]
+          last_tag = sh("git", "describe", "--tags", "--abbrev=0", "--match", "v*")
+          rng = f"{last_tag}..HEAD" if last_tag else "HEAD"
+          log = sh("git", "log", rng, "--pretty=%B")
+
+          if re.search(r"BREAKING[ -]CHANGE|^\w+(\([^)]*\))?!:", log, re.M):
+              part = 0
+          elif re.search(r"^feat(\([^)]*\))?!?:", log, re.M):
+              part = 1
+          else:
+              part = 2
+
+          major, minor, patch = (int(n) for n in current.split("."))
+          bumped = [(major + 1, 0, 0), (major, minor + 1, 0), (major, minor, patch + 1)][part]
+          print(f"version={'.'.join(str(n) for n in bumped)}")
+          PY
+
+      - name: Write version into the manifests
+        run: |
+          python3 - "${{ steps.bump.outputs.version }}" <<'PY'
+          import json, sys
+
+          version = sys.argv[1]
+          for path in [".claude-plugin/plugin.json", ".zcode-plugin/plugin.json"]:
+              data = json.load(open(path))
+              data["version"] = version
+              open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+          for path in [".claude-plugin/marketplace.json", ".zcode-plugin/marketplace.json"]:
+              data = json.load(open(path))
+              for plugin in data["plugins"]:
+                  plugin["version"] = version
+              open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+          PY
+
+      - name: Commit, tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin .zcode-plugin
+          git commit -m "chore: bump plugin version to $VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD --follow-tags
+          gh release create "v$VERSION" --title "v$VERSION" --generate-notes

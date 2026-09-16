@@ -1,6 +1,6 @@
 ---
 name: testcase
-description: Generate or review manual test cases from requirements, specs, tickets, UI descriptions, API specs, or code changes. Use whenever the user asks to write, create, generate, review, improve, or check test cases. Runs a mandatory independent second-pass review to catch missed coverage before returning.
+description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases. Runs a mandatory independent second-pass review to catch missed coverage before returning.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 ---
 
@@ -43,7 +43,7 @@ Read `references/coverage-map.md` (plus `i18n-jp.md` if Japanese text) and work 
 
 Write to `testcases.md` at the repo root unless the user names a path.
 
-**The test cases are the deliverable — they belong in the repo.** Everything else is a working artifact under `.testcases/testcase/` (CSV export, review-mode findings): never commit it, never put it in the docs tree.
+**The test cases are a deliverable — they belong in the repo**, alongside the runnable tests step 7 writes from them. Everything else is a working artifact under `.testcases/testcase/` (CSV export, review-mode findings): never commit it, never put it in the docs tree.
 
 ```bash
 root=$(git rev-parse --show-toplevel) && gitdir=$(git rev-parse --git-dir)
@@ -75,7 +75,7 @@ The coverage map stays in the reply; persist only on request, to `.testcases/tes
 | **P1** | Business rule wrong but workaround exists; secondary flow broken; recoverable unhandled error |
 | **P2** | Rare input, cosmetic, low-impact edge case |
 
-**Automatable** — `Y`: an automated test could drive it (deterministic setup, machine-checkable assertion). `N`: needs a person (visual judgement, physical device, unscriptable external system). The handoff to whoever builds the automated suite — decided once here, not re-litigated later.
+**Automatable** — `Y`: an automated test could drive it (deterministic setup, machine-checkable assertion). `N`: needs a person (visual judgement, physical device, unscriptable external system). Decided once here, not re-litigated later: step 7 implements every `Y`.
 
 **Output language** — match the requirement input (Japanese spec → Japanese cases) unless asked otherwise.
 
@@ -100,7 +100,7 @@ Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases �
 
 Tell each reviewer plainly: **an empty round is a valid result.** Every finding cites the requirement line it violates; a finding it cannot cite does not come back. Do not fill a round to avoid returning nothing.
 
-A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 7) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
+A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 8) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
 
 **Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop, and still finding P0/P1 gaps at round 4 → report **unconverged**, not finished.
 
@@ -143,9 +143,21 @@ No reason = lint error. Stale (requirement gained risk cases, or has no live cas
 
 **Re-running against an updated requirement.** Copy the current table to `.testcases/testcase/previous.md` first, `--diff` afterwards: reports added/changed/newly-`[OBSOLETE]`, **fails** on an ID deleted outright — the mistake that silently breaks downstream tools.
 
-### 7. Report
+### 7. Implement the automatable cases
 
-Give the user: the file path (+ CSV if exported), the script's coverage summary, and a `## Remaining Questions / Assumptions` section for anything that blocked confident design.
+The table is the spec; the runnable tests are the other half of the deliverable. Implement every `Automatable: Y` case, unless the user asked for the table only.
+
+Use the test framework already in the repo — its runner, its helpers, its fixtures — and put the files where that repo already puts tests. No new dependency, no second harness alongside the existing one. No framework at all: say so and stop here rather than picking one unasked.
+
+**Each test names its case ID**, e.g. `test('TC-DROPDOWN-004 — rejects a 101-character name', ...)`. That ID is the only thing tying the code back to the table; without it the step-6 traceability ends at the file boundary.
+
+The row's Steps and Expected Result are the test body and its assertion. If the code cannot express the row, the row was wrong — fix the row, never let the two drift apart silently.
+
+**Run the suite and report the real output.** A failing test is a finding — a bug in the code under test, or an expected result that contradicts it — never something to delete, skip, or weaken into passing. A `Y` case that turns out to be unimplementable (missing fixture, unscriptable external system) flips to `N` with the reason in the row; no stubs, no skipped tests left behind.
+
+### 8. Report
+
+Give the user: the file path (+ CSV if exported), the script's coverage summary, the test run result and where the tests live, and a `## Remaining Questions / Assumptions` section for anything that blocked confident design.
 
 ---
 
@@ -163,4 +175,6 @@ Give the user: the file path (+ CSV if exported), the script's coverage summary,
 
 **6 — Distinguish "not applicable" from "not tested".** N/A needs a why: `Permission: N/A — no authentication/authorization.` Never silently omit. Where the lint would fail on it, put the reason in a `coverage-ok` comment so the next run inherits the decision.
 
-**7 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.
+**7 — The table is not the finish line.** Every `Automatable: Y` case ships as a test that actually runs, in the repo's own framework, carrying its case ID.
+
+**8 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

@@ -53,7 +53,7 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
-| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Manual test cases from a requirement, then attacks its own output for missed cases | "write test cases for…" |
+| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Test cases from a requirement, attacks its own output for missed cases, then implements the automatable ones as runnable tests | "write test cases for…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
 
 ### Data capture

@@ -73,12 +73,31 @@ def _is_separator(line):
     return set(line.replace("|", "").replace(" ", "")) <= set("-:")
 
 
-def parse_table(text):
-    """Return (headers, rows) for the test case table, or (None, []) if absent.
+def _realign(row, headers, canonical):
+    """Re-order one row's cells onto the canonical column order, by header name.
 
-    Picks the table whose header has a Priority column; falls back to the biggest
-    table so a mis-typed header still gets counted rather than silently skipped.
+    A file written over several sessions ends up with tables that carry the same
+    columns in a different order, or drop an optional one. Reading them all with
+    the first table's indices would silently report the wrong column.
     """
+    by_name = {h.lower(): c for h, c in zip(headers, row)}
+    return [by_name.get(h.lower(), "") for h in canonical]
+
+
+def parse_table(text):
+    """Return (headers, rows) for EVERY test case table in the file, merged.
+
+    A file grows one section per feature, each with its own table, and every one of
+    them is live test cases. Reading only the first meant duplicate IDs across
+    sections went unreported and whole sections were never linted — silently, since
+    the count still looked plausible. Tables are merged onto the first Priority
+    table's column order.
+
+    Falls back to the biggest table when no header has a Priority column, so a
+    mis-typed header still gets counted rather than skipped.
+    """
+    canonical = None
+    merged = []
     best = None
     for block in _blocks(text):
         if len(block) < 3 or not _is_separator(block[1]):
@@ -86,9 +105,15 @@ def parse_table(text):
         headers = _cells(block[0])
         rows = [_cells(l) for l in block[2:]]
         if "priority" in [h.lower() for h in headers]:
-            return headers, rows
-        if best is None or len(rows) > len(best[1]):
+            if canonical is None:
+                canonical = headers
+                merged.extend(rows)
+            else:
+                merged.extend(_realign(r, headers, canonical) for r in rows)
+        elif best is None or len(rows) > len(best[1]):
             best = (headers, rows)
+    if canonical is not None:
+        return canonical, merged
     return best if best else (None, [])
 
 
@@ -497,6 +522,32 @@ def selfcheck():
     os.unlink(req_file)
 
     assert parse_table("no table here") == (None, [])
+
+    # Several sections, several tables: every one of them is live test cases. Reading
+    # only the first hid whole sections — and the duplicate ID across them with it.
+    multi = SAMPLE + """
+## Another feature
+
+| ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Priority | Automatable |
+| -- | --- | -------- | --------- | ------------- | ----- | --------------- | -------- | ----------- |
+| TC-C-001 | R9 | Negative | second table | none | enter `7` | rejected | P1 | N |
+| TC-A-004 | R9 | Positive | id reused across sections | none | enter `8` | saved | P2 | Y |
+"""
+    m_head, m_rows = parse_table(multi)
+    assert len(m_rows) == 6, m_rows
+    assert "duplicate ID: TC-A-004 appears 2 times" in lint(m_head, m_rows)
+
+    # Same columns, different order: cells must follow the header name, not the index.
+    swapped = SAMPLE + """
+| ID | Category | Req | Test Case | Preconditions | Steps | Expected Result | Priority | Automatable |
+| -- | -------- | --- | --------- | ------------- | ----- | --------------- | -------- | ----------- |
+| TC-D-001 | Boundary | R9 | swapped columns | none | enter `0` | rejected | P1 | Y |
+"""
+    s_head, s_rows = parse_table(swapped)
+    assert get(s_rows[-1], col(s_head, "category")) == "Boundary", s_rows[-1]
+    assert get(s_rows[-1], col(s_head, "req")) == "R9", s_rows[-1]
+    assert lint(s_head, s_rows) == [p for p in lint(*parse_table(SAMPLE))], "swapped row must not add lint noise"
+
     print("selfcheck ok")
 
 

@@ -74,6 +74,8 @@ second → fresh subagent scoped to that row; third → stop, hand back with all
 3. **Unsigned `MANUAL` rows** — ask the user row by row, then
    `python3 "$GOALRUN" --sign UX --who tuananh --note "viewed 3 surfaces"`.
    ⛔ Never run `--sign` except to record an answer the user actually gave.
+4. **When SKILL.md changes materially** — re-run the pressure test per
+   `references/pressure-test.md` and update the record.
 
 `DONE` only when every row is `PASS`. Anything short: the table, `NOT DONE`.
 

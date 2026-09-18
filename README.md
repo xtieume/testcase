@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-3-8957e5)](#skills)
+[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#skills)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -48,6 +48,12 @@ Skills trigger on natural language, or explicitly as `/<name>`.
 ## Skills
 
 Each name links to its `SKILL.md`, which is the reference for that skill — triggers, workflow, flags, scripts.
+
+### Delivery
+
+| Skill | Does | Trigger |
+| ----- | ---- | ------- |
+| 🎯 [`goalrun`](.agents/skills/goalrun/SKILL.md) | Turns a goal into a ledger of checks, runs each phase through an independent subagent, and will not say done until the script exits 0 | "build X and don't stop until it's done" |
 
 ### QA
 

@@ -20,6 +20,11 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The branch ruleset blocks GITHUB_TOKEN pushes to main, so the bump
+          # commit needs RELEASE_PAT: a fine-grained PAT scoped to this repo only
+          # with "Contents: read and write", owned by an account allowed to bypass
+          # the ruleset. Without it checkout fails with an auth error.
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Decide next version
         id: bump

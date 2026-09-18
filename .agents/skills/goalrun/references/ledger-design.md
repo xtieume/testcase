@@ -13,8 +13,8 @@ an awk program goes into a wrapper script and the row calls the script.
 | ------ | --- |
 | `id` | Short, stable, unique, uppercase. Names the row in `--only`, `--sign`, `--verify`. |
 | `what` | The condition in one sentence, in the user's words. Printed in the table; hashed into a `MANUAL` signature. |
-| `check` | A shell command, or `MANUAL:<owner>`. Exit 0 means the condition holds. Never empty — the script refuses the ledger. |
-| `deliverable` | Optional path this row must have produced. `—`, `-` or empty means none. |
+| `check` | A shell command, or `MANUAL:<owner>` — the prefix is exactly `MANUAL:`; a bare `MANUAL` is refused, and anything else (including `MANUALIZE ...`) is a shell command. Exit 0 means the condition holds. Never empty — the script refuses the ledger. |
+| `deliverable` | Optional path this row must have produced. `—`, `-` or empty means none. Not allowed on a `MANUAL` row — a row belongs to a decider or a file, not both. |
 | `break` | Optional command that plants the exact defect `check` exists to catch. Read by `--verify`. |
 
 **Verdict per row.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes
@@ -105,10 +105,11 @@ runs a subset and ends `PHASE OK` / `PHASE NOT OK`, never `DONE`. `--sign ID --w
 
 | Exit | Means |
 | ---- | ----- |
-| 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED` |
-| 1 | something `FAIL` or `WAIT`; a `HOLLOW` or `BREAK FAILED` row |
-| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, unknown `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, bad `--sign`, dirty tree for `--verify` |
+| 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED`, `--lint-ledger` finds no problems |
+| 1 | something `FAIL` or `WAIT`; a `HOLLOW` or `BREAK FAILED` row; `--lint-ledger` found problems |
+| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify` |
 
-`check` and `break` run with the caller's shell and permissions in the caller's cwd. A ledger
+`check` and `break` run with the caller's shell and permissions in the caller's cwd. POSIX
+only: process groups (`os.killpg`), `sh -c` and git — not for Windows. A ledger
 is an executable file: read every row before running it, as you would a `Makefile`. A break
 that touches state outside the repo (databases, services, `$HOME`) is not undone.

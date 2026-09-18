@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, os, subprocess, sys, tempfile, time
+import io, os, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -320,6 +320,37 @@ def test_only_waiting_rows_is_still_not_done():
         assert 'failing' not in out.stdout
 
 
+def test_manual_like_check_is_a_shell_command_not_a_manual_row():
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger(tmp, 'A\tok\tMANUALIZE thing\n')
+        out = run_cli(tmp)
+        assert out.returncode == 1, out.stdout
+        assert 'FAIL' in out.stdout and 'WAIT' not in out.stdout, out.stdout
+
+
+def test_only_empty_selection_is_misuse():
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger(tmp, 'A\tok\ttrue\n')
+        out = run_cli(tmp, '--only', ',')
+        assert out.returncode == 2 and 'no row ids given' in out.stderr, out.stderr
+        assert run_cli(tmp, '--verify', ',').returncode == 2
+
+
+def test_ctrl_c_kills_the_running_check():
+    with tempfile.TemporaryDirectory() as tmp:
+        ledger(tmp, 'A\tslow\tsleep 30\n')
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+        p = subprocess.Popen([sys.executable, script], cwd=tmp,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+        time.sleep(1.0)
+        os.kill(p.pid, signal.SIGINT)
+        p.wait(timeout=10)
+        time.sleep(0.5)
+        r = subprocess.run(['pgrep', '-f', 'sleep 30'], capture_output=True)
+        assert r.returncode != 0, 'the check outlived Ctrl-C'
+
+
 def test_only_unknown_id_is_misuse():
     with tempfile.TemporaryDirectory() as tmp:
         ledger(tmp, 'EVEN\tok\ttrue\n')
@@ -387,8 +418,21 @@ def test_lint_empty_ledger():
 
 
 def test_lint_catches_unowned_manual():
-    problems = goalrun.lint([goalrun.Row('UX', 'looks ok', 'MANUAL', '', '')])
+    problems = goalrun.lint([goalrun.Row('UX', 'looks ok', 'MANUAL:', '', '')])
     assert any('owner' in p for p in problems)
+
+
+def test_load_rejects_manual_row_naming_a_deliverable():
+    with tempfile.TemporaryDirectory() as tmp:
+        expect_misuse(goalrun.load, ledger(tmp, 'UX\tlooks ok\tMANUAL:t\tsrc/x\n'))
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 2 and 'not both' in out.stderr, out.stderr
+
+
+def test_load_rejects_manual_without_colon():
+    with tempfile.TemporaryDirectory() as tmp:
+        expect_misuse(goalrun.load, ledger(tmp, 'UX\tlooks ok\tMANUAL\n'))
+        assert 'owner' in run_cli(tmp).stderr
 
 
 def test_lint_warns_when_mostly_manual_but_allows_one():
@@ -413,11 +457,11 @@ def test_lint_flags_stale_signatures():
 def test_cli_lint_ledger_end_to_end():
     with tempfile.TemporaryDirectory() as tmp:
         make_repo(tmp)
-        ledger(tmp, 'A\tunowned\tMANUAL\nD\tship\ttrue\tsrc/x\n')
+        ledger(tmp, 'A\tunowned\tMANUAL:\nD\tship\ttrue\tsrc/x\n')
         bad = run_cli(tmp, '--lint-ledger')
         assert bad.returncode == 1 and 'no owner' in bad.stdout and 'baseline' in bad.stdout, bad.stdout
         run_cli(tmp, '--baseline')
-        ledger(tmp, 'A\tsuite\tnpm test\nB\tlint\tnpm run lint\nUX\tok\tMANUAL:t\tsrc/x\n')
+        ledger(tmp, 'A\tsuite\tnpm test\nB\tlint\tnpm run lint\nUX\tok\tMANUAL:t\t—\n')
         good = run_cli(tmp, '--lint-ledger')
         assert good.returncode == 0, good.stdout
         ledger(tmp, '# nothing\n')

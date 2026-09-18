@@ -7,6 +7,7 @@ Reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (
 
 `id`          unique.
 `check`       a shell command, or `MANUAL:<owner>` when a human must decide. Never empty.
+              A MANUAL row is decided by a person and cannot also name a deliverable.
 `deliverable` optional path this row must have produced; `—`, `-` or empty means none.
 `break`       optional command that plants the defect `check` exists to catch (`--verify`).
 Extra columns are ignored.
@@ -21,7 +22,7 @@ Modes (mutually exclusive):
   --sign ID --who W  a human signs a MANUAL row; W must be the row's owner
   --only A,B         run a subset; prints PHASE OK / PHASE NOT OK, never DONE
   --verify [A,B]     run each row's `break`, then its `check`, which must go red; restores
-                     the tree with `git checkout -- . && git clean -fd`, so it demands a
+                     the tree with `git checkout -- . && git clean -fdq`, so it demands a
                      clean tree first. Break commands that touch state outside the repo
                      (databases, services, $HOME) are NOT undone.
   --lint-ledger      problems with the ledger itself
@@ -61,9 +62,14 @@ def load(path):
             raise Misuse(f'duplicate id {rid!r} — every row needs its own name')
         if not check:
             raise Misuse(f'{rid}: empty check — `sh -c ""` exits 0 and decides nothing')
+        if check == 'MANUAL' or check.startswith('MANUAL '):
+            raise Misuse(f'{rid}: MANUAL row needs an owner — write MANUAL:<owner>')
+        deliverable = '' if deliverable in NONE else deliverable
+        if check.startswith('MANUAL:') and deliverable:
+            raise Misuse(f'{rid}: a MANUAL row is decided by a person and cannot also name '
+                         f'a deliverable — a row belongs to a decider or a file, not both')
         seen.add(rid)
-        rows.append(Row(rid, what, check, '' if deliverable in NONE else deliverable,
-                        '' if brk in NONE else brk))
+        rows.append(Row(rid, what, check, deliverable, '' if brk in NONE else brk))
     return rows
 
 
@@ -73,6 +79,15 @@ def owner_of(row):
 
 def what_hash(what):
     return hashlib.sha256(what.strip().encode()).hexdigest()[:12]
+
+
+def _kill_group(p):
+    """Kill the check's whole session; the race with its own exit is not an error."""
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    p.wait()
 
 
 def run_check(cmd, timeout=1800):
@@ -86,9 +101,11 @@ def run_check(cmd, timeout=1800):
         try:
             code = p.wait(timeout)
         except subprocess.TimeoutExpired:
-            os.killpg(p.pid, signal.SIGKILL)
-            p.wait()
+            _kill_group(p)
             return False, f'timed out after {timeout}s'
+        except KeyboardInterrupt:
+            _kill_group(p)
+            raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
     tail = [l.strip() for l in text.splitlines() if l.strip()]
@@ -154,7 +171,7 @@ def load_signatures(path=SIGNOFF):
 
 def decide(row, signatures, touched=frozenset(), timeout=1800, cwd=None):
     """Resolve one row to (status, note); status is PASS, FAIL or WAIT."""
-    if row.check.startswith('MANUAL'):
+    if row.check.startswith('MANUAL:'):
         owner = owner_of(row) or 'unassigned'
         sig = signatures.get(row.id)
         if not sig:
@@ -199,7 +216,7 @@ def sign(rows, row_id, who, note, path=SIGNOFF, today=None):
     row = next((r for r in rows if r.id == row_id), None)
     if row is None:
         raise Misuse(f'no row {row_id!r} in the ledger')
-    if not row.check.startswith('MANUAL'):
+    if not row.check.startswith('MANUAL:'):
         raise Misuse(f'{row_id} is decided by its check, not by a signature')
     who = ' '.join((who or '').split())
     if not who:
@@ -223,12 +240,13 @@ def lint(rows, signatures=None, has_baseline=True):
     problems = []
     if not rows:
         return ['ledger has no rows — nothing is being measured']
-    manual = [r for r in rows if r.check.startswith('MANUAL')]
+    manual = [r for r in rows if r.check.startswith('MANUAL:')]
     for row in manual:
         if not owner_of(row):
             problems.append(f'{row.id}: MANUAL with no owner — name who decides')
     # one subjective row is normal — there is usually something a human must eyeball.
-    # two or more is when the ledger turns into a list of promises.
+    # more than one is worth a second look, and past 30% of rows the ledger is a
+    # list of promises — hence both conditions below.
     if len(manual) > 1 and len(manual) / len(rows) > 0.30:
         problems.append(f'{len(manual)} of {len(rows)} rows are MANUAL (>30%) — this ledger '
                         f'is mostly promises, not checks')
@@ -252,7 +270,7 @@ def verify(rows, ids, timeout, cwd=None):
         if not row.brk:
             print(f'skip {row.id} — no break column')
             continue
-        if row.check.startswith('MANUAL'):
+        if row.check.startswith('MANUAL:'):
             print(f'skip {row.id} — MANUAL row')
             continue
         dirty = _git('status', '--porcelain', cwd=cwd)
@@ -282,6 +300,8 @@ def verify(rows, ids, timeout, cwd=None):
 
 def select(rows, ids):
     wanted = [s.strip() for s in ids.split(',') if s.strip()]
+    if not wanted:
+        raise Misuse('no row ids given — name at least one id from the ledger')
     known = {r.id for r in rows}
     unknown = [w for w in wanted if w not in known]
     if unknown:
@@ -290,6 +310,7 @@ def select(rows, ids):
 
 
 def main():
+    signal.signal(signal.SIGTERM, signal.default_int_handler)  # so SIGTERM kills the check too
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--ledger', default=LEDGER)
     ap.add_argument('--timeout', type=int, default=1800, help='seconds per check')

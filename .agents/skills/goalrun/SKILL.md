@@ -34,6 +34,7 @@ grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
 ```
 
 Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores.
+The script is POSIX-only (`sh -c`, process groups, git) — no Windows.
 
 ## Four modes
 

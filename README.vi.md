@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-3-8957e5)](#danh-sách-skill)
+[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#danh-sách-skill)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -48,6 +48,12 @@ Skill kích hoạt bằng ngôn ngữ tự nhiên, hoặc gọi thẳng `/<name>
 ## Danh sách skill
 
 Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu cho skill đó: điều kiện kích hoạt, workflow, flag, script.
+
+### Hoàn thành công việc
+
+| Skill | Làm gì | Kích hoạt |
+| ----- | ------ | --------- |
+| 🎯 [`goalrun`](.agents/skills/goalrun/SKILL.md) | Biến một mục tiêu thành ledger các check, giao từng phase cho subagent độc lập, và không báo xong khi script chưa exit 0 | "làm X, chạy tới khi xong" |
 
 ### QA
 

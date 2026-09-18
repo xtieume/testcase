@@ -20,6 +20,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # the branch ruleset blocks GITHUB_TOKEN pushes to main; a PAT with
+          # Contents write is the one allowed through for the version bump
+          token: ${{ secrets.RELEASE_PAT }}
 
       - name: Decide next version
         id: bump

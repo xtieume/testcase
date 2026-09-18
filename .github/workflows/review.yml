@@ -1,0 +1,105 @@
+name: Review
+
+# A bot reviews every new PR (and each new push to it) and posts one comment.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
+      ANTHROPIC_AUTH_TOKEN: ${{ secrets.ZAI_ANTHROPIC_TOKEN }}
+      ANTHROPIC_MODEL: glm-5.3[1m]
+      ANTHROPIC_SMALL_FAST_MODEL: glm-5.3-flash[1m]
+      API_TIMEOUT_MS: 3000000
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Fetch review skills (run time, not vendored)
+        run: |
+          git clone --depth 1 --filter=blob:none --sparse \
+            https://github.com/sanyuan0704/sanyuan-skills /tmp/sanyuan-skills
+          git -C /tmp/sanyuan-skills sparse-checkout set \
+            skills/code-review-expert skills/skill-review
+          mkdir -p .claude/skills
+          cp -r /tmp/sanyuan-skills/skills/code-review-expert \
+                /tmp/sanyuan-skills/skills/skill-review .claude/skills/
+
+      - name: Review and comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          body=$(claude -p --dangerously-skip-permissions "$(cat <<'EOF'
+          You are an automated code reviewer bot. Review the current pull request.
+
+          Always use the code-review-expert skill: read
+          .claude/skills/code-review-expert/SKILL.md and follow its workflow —
+          preflight context, SOLID + architecture smells, removal candidates,
+          security and reliability scan, code quality scan — and its output format
+          (Code Review Summary, findings numbered by severity P0/P1/P2/P3, verdict
+          line).
+
+          If the PR touches a skill (any SKILL.md, .claude/skills/, .agents/skills/),
+          ALSO use the skill-review skill (.claude/skills/skill-review/SKILL.md) to
+          audit each changed skill and append a "Skill audit" section after the code
+          review, same severity scheme.
+
+          CI adaptations:
+          - The PR head is checked out in the working directory. Scope the review
+            with `gh pr diff` / `git diff origin/main...HEAD` instead of local
+            uncommitted changes. Ignore the .claude/skills/ copies this workflow
+            just fetched — they are tooling, not part of the PR.
+          - Where verification is cheap (run the repo's tests, reproduce a suspected
+            bug in /tmp), verify before claiming — never report a defect you have
+            not confirmed against the code.
+          - Skip the skills' interactive "Next Steps" / confirmation sections: you
+            post one comment and leave. Do not ask questions, do not implement
+            anything.
+          - Write the review in Vietnamese; keep code identifiers verbatim.
+          - Output ONLY the review body in Markdown, then end with a final line
+            that is exactly `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`
+            (no P0/P1 findings outstanding). No preamble, no tool transcripts.
+          EOF
+          )")
+
+          verdict=$(printf '%s\n' "$body" | tail -1)
+          comment=$(printf '%s\n' "$body" | sed '$d')
+
+          if [ -n "$comment" ]; then
+            printf '## Bot review — %s\n\n%s\n' "$SHA" "$comment" > /tmp/review.md
+            gh pr comment "$PR" --body-file /tmp/review.md
+          fi
+
+          # fail closed: the merge gate only opens on an explicit APPROVE
+          case "$verdict" in
+            'VERDICT: APPROVE')
+              echo "bot approved"; exit 0 ;;
+            'VERDICT: REQUEST_CHANGES')
+              echo "bot requested changes"; exit 1 ;;
+            *)
+              echo "no parseable verdict from bot: $verdict"; exit 1 ;;
+          esac

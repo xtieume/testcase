@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-3-8957e5)](#danh-sách-skill)
+[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#danh-sách-skill)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -55,6 +55,7 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 | ----- | ------ | --------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Sinh test case thủ công từ requirement, rồi tự tấn công output của mình để tìm case bị sót | "viết test case cho…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Đối chiếu tài liệu với spec: spec yêu cầu gì vs tài liệu thực sự viết gì, mỗi verdict kèm trích dẫn | "review docs theo spec.md" |
+| 🎯 [`supergoal`](.agents/skills/supergoal/SKILL.md) | Chạy một mục tiêu tới khi xong, dựa trên sổ kiểm tra chạy được — "còn gì nữa?" do script trả lời, không phải do nhớ | "chạy tiếp cho đến khi xong" |
 
 ### Thu thập dữ liệu
 

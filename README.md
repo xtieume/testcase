@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-3-8957e5)](#skills)
+[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#skills)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -55,6 +55,7 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 | ----- | ---- | ------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Manual test cases from a requirement, then attacks its own output for missed cases | "write test cases for…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
+| 🎯 [`supergoal`](.agents/skills/supergoal/SKILL.md) | Drives a standing goal to done against a machine-checked ledger, so "what's left?" is answered by a script instead of recall | "keep going until it's done" |
 
 ### Data capture
 

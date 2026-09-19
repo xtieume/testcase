@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, os, shutil, signal, subprocess, sys, tempfile, time
+import glob, io, os, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -525,6 +525,33 @@ def test_a_symlink_to_a_directory_is_not_reported_as_changed():
         out = run_cli(tmp, '--verify', 'A')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
         assert 'UNRESTORABLE' not in out.stdout, out.stdout
+
+
+def test_a_file_the_run_cannot_read_refuses_the_break_instead_of_crashing():
+    """A file it cannot copy is a file it cannot put back, so planting the break would leave
+    it at the break's mercy. Refusing is the honest end — with a verdict, and no copy left
+    behind in the temp directory."""
+    if os.geteuid() == 0:
+        return                                # root reads through mode 000
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        path = ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\techo new > old.txt\n')
+        unreadable = os.path.join(tmp, goalrun.GOAL_DIR, 'notes.txt')
+        open(unreadable, 'w').write('x\n')
+        os.chmod(unreadable, 0o000)
+        before = set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                            goalrun.SNAP_PREFIX + '*')))
+        try:
+            out = run_cli(tmp, '--verify', 'A')
+        finally:
+            os.chmod(unreadable, 0o644)
+        assert out.returncode == 2, out
+        assert 'cannot snapshot' in out.stderr, out.stderr
+        assert 'Traceback' not in out.stderr, out.stderr
+        assert os.path.exists(path)
+        after = set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                           goalrun.SNAP_PREFIX + '*')))
+        assert after == before, 'the half-made snapshot was left behind'
 
 
 def test_the_orphan_sweep_spares_a_live_runs_snapshot():

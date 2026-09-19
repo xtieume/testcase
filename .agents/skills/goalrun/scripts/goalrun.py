@@ -667,10 +667,18 @@ def snapshot(srcs, cwd=None):
         if not os.path.lexists(root):
             continue
         aside = os.path.join(held, str(i))
-        if os.path.isdir(root) and not os.path.islink(root):
-            shutil.copytree(root, aside, symlinks=True)
-        else:
-            shutil.copy2(root, aside, follow_symlinks=False)
+        try:
+            if os.path.isdir(root) and not os.path.islink(root):
+                shutil.copytree(root, aside, symlinks=True)
+            else:
+                shutil.copy2(root, aside, follow_symlinks=False)
+        except (OSError, shutil.Error) as e:
+            # a file the run cannot read is one it cannot put back either. Refusing here is
+            # the honest end: planting the break would leave that file at the break's mercy
+            shutil.rmtree(held, ignore_errors=True)
+            raise Misuse(f'cannot snapshot {src} before planting a break: {e}. --verify has '
+                         f'to be able to copy the ledger directory and every ignored '
+                         f'deliverable — fix the permission, or take the file out of the way')
         kept.append((src, aside))
     if not kept:
         shutil.rmtree(held, ignore_errors=True)
@@ -686,46 +694,56 @@ def restore_snapshot(snap, cwd=None):
     try:
         for src, aside in kept:
             root = os.path.join(cwd or '.', src)
-            if not os.path.lexists(aside):
-                # the break reached the copy itself. Whatever is in the tree now is all there
-                # is: destroying it for a restore that cannot follow would lose it outright
-                changed.append(f'{src} {LOST_MARK}')
-                continue
-            if os.path.isdir(aside) and not os.path.islink(aside):
-                before, after = _tree_hashes(aside), _tree_hashes(root)
-                hit = sorted(set(before) ^ set(after)
-                             | {p for p in set(before) & set(after) if before[p] != after[p]})
-                if hit:
-                    changed += [os.path.join(src, p) for p in hit]
-                    # the break may have left a file (or a link) where the directory was;
-                    # rmtree is a no-op on those and copytree would then collide
-                    if os.path.isdir(root) and not os.path.islink(root):
-                        shutil.rmtree(root, ignore_errors=True)
-                    elif os.path.lexists(root):
-                        os.unlink(root)
-                    shutil.copytree(aside, root, symlinks=True)
-            else:
-                # a symlink is a leaf, whatever it points at: `isdir` follows it, and a
-                # link to a directory would otherwise never compare equal to itself
-                kept_digest = _digest(aside)
-                same = (os.path.lexists(root)
-                        and (os.path.islink(root) or not os.path.isdir(root))
-                        and kept_digest == _digest(root) != 'unreadable')
-                if same:
-                    continue
-                changed.append(src)
-                if kept_digest == 'unreadable':      # nothing to put back; keep what is there
-                    continue
-                # the destructive half runs only once the copy has been read back
-                if os.path.isdir(root) and not os.path.islink(root):
-                    shutil.rmtree(root, ignore_errors=True)
-                elif os.path.lexists(root):
-                    os.unlink(root)
-                os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
-                shutil.copy2(aside, root, follow_symlinks=False)
+            try:
+                _restore_one(src, aside, root, changed)
+            except (OSError, shutil.Error) as e:
+                # the rest of the tree still has to come back, and the row has to hear that
+                # this path did not: dying here would leave the restore half done and silent
+                changed.append(f'{src} (restore failed: {e})')
     finally:                                  # a crash mid-restore must not leak the copy
         shutil.rmtree(held, ignore_errors=True)
     return sorted(changed)
+
+
+def _restore_one(src, aside, root, changed):
+    """Put one snapshotted path back, recording it in `changed` when the break had moved it."""
+    if not os.path.lexists(aside):
+        # the break reached the copy itself. Whatever is in the tree now is all there is:
+        # destroying it for a restore that cannot follow would lose it outright
+        changed.append(f'{src} {LOST_MARK}')
+        return
+    if os.path.isdir(aside) and not os.path.islink(aside):
+        before, after = _tree_hashes(aside), _tree_hashes(root)
+        hit = sorted(set(before) ^ set(after)
+                     | {p for p in set(before) & set(after) if before[p] != after[p]})
+        if not hit:
+            return
+        changed += [os.path.join(src, p) for p in hit]
+        # the break may have left a file (or a link) where the directory was; rmtree is a
+        # no-op on those and copytree would then collide
+        _clear(root)
+        shutil.copytree(aside, root, symlinks=True)
+        return
+    # a symlink is a leaf, whatever it points at: `isdir` follows it, and a link to a
+    # directory would otherwise never compare equal to itself
+    kept_digest = _digest(aside)
+    if (os.path.lexists(root) and (os.path.islink(root) or not os.path.isdir(root))
+            and kept_digest == _digest(root) != 'unreadable'):
+        return
+    changed.append(src)
+    if kept_digest == 'unreadable':           # nothing to put back; keep what is there
+        return
+    _clear(root)                              # destructive half, only once the copy is read
+    os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
+    shutil.copy2(aside, root, follow_symlinks=False)
+
+
+def _clear(path):
+    """Make way for the copy, whatever the break left in its place."""
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+    elif os.path.lexists(path):
+        os.unlink(path)
 
 
 def _demand_clean_tree(cwd=None):

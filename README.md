@@ -55,6 +55,8 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 | ----- | ---- | ------- |
 | 🎯 [`goalrun`](.agents/skills/goalrun/SKILL.md) | Turns a goal into a ledger of checks, runs each phase through an independent subagent, and will not say done until the script exits 0 | "build X and don't stop until it's done" |
 
+The three compose into one pipeline: **`docs-review`** says what is required, **`testcase`** says how it is proven, **`goalrun`** says whether it holds. Each still works alone.
+
 ### QA
 
 | Skill | Does | Trigger |

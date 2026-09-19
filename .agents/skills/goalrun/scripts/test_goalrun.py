@@ -472,6 +472,42 @@ def test_a_break_reaching_an_ignored_deliverable_indirectly_is_put_back():
         assert open(report).read() == '86KB of audit\n', 'snapshot did not put it back'
 
 
+def test_a_symlink_deliverable_survives_the_snapshot():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('audit\n')
+        # relative: dangling when read from the snapshot directory, so it must be copied and
+        # compared as a link, never opened through
+        os.symlink('report.html', os.path.join(tmp, 'out', 'link'))
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tlink ships\ttest -e out/link\tout/link\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1, out
+        assert 'Error' not in out.stderr and 'Traceback' not in out.stderr, out.stderr
+        assert os.path.islink(os.path.join(tmp, 'out', 'link')), 'the link did not survive'
+
+
+def test_a_break_cannot_redirect_over_another_rows_ignored_artifact():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('audit\n')
+        run_cli(tmp, '--baseline')
+        # A never names the report; its stderr redirect lands on B's deliverable
+        ledger(tmp, 'A\told\ttest -s old.txt\t—\tsh -c "echo x 2>out/report.html; '
+                    'rm -f old.txt"\n'
+                    'B\treport\ttest -s out/report.html\tout/report.html\t—\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == 'audit\n', "the sibling's artifact was not put back"
+
+
 def test_lint_catches_the_plan_time_break_before_the_deliverable_exists():
     with tempfile.TemporaryDirectory() as tmp:
         make_repo(tmp)
@@ -493,7 +529,7 @@ def test_lint_waiver_gate_holds_on_a_small_list():
     waived = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere', 'REQ-3': 'next run'}}
     problems = goalrun.lint(rows, waived=waived, requirements=reqs)
     assert any('2 of 3 requirements are waived' in p for p in problems), problems
-    # one of three is under the line and stays a waiver, not a bulk pass
+    # a single waiver is the exemption the gate leaves, whatever the ratio of a short list
     ok = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere'}}
     rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in ('REQ-1', 'REQ-3')]
     assert goalrun.lint(rows, waived=ok, requirements=reqs) == []
@@ -551,12 +587,14 @@ def test_a_second_run_refuses_to_race_the_first():
             assert out.returncode == 2 and 'another goalrun' in out.stderr, out
         finally:
             first.wait()
-        # the lock is dropped when it ends, and a stale one never wedges the next run
+        # the lock is dropped when it ends, and a stale one never wedges the next run.
+        # the slow check has done its job; the rest of this test only needs the lock
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
         open(lock, 'w').write('999999\n')
         assert run_cli(tmp, '--only', 'A').returncode == 0
         # a run killed between creating the lock and writing its pid leaves it empty; pid 0
         # would read as alive (os.kill(0, 0) signals our own group) and wedge every run after
-        for corrupt in ('', '\n', 'not-a-pid\n', '0\n', '-1\n'):
+        for corrupt in ('', '\n', 'not-a-pid\n', '0\n', '-1\n', '9' * 20 + '\n'):
             open(lock, 'w').write(corrupt)
             assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {corrupt!r}'
 

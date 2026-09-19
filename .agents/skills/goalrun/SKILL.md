@@ -99,8 +99,9 @@ row.**
 
    It fails on a requirement no row measures and on a row with no `break`. A gap you accept
    is a line in the ledger carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
-   repo` — never silence. A waiver excuses a gap someone looked at; **past 30% of the list it
-   is a bulk pass wearing per-id clothes**, and the gate fails on that too. Varying the
+   repo` — never silence. A waiver excuses a gap someone looked at; **more than one, past 30%
+   of the list, is a bulk pass wearing per-id clothes**, and the gate fails on that too — one
+   waiver on a short list is the exception it leaves you. Varying the
    wording does not make it smaller — either the rows exist, or `reqs.txt` is wider than what
    this run is about and gets cut down to the part it measures. The lint prints the ratio;
    carry it into the table, because `DONE` over a mostly-waived list is a claim about 17 rows,
@@ -154,12 +155,14 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    nothing by going red again (`ALREADY RED`), and it is kept out of the sweep, since a row
    that is red for its own reasons would otherwise make every other row report `BLAST`. An
    honest row for work nobody has started is exactly this case. Then it plants each row's
-   `break`, demands the check go red, restores. `HOLLOW` = the check did not move under the defect this break planted — it tests
-   nothing, or nothing about *this* clause; fix the check, not the row. `STUCK` = its check hung under the break instead of failing, which
+   `break`, demands the check go red, restores. `HOLLOW` = the check did not move under the
+   defect this break planted — it tests nothing, or nothing about *this* clause; fix the
+   check, not the row. `STUCK` = its check hung under the break instead of failing, which
    proves nothing either way. `UNRESTORABLE` = the break names a file git ignores, so it was
-   refused — or it reached `.testcases/` and was undone from a snapshot; either way that row
-   is unproven until the break points at a tracked file. `NOTHING VERIFIED` = no row ran a break at all — every one was
-   skipped, `MANUAL`, or already red; that run proved nothing and exits 1.
+   refused — or it reached one anyway and was undone from a snapshot; either way that row is
+   unproven until the break points at a tracked file. `NOTHING VERIFIED` = no row ran a break
+   at all — every one was skipped, `MANUAL`, or already red; that run proved nothing and
+   exits 1.
 
    A whole-ledger `--verify` also sweeps every other row under each planted break: siblings
    sharing the deliverable go red together and that is expected, while a row shipping
@@ -294,6 +297,6 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "`--verify` exited 0, so the ledger is proven" | Three ways it still lies: no row ran (`NOTHING VERIFIED`), two rows measure each other's defects (`BLAST`), or a break plants something cruder than the requirement. |
 | "The break fires, so the row is verified" | It fires against *something*. Deleting the function reddens a rounding check without testing rounding. |
 | "`rm -f` the report is the obvious break" | Not if git ignores it. The restore is `git checkout`; an ignored file never comes back. |
-| "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at. Past 30% it is a bulk pass, and the gate now says so. |
+| "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at. More than one, past 30%, is a bulk pass — the gate says so. |
 | "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

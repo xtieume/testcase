@@ -237,10 +237,11 @@ prints `NOTHING VERIFIED` and exits 1 — a run that proved nothing is not a pas
 
 `check` and `break` run with the caller's shell and permissions in the caller's cwd. POSIX
 only: process groups (`os.killpg`), `sh -c` and git — not for Windows. A ledger is an
-executable file: read every row before running it, as you would a `Makefile`. A break may only touch files git can restore — a gitignored path is refused
-(`UNRESTORABLE`), since the restore is `git checkout`/`git clean`; the ledger directory
-and an ignored deliverable are snapshotted as well, for what a break reaches through a
-variable. A deliverable git ignores cannot be seen to change either, so it ships by
-mtime against the baseline commit — a weaker standard the lint names on every run.
-A break that
+executable file: read every row before running it, as you would a `Makefile`. A break may only touch files git can restore: the restore is `git checkout`/`git clean`, so a
+gitignored path is refused (`UNRESTORABLE`). The ledger directory and every ignored
+deliverable are snapshotted as well, for what a break reaches through a variable — which also
+means a check that *regenerates* its own ignored deliverable while `--verify` runs reads as a
+break that changed it, so let the check assert the artifact rather than rebuild it. A
+deliverable git ignores cannot be seen to change either, so it ships by mtime against the
+baseline commit — a weaker standard the lint names on every run. A break that
 touches state outside the repo (databases, services, `$HOME`) is not undone.

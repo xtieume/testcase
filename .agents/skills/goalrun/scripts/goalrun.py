@@ -34,7 +34,7 @@ Modes (mutually exclusive):
   --lint-ledger      problems with the ledger itself; with --requirements FILE it also
                      names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
-Only one goalrun runs checks in a tree at a time (`.testcases/goalrun/lock`): a check racing
+Only one goalrun runs checks in a tree at a time (`.testcases/goalrun.lock`): a check racing
 another build goes red for reasons that are not the code.
 
 Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
@@ -474,6 +474,20 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None):
     return same, crossed, [o.id for o in stuck], swept, unswept
 
 
+def _drop_stale(path, held):
+    """Remove a dead run's lock — only while it still reads exactly as it did a moment ago.
+
+    Two runs can reach this together. A plain `os.unlink` lets the slower one delete a lock
+    the faster one has already replaced with its own live claim, which is the race the lock
+    exists to prevent. Compared as text, not as a pid: a truncated or corrupt lock has no pid
+    to compare, and that is precisely the one that must still be removable."""
+    try:
+        if open(path, encoding='utf-8').read() == held:
+            os.unlink(path)
+    except OSError:
+        pass
+
+
 def hold_lock(path=LOCK):
     """One goalrun runs checks in a tree at a time. Returns the path, or raises Misuse.
 
@@ -490,19 +504,22 @@ def hold_lock(path=LOCK):
             return path
         except FileExistsError:
             try:
-                pid = int(open(path, encoding='utf-8').read().strip() or 0)
-            except (OSError, ValueError):
+                raw = open(path, encoding='utf-8').read()
+                pid = int(raw.strip() or 0)
+            except OSError:                # gone between the create attempt and this read
+                continue
+            except ValueError:
                 pid = 0
-            if pid <= 0:            # crashed between create and write, or truncated; `os.kill(0,
-                os.unlink(path)     # 0)` signals our own process group and would read as alive
+            if pid <= 0:              # crashed between create and write, or truncated;
+                _drop_stale(path, raw)  # `os.kill(0, 0)` signals our own group: reads as alive
                 continue
             try:
                 os.kill(pid, 0)
-            except (ProcessLookupError, ValueError, PermissionError) as e:
+            except (ProcessLookupError, ValueError, OverflowError, PermissionError) as e:
                 if isinstance(e, PermissionError):     # alive, owned by someone else
                     raise Misuse(f'another goalrun is running checks here (pid {pid}); wait for '
                                  f'it, or delete {path} if you know it is gone')
-                os.unlink(path)                        # stale: its process is gone
+                _drop_stale(path, raw)                 # stale: its process is gone
                 continue
             raise Misuse(f'another goalrun is running checks here (pid {pid}) — a check racing '
                          f'another build goes red for reasons that are not the code. Wait for '
@@ -542,7 +559,8 @@ def unrestorable(cmd, cwd=None):
         tokens = cmd.split()
     here, seen = cwd or '.', []
     for tok in tokens:
-        tok = tok.lstrip('<>')              # `>out/x` is one token: the path is what follows
+        # `>out/x`, `2>out/x` and `>>out/x` are each one token: the path is what follows
+        tok = re.sub(r'^\d?(?:>>|>|<)&?', '', tok)
         if not tok or tok.startswith('-'):
             continue
         # a glob names every file it matches; an unmatched pattern names nothing
@@ -561,17 +579,27 @@ def _few(paths, n=3):
     return head if len(paths) <= n else f'{head} and {len(paths) - n} more'
 
 
+def _digest(path):
+    """Content id of one path. A symlink is its target, not what the target holds — reading
+    through it compares the wrong file, and a relative link is dangling from the snapshot."""
+    try:
+        if os.path.islink(path):
+            return 'link:' + os.readlink(path)
+        h = hashlib.sha256()
+        with open(path, 'rb') as f:
+            for block in iter(lambda: f.read(1 << 20), b''):   # an artifact can be large
+                h.update(block)
+        return h.hexdigest()
+    except OSError:
+        return 'unreadable'
+
+
 def _tree_hashes(root):
     out = {}
     for base, _dirs, files in os.walk(root):
         for name in files:
             path = os.path.join(base, name)
-            try:
-                with open(path, 'rb') as f:
-                    digest = hashlib.sha256(f.read()).hexdigest()
-            except OSError:
-                digest = 'unreadable'
-            out[os.path.relpath(path, root)] = digest
+            out[os.path.relpath(path, root)] = _digest(path)
     return out
 
 
@@ -602,26 +630,30 @@ def restore_snapshot(snap, cwd=None):
     if not snap:
         return []
     held, kept, changed = snap[0], snap[1], []
-    for src, aside in kept:
-        root = os.path.join(cwd or '.', src)
-        if os.path.isdir(aside):
-            before, after = _tree_hashes(aside), _tree_hashes(root)
-            hit = sorted(set(before) ^ set(after)
-                         | {p for p in set(before) & set(after) if before[p] != after[p]})
-            if hit:
-                changed += [os.path.join(src, p) for p in hit]
-                shutil.rmtree(root, ignore_errors=True)
-                shutil.copytree(aside, root, symlinks=True)
-        else:
-            same = (os.path.lexists(root) and not os.path.isdir(root)
-                    and open(aside, 'rb').read() == open(root, 'rb').read())
-            if not same:
-                changed.append(src)
-                if os.path.isdir(root):
+    try:
+        for src, aside in kept:
+            root = os.path.join(cwd or '.', src)
+            if os.path.isdir(aside) and not os.path.islink(aside):
+                before, after = _tree_hashes(aside), _tree_hashes(root)
+                hit = sorted(set(before) ^ set(after)
+                             | {p for p in set(before) & set(after) if before[p] != after[p]})
+                if hit:
+                    changed += [os.path.join(src, p) for p in hit]
                     shutil.rmtree(root, ignore_errors=True)
-                os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
-                shutil.copy2(aside, root, follow_symlinks=False)
-    shutil.rmtree(held, ignore_errors=True)
+                    shutil.copytree(aside, root, symlinks=True)
+            else:
+                same = (os.path.lexists(root) and not os.path.isdir(root)
+                        and _digest(aside) == _digest(root) != 'unreadable')
+                if not same:
+                    changed.append(src)
+                    if os.path.isdir(root) and not os.path.islink(root):
+                        shutil.rmtree(root, ignore_errors=True)
+                    elif os.path.lexists(root):
+                        os.unlink(root)
+                    os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
+                    shutil.copy2(aside, root, follow_symlinks=False)
+    finally:                                  # a crash mid-restore must not leak the copy
+        shutil.rmtree(held, ignore_errors=True)
     return sorted(changed)
 
 
@@ -658,6 +690,10 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
               f'nothing until they pass, and the sweep ignores them')
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
     incomplete = []
+    # every ignored deliverable, not just this row's: a break redirecting into a sibling's
+    # artifact (`make 2>docs/report.html`) loses a file this row never names
+    ignored_ships = sorted({r.deliverable for r in everything
+                            if r.deliverable and _is_ignored(r.deliverable, cwd)})
     for row in rows:
         if not row.brk:
             print(f'skip {row.id} — no break column')
@@ -682,8 +718,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         # the ledger and its check scripts live in a gitignored directory, and an ignored
         # deliverable is outside git too: a break reaching either through a variable outlives
         # the restore — one leaves the row measuring less, the other loses the artifact
-        held = snapshot([GOAL_DIR, row.deliverable if row.deliverable
-                         and _is_ignored(row.deliverable, cwd) else None], cwd)
+        held = snapshot([GOAL_DIR] + ignored_ships, cwd)
         planted, why, _ = run_check(row.brk, timeout)
         if not planted:
             subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',

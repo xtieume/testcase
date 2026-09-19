@@ -437,6 +437,116 @@ def test_verify_flags_a_hollow_check():
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
 
 
+# ---- ignored deliverables and the run lock ----------------------------------------
+
+def test_gitignored_deliverable_ships_when_written_after_the_baseline():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        run_cli(tmp, '--baseline')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('<h1>audit</h1>\n')
+        ledger(tmp, 'A\treport written\ttrue\tout/report.html\t—\n')
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 0 and 'PASS' in out.stdout, out.stdout
+        # older than the baseline commit: not this run's work, and git cannot tell us
+        os.utime(report, (1, 1))
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 1 and 'mtime' in out.stdout, out.stdout
+
+
+def test_lint_names_a_deliverable_git_ignores():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('x\n')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\treport\ttrue\tout/report.html\trm -f old.txt\n')
+        out = run_cli(tmp, '--lint-ledger')
+        assert 'out/report.html' in out.stdout and 'mtime' in out.stdout, out.stdout
+
+
+def test_a_second_run_refuses_to_race_the_first():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tslow\tsleep 3\t—\trm -f old.txt\n')
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+        first = subprocess.Popen([sys.executable, script], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            time.sleep(0.8)
+            out = run_cli(tmp, '--only', 'A')
+            assert out.returncode == 2 and 'another goalrun' in out.stderr, out
+        finally:
+            first.wait()
+        # the lock is dropped when it ends, and a stale one never wedges the next run
+        lock = os.path.join(tmp, goalrun.GOAL_DIR, 'lock')
+        open(lock, 'w').write('999999\n')
+        assert run_cli(tmp, '--only', 'A').returncode == 0
+        # a run killed between creating the lock and writing its pid leaves it empty; pid 0
+        # would read as alive (os.kill(0, 0) signals our own group) and wedge every run after
+        for corrupt in ('', '\n', 'not-a-pid\n', '0\n', '-1\n'):
+            open(lock, 'w').write(corrupt)
+            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {corrupt!r}'
+
+
+# ---- breaks git cannot undo -------------------------------------------------------
+
+def test_lint_catches_a_break_git_cannot_undo_before_verify_does():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('true\n')
+        ledger(tmp, 'A\tok\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'printf "true\\n" > .testcases/goalrun/chk.sh\n')
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 1, out
+        assert 'A: its break names .testcases/goalrun/chk.sh' in out.stdout, out.stdout
+
+
+def test_verify_refuses_a_break_that_names_a_gitignored_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('report.html\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        report = os.path.join(tmp, 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        ledger(tmp, 'A\treport exists\ttest -s report.html\t—\trm -f report.html\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1, out
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == '86KB of audit\n', 'the break must not have run'
+
+
+def test_verify_restores_a_check_script_a_break_rewrote():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('grep -q old old.txt\n')
+        # the break mutates the check itself — a file git ignores, so restore cannot undo it
+        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'printf "true\\n" > .testcases/goalrun/chk.sh\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1, out
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(chk).read() == 'grep -q old old.txt\n', 'check script not put back'
+
+
+def test_verify_still_proves_a_break_on_a_tracked_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out
+        assert os.path.exists(os.path.join(tmp, 'old.txt'))
+
+
 # ---- --lint-ledger ----------------------------------------------------------------
 
 def test_lint_empty_ledger():
@@ -593,6 +703,31 @@ def test_lint_flags_a_waiver_pointing_at_nothing():
     assert any('no-row-ok: REQ-9' in p for p in problems), problems
     # without a requirement list there is nothing to check coverage waivers against
     assert not any('REQ-9' in p for p in goalrun.lint(rows, waived=waived))
+
+
+def test_lint_refuses_a_ledger_that_waives_most_of_the_list():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    reqs = [f'REQ-{n}' for n in range(1, 11)]
+    # nine ids waived one by one, each with its own reason — the shape that passed before
+    waived = {'verify-ok': {}, 'no-row-ok': {r: f'reason {r}' for r in reqs[1:]}}
+    problems = goalrun.lint(rows, waived=waived, requirements=reqs)
+    assert any('9 of 10 requirements are waived' in p for p in problems), problems
+    # a third of the list is still a gate
+    ok = {'verify-ok': {}, 'no-row-ok': {r: 'ships elsewhere' for r in reqs[:2]}}
+    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in reqs[2:]]
+    assert not goalrun.lint(rows, waived=ok, requirements=reqs), goalrun.lint(
+        rows, waived=ok, requirements=reqs)
+
+
+def test_lint_prints_the_coverage_ratio():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, '# no-row-ok: REQ-2 — ships in the other repo\n'
+                    'A\tREQ-1 holds\ttrue\t—\trm -f old.txt\n')
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\n')
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert 'coverage: 2 requirement(s) · 1 carried by rows · 1 waived (50%)' in out.stdout, \
+            out.stdout
 
 
 def test_requirements_file_rejects_a_line_that_is_not_an_id():

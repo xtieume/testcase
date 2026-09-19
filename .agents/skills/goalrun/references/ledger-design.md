@@ -232,10 +232,11 @@ prints `NOTHING VERIFIED` and exits 1 — a run that proved nothing is not a pas
 | Exit | Means |
 | ---- | ----- |
 | 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED`, `--lint-ledger` finds no problems |
-| 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; `--lint-ledger` found problems |
-| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, an empty requirements file, `--blast`/`--no-blast` without `--verify`, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify`, `--requirements` without `--lint-ledger` or naming a file that does not exist |
+| 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `UNRESTORABLE`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; `--lint-ledger` found problems |
+| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, an empty requirements file, `--blast`/`--no-blast` without `--verify`, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify`, `--requirements` without `--lint-ledger` or naming a file that does not exist, another goalrun already running checks in this tree |
 
 `check` and `break` run with the caller's shell and permissions in the caller's cwd. POSIX
 only: process groups (`os.killpg`), `sh -c` and git — not for Windows. A ledger is an
-executable file: read every row before running it, as you would a `Makefile`. A break that
+executable file: read every row before running it, as you would a `Makefile`. A break may only touch files git can restore — a gitignored path is refused
+(`UNRESTORABLE`), since the restore is `git checkout`/`git clean`. A break that
 touches state outside the repo (databases, services, `$HOME`) is not undone.

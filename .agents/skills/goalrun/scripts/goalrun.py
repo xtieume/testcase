@@ -9,6 +9,8 @@ Reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (
 `check`       a shell command, or `MANUAL:<owner>` when a human must decide. Never empty.
               A MANUAL row is decided by a person and cannot also name a deliverable.
 `deliverable` optional path this row must have produced; `—`, `-` or empty means none.
+              A gitignored one is measured by mtime against the baseline commit, since git
+              sees neither its content nor its history.
 `break`       the command that plants the defect `check` exists to catch (`--verify`).
               A row without one has never gone red; `--lint-ledger` says so unless the
               ledger waives it with a comment line `# verify-ok: <id> — <reason>`.
@@ -26,13 +28,19 @@ Modes (mutually exclusive):
   --verify [A,B]     run each row's `break`, then its `check`, which must go red; restores
                      the tree with `git checkout -- . && git clean -fdq`, so it demands a
                      clean tree first. Break commands that touch state outside the repo
-                     (databases, services, $HOME) are NOT undone.
+                     (databases, services, $HOME) are NOT undone, and a break naming a
+                     gitignored path is refused (UNRESTORABLE) rather than planted — git
+                     restores neither its content nor its existence.
   --lint-ledger      problems with the ledger itself; with --requirements FILE it also
                      names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
+Only one goalrun runs checks in a tree at a time (`.testcases/goalrun/lock`): a check racing
+another build goes red for reasons that are not the code.
+
 Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
 """
-import argparse, collections, datetime, hashlib, os, re, signal, subprocess, sys, tempfile, time
+import argparse, collections, datetime, hashlib, os, re, shlex, shutil, signal, subprocess, \
+    sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
 LEDGER = os.path.join(GOAL_DIR, 'ledger.tsv')
@@ -200,15 +208,35 @@ def changed_paths(baseline, cwd=None):
     return {p.strip() for p in paths if p.strip()}
 
 
-def not_shipped(path, touched, cwd=None):
-    """'' when the deliverable exists and changed since baseline, else the reason."""
+def baseline_time(baseline, cwd=None):
+    """Unix time of the baseline commit — what an ignored deliverable's mtime is read against."""
+    out = _git('show', '-s', '--format=%ct', baseline, cwd=cwd) if baseline else None
+    return int(out[0]) if out else None
+
+
+def not_shipped(path, touched, cwd=None, since=None):
+    """'' when the deliverable exists and changed since baseline, else the reason.
+
+    An ignored file is invisible to `git diff` and to `ls-files --others --exclude-standard`,
+    so it can never appear in `touched` — the row would read `unchanged since baseline`
+    forever, and dropping the deliverable column to escape that quietly switches rule 6 off
+    for the one artifact the run exists to produce. Shipping is therefore measured by mtime
+    there, which `--lint-ledger` names as the weaker standard it is."""
     norm = os.path.normpath(path)
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
-    if not os.path.lexists(os.path.join(cwd or '.', norm)):
+    full = os.path.join(cwd or '.', norm)
+    if not os.path.lexists(full):
         return 'does not exist'
     if norm in touched or any(t.startswith(norm + '/') for t in touched):
         return ''
+    if _is_ignored(norm, cwd):
+        if since is None:
+            return 'git ignores it and no baseline time is known — shipping cannot be measured'
+        newest = os.path.getmtime(full)
+        for base, _dirs, files in os.walk(full):     # a directory ships when anything in it does
+            newest = max([newest] + [os.path.getmtime(os.path.join(base, f)) for f in files])
+        return '' if newest > since else 'not written since baseline (mtime; git ignores it)'
     return 'unchanged since baseline'
 
 
@@ -228,7 +256,7 @@ def load_signatures(path=SIGNOFF):
     return sigs
 
 
-def decide(row, signatures, touched=frozenset(), timeout=1800, cwd=None):
+def decide(row, signatures, touched=frozenset(), timeout=1800, cwd=None, since=None):
     """Resolve one row to (status, note); status is PASS, FAIL or WAIT."""
     if row.check.startswith('MANUAL:'):
         owner = owner_of(row) or 'unassigned'
@@ -242,18 +270,18 @@ def decide(row, signatures, touched=frozenset(), timeout=1800, cwd=None):
     if not ok:
         return 'FAIL', note
     if row.deliverable:
-        why = not_shipped(row.deliverable, touched, cwd)
+        why = not_shipped(row.deliverable, touched, cwd, since)
         if why:
             return 'FAIL', f'deliverable not shipped: {row.deliverable} — {why}'
     return 'PASS', note
 
 
-def report(rows, signatures, touched, timeout):
+def report(rows, signatures, touched, timeout, since=None):
     """Print the table. Return [(status, row)]."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
-        status, note = decide(row, signatures, touched, timeout)
+        status, note = decide(row, signatures, touched, timeout, since=since)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
         results.append((status, row))
     return results
@@ -326,6 +354,16 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         problems.append(f'rows {", ".join(unbreakable)} have no break — nothing proves their '
                         f'check can fail; add one, or waive it in the ledger with '
                         f'`# verify-ok: <id> — <reason>`')
+    # found at the gate rather than at --verify: the break that names an ignored path is
+    # written at plan time, and waiting until the proof to say so costs a round trip on a
+    # ledger nobody can prove — `.testcases/` is ignored by design, so a break reaching in
+    # there is the common form
+    for row in rows:
+        doomed = unrestorable(row.brk) if row.brk else []
+        if doomed:
+            problems.append(f'{row.id}: its break names {", ".join(doomed)}, which git ignores '
+                            f'— `--verify` restores with git, so that break cannot be undone '
+                            f'and is refused; point it at a tracked file')
     ids = {r.id for r in rows}
     for sid in (signatures or {}):
         if sid not in ids:
@@ -347,6 +385,17 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
             if wid not in requirements:
                 problems.append(f'`# no-row-ok: {wid}` but no such requirement — delete the '
                                 f'line or fix the id')
+    if requirements:
+        # a waiver excuses a gap someone looked at; past a third of the list it is a bulk pass
+        # wearing per-id clothes, and the gate it defeats is the only one that sees a
+        # requirement no row measures. Varying the wording does not make it smaller
+        skipped = [r for r in requirements if r in waived['no-row-ok']]
+        if len(skipped) > 3 and len(skipped) / len(requirements) > 0.30:
+            problems.append(
+                f'{len(skipped)} of {len(requirements)} requirements are waived with '
+                f'`# no-row-ok:` (>30%) — a ledger measuring {len(requirements) - len(skipped)} '
+                f'of them is not gated by this list; add rows, or cut the list down to what '
+                f'this run is about')
     for req in (requirements or []):
         if req in waived['no-row-ok']:
             continue
@@ -410,6 +459,116 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None):
     return same, crossed, [o.id for o in stuck], swept, unswept
 
 
+def hold_lock(path=os.path.join(GOAL_DIR, 'lock')):
+    """One goalrun runs checks in a tree at a time. Returns the path, or raises Misuse.
+
+    Two runs building the same tree produce reds that belong to neither: a compiler lock, a
+    half-written artifact, a port already bound. Such a red is indistinguishable from a real
+    one in the table, so the second run is refused instead. A lock whose process is gone is
+    stale and taken over — a crashed run must not wedge the next one."""
+    os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    while True:
+        try:
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, f'{os.getpid()}\n'.encode())
+            os.close(fd)
+            return path
+        except FileExistsError:
+            try:
+                pid = int(open(path, encoding='utf-8').read().strip() or 0)
+            except (OSError, ValueError):
+                pid = 0
+            if pid <= 0:            # crashed between create and write, or truncated; `os.kill(0,
+                os.unlink(path)     # 0)` signals our own process group and would read as alive
+                continue
+            try:
+                os.kill(pid, 0)
+            except (ProcessLookupError, ValueError, PermissionError) as e:
+                if isinstance(e, PermissionError):     # alive, owned by someone else
+                    raise Misuse(f'another goalrun is running checks here (pid {pid}); wait for '
+                                 f'it, or delete {path} if you know it is gone')
+                os.unlink(path)                        # stale: its process is gone
+                continue
+            raise Misuse(f'another goalrun is running checks here (pid {pid}) — a check racing '
+                         f'another build goes red for reasons that are not the code. Wait for '
+                         f'it, or delete {path} if you know it is gone')
+
+
+def drop_lock(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+def _is_ignored(path, cwd=None):
+    """True when git ignores this path, so `checkout`/`clean` can neither restore nor delete it."""
+    return subprocess.run(('git', 'check-ignore', '-q', '--', path),
+                          cwd=cwd, capture_output=True).returncode == 0
+
+
+def unrestorable(cmd, cwd=None):
+    """Existing gitignored paths a break command names — the ones restore cannot undo.
+
+    `--verify` restores with `git checkout -- . && git clean -fdq`: tracked files come back,
+    untracked ones are deleted, and an ignored file is outside both. A break that deletes one
+    destroys it for good, and a break that rewrites one (a check script under .testcases/) is
+    worse — it leaves the row measuring less than the ledger says, silently, past the end of
+    the run. Both happen with the plan-time default `rm -f <deliverable>` the moment the
+    deliverable is ignored, so the break is refused rather than planted.
+
+    Reads the literal path tokens only: a break that hides its target behind a variable or a
+    subshell is beyond this, which is why the ledger, its checks and its signatures are
+    snapshotted separately."""
+    try:
+        tokens = shlex.split(cmd, comments=True)
+    except ValueError:                      # unbalanced quotes; the shell will complain too
+        tokens = cmd.split()
+    hits = {t for t in tokens
+            if t and not t.startswith('-')
+            and os.path.lexists(os.path.join(cwd or '.', t)) and _is_ignored(t, cwd)}
+    return sorted(hits)
+
+
+def _tree_hashes(root):
+    out = {}
+    for base, _dirs, files in os.walk(root):
+        for name in files:
+            path = os.path.join(base, name)
+            try:
+                with open(path, 'rb') as f:
+                    digest = hashlib.sha256(f.read()).hexdigest()
+            except OSError:
+                digest = 'unreadable'
+            out[os.path.relpath(path, root)] = digest
+    return out
+
+
+def snapshot(src, cwd=None):
+    """Copy a gitignored directory aside so a break cannot make it a one-way door."""
+    root = os.path.join(cwd or '.', src)
+    if not os.path.isdir(root):
+        return None
+    held = tempfile.mkdtemp(prefix='goalrun-snap-')
+    shutil.copytree(root, os.path.join(held, 'tree'), symlinks=True)
+    return held
+
+
+def restore_snapshot(held, src, cwd=None):
+    """Put it back exactly; return the paths a break had changed (empty when it behaved)."""
+    if not held:
+        return []
+    root, keep = os.path.join(cwd or '.', src), os.path.join(held, 'tree')
+    before, after = _tree_hashes(keep), _tree_hashes(root)
+    changed = sorted(set(before) ^ set(after)
+                     | {p for p in set(before) & set(after) if before[p] != after[p]})
+    if changed:
+        shutil.rmtree(root, ignore_errors=True)
+        shutil.copytree(keep, root, symlinks=True)
+    shutil.rmtree(held, ignore_errors=True)
+    return changed
+
+
 def _demand_clean_tree(cwd=None):
     """--verify restores with git checkout/clean, so it refuses to start from a dirty one."""
     dirty = _git('status', '--porcelain', cwd=cwd)
@@ -456,12 +615,27 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
                   f'the break proves nothing; fix the row, then verify it')
             continue
+        doomed = unrestorable(row.brk, cwd)
+        if doomed:
+            all_ok = False
+            print(f'UNRESTORABLE {row.id} — its break names {", ".join(doomed)}, which git '
+                  f'ignores, so the restore afterwards cannot bring it back; nothing was '
+                  f'planted. Track the file, point the break at a tracked one, or verify this '
+                  f'row by hand and waive it with `# verify-ok: {row.id} — <reason>`')
+            continue
+        # the ledger and its check scripts live in a gitignored directory, so a break that
+        # edits one outlives the restore and leaves the row measuring less than it claims
+        held = snapshot(GOAL_DIR, cwd)
         planted, why, _ = run_check(row.brk, timeout)
         if not planted:
             subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                            shell=True, cwd=cwd, check=True)
+            clobbered = restore_snapshot(held, GOAL_DIR, cwd)
             all_ok, ran = False, ran + 1   # it ran; `ran` counts attempts, not successes
             print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
+            if clobbered:
+                print(f'  and it had already changed {", ".join(clobbered[:3])} under '
+                      f'{GOAL_DIR}; restored from a snapshot')
             continue
         ok, note, hung = run_check(row.check, timeout)
         if blast:
@@ -476,6 +650,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             same, crossed, stuck = [], [], []
         subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                        shell=True, cwd=cwd, check=True)
+        clobbered = restore_snapshot(held, GOAL_DIR, cwd)
         if crossed:
             all_ok = False
             print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which ship '
@@ -486,7 +661,13 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         if same:
             print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering the '
                   f'same file do')
-        if hung:
+        if clobbered:
+            all_ok, ran = False, ran + 1
+            print(f'UNRESTORABLE {row.id} — its break changed {", ".join(clobbered[:3])} under '
+                  f'{GOAL_DIR}, which git cannot restore; goalrun put it back from a snapshot. '
+                  f'A break that rewrites a check measures less than the ledger claims, so '
+                  f'this row is unproven until the break points at a tracked file')
+        elif hung:
             all_ok, ran = False, ran + 1
             print(f'STUCK {row.id} — its check timed out under the break rather than failing; '
                   f'a check that hangs proves nothing about the defect')
@@ -606,11 +787,25 @@ def run(a):
     baseline = read_baseline()
 
     if a.lint_ledger:
+        waived = waivers(a.ledger)
         problems = lint(rows, load_signatures(), has_baseline=baseline is not None,
-                        waived=waivers(a.ledger),
+                        waived=waived,
                         requirements=read_requirements(a.requirements) if a.requirements else None)
         for p in problems:
             print(p)
+        # not a problem — a weaker standard, said out loud. git sees neither the content nor
+        # the history of an ignored file, so `--verify` cannot break one and only its mtime
+        # says the run wrote it
+        for row in rows:
+            if row.deliverable and _is_ignored(row.deliverable):
+                print(f'{row.id}: git ignores {row.deliverable}, so shipping is measured by '
+                      f'mtime and no break may touch it — track the file to measure it '
+                      f'properly')
+        if a.requirements:
+            reqs = read_requirements(a.requirements)
+            skipped = sum(1 for r in reqs if r in waived['no-row-ok'])
+            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped} carried by '
+                  f'rows · {skipped} waived ({skipped * 100 // len(reqs)}%)')
         if not a.requirements:
             print('coverage not checked — no --requirements file; only the rows that exist '
                   'were linted')
@@ -621,6 +816,14 @@ def run(a):
     if not rows:
         raise Misuse('ledger has no rows')
 
+    lock = hold_lock()      # from here on the modes that run checks; nothing else builds
+    try:
+        return _run_checks(a, rows, baseline)
+    finally:
+        drop_lock(lock)
+
+
+def _run_checks(a, rows, baseline):
     if a.verify is not None:
         # the condition for wanting the sweep is only knowable by running it, so the whole-ledger
         # proof runs it unless told not to; a subset run is iterative work, not the proof
@@ -642,7 +845,8 @@ def run(a):
                      f'recorded — run --baseline first')
     touched = changed_paths(baseline) if baseline else frozenset()
 
-    results = report(chosen, load_signatures(), touched, a.timeout)
+    results = report(chosen, load_signatures(), touched, a.timeout,
+                     since=baseline_time(baseline))
     passed = sum(1 for s, _ in results if s == 'PASS')
     print()
     if a.only is not None:

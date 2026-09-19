@@ -72,8 +72,21 @@ row.**
 5. **Write the ledger** per `references/ledger-design.md`: one row per requirement, `check`
    pointing at the tests step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect — for work not yet written that is `rm -f <deliverable>`, never a
-   guess at a symbol inside it. **If you cannot write the check, you do not yet understand
-   the goal.**
+   guess at a symbol inside it. **A break may only touch files git can restore.** The restore
+   is `git checkout -- . && git clean -fdq`, so a gitignored path — a report under an ignored
+   output directory, a check script under `.testcases/` — is outside it: deleting one destroys
+   it, and rewriting one leaves the row measuring less than the ledger says, past the end of
+   the run. `--verify` refuses such a break (`UNRESTORABLE`) instead of planting it, and puts
+   `.testcases/` back from a snapshot when a break got there first — and `--lint-ledger`
+   names such a break at the gate, before the proof. **A break never reaches into
+   `.testcases/`**: that whole tree is untracked by design, so a break editing a check
+   script there survives the restore and the row measures less from then on. Track the file, point the
+   break at a tracked one, or verify that row by hand and waive it. A **gitignored
+   deliverable** is the same blind spot from the other side: git sees neither its content
+   nor its history, so shipping falls back to mtime against the baseline commit and the
+   lint says so on every run. Dropping the deliverable column to escape that switches
+   rule 6 off for the one artifact the run exists to produce — track the file instead.
+   **If you cannot write the check, you do not yet understand the goal.**
 6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
    spec, ledger = the document set, and run its step 4 loop as written — round log,
    convergence, an oscillating row frozen `Undecided`. `Missing` = a requirement no row
@@ -88,13 +101,22 @@ row.**
 
    It fails on a requirement no row measures and on a row with no `break`. A gap you accept
    is a line in the ledger carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
-   repo` — never silence.
+   repo` — never silence. A waiver excuses a gap someone looked at; **past 30% of the list it
+   is a bulk pass wearing per-id clothes**, and the gate fails on that too. Varying the
+   wording does not make it smaller — either the rows exist, or `reqs.txt` is wider than what
+   this run is about and gets cut down to the part it measures. The lint prints the ratio;
+   carry it into the table, because `DONE` over a mostly-waived list is a claim about 17 rows,
+   not 629 requirements.
 
    The gate only knows the list you wrote, and only that the id is *mentioned* by a row. A
    requirement missing from `reqs.txt`, or named by a row that does not measure it, is
    invisible here — step 6 is what finds both.
 8. **Slice phases** — groups of row ids, by dependency.
-9. **Pre-flight** `python3 "$GOALRUN"` — know what is already red.
+9. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
+   building while it runs: a check racing another compile goes red for reasons that are
+   not the code. Two goalruns refuse each other by lock; a build *you* started in another
+   shell is yours to wait for. A red you think is contention is not a finding either way —
+   name the build, wait, and re-run that row with `--only`; the re-run is the evidence.
 
 Show ledger, phases, red rows, and a menu: **run / edit a row / re-slice / skip
 pre-flight**.
@@ -134,9 +156,11 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    nothing by going red again (`ALREADY RED`), and it is kept out of the sweep, since a row
    that is red for its own reasons would otherwise make every other row report `BLAST`. An
    honest row for work nobody has started is exactly this case. Then it plants each row's
-   `break`, demands the check go red, restores. `HOLLOW` = the check tests nothing; fix the
-   check, not the row. `STUCK` = its check hung under the break instead of failing, which
-   proves nothing either way. `NOTHING VERIFIED` = no row ran a break at all — every one was
+   `break`, demands the check go red, restores. `HOLLOW` = the check did not move under the defect this break planted — it tests
+   nothing, or nothing about *this* clause; fix the check, not the row. `STUCK` = its check hung under the break instead of failing, which
+   proves nothing either way. `UNRESTORABLE` = the break names a file git ignores, so it was
+   refused — or it reached `.testcases/` and was undone from a snapshot; either way that row
+   is unproven until the break points at a tracked file. `NOTHING VERIFIED` = no row ran a break at all — every one was
    skipped, `MANUAL`, or already red; that run proved nothing and exits 1.
 
    A whole-ledger `--verify` also sweeps every other row under each planted break: siblings
@@ -163,7 +187,8 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    `references/pressure-test.md` and update the record.
 
 `DONE` only when every row is `PASS`. Anything short: the table, `NOT DONE`. A `--verify`
-that ends `BLAST`, `STUCK`, `ALREADY RED`, `NOTHING VERIFIED` or `SWEEP STOPPED` has not
+that ends `BLAST`, `STUCK`, `ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` or
+`SWEEP STOPPED` has not
 proven the ledger, whatever the rows said a minute earlier.
 
 ## Report the ledger, not a narrative
@@ -235,6 +260,7 @@ the row alone. Neither is arguing, and neither is `--sign`.
 6. **Green without a deliverable is red** — by script.
 7. **A check that has never gone red is untested.** Give every row a `break` and `--verify`
    it; a row without one fails `--lint-ledger` unless the ledger waives it with a reason.
+   A break may only touch files git can restore — anything gitignored is a one-way door.
 8. **Three reds on one row is a handoff.**
 9. **Subjective criteria need a human signature**, bound to the wording.
 10. **A ledger you alone wrote is unreviewed.** Requirements from `docs-review`, behaviour
@@ -258,6 +284,7 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "'No' is safe, so skip the script" | The table is the content of "no". |
 | "Code I wrote fast and never exercised" | A spec item not met, dressed as a caveat. |
 | "Quick status, the table is overkill" | A status is a claim. The script takes seconds. |
+| "It passes when I run it in my shell" | The script runs it under `sh -c`, with another PATH. Different shell, different `python3`. |
 | "I'll mark it green and caveat in prose" | A caveat on `PASS` is `FAIL` with makeup. |
 | "I know the user would approve" | ⛔ Rule 9. Ask, wait, then `--sign`. |
 | "I read the code, I know what the rows are" | Wrong oracle. Requirements come from the spec; the code is what they judge. |
@@ -268,4 +295,7 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "No break column for this one, the check is obviously real" | Obvious is what `HOLLOW` rows looked like too. Write the break or waive it in the ledger, with a reason. |
 | "`--verify` exited 0, so the ledger is proven" | Three ways it still lies: no row ran (`NOTHING VERIFIED`), two rows measure each other's defects (`BLAST`), or a break plants something cruder than the requirement. |
 | "The break fires, so the row is verified" | It fires against *something*. Deleting the function reddens a rounding check without testing rounding. |
+| "`rm -f` the report is the obvious break" | Not if git ignores it. The restore is `git checkout`; an ignored file never comes back. |
+| "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at. Past 30% it is a bulk pass, and the gate now says so. |
+| "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

@@ -171,9 +171,11 @@ you have run.
    * **No material findings** → converged. Stop, and say which round converged.
    * **Material findings** → run another round. This holds at round 3, 4, and 5 — a round still
      changing verdicts proves more remain.
-   * **A verdict that has flipped twice** → stop spending rounds on it. Freeze it `Undecided`
-     and put both readings in `## Open Questions`. An oscillating row is an ambiguous spec, not
-     an unfinished audit.
+   * **A verdict that has flipped twice on the same evidence** → stop spending rounds on it.
+     Freeze it `Undecided` and put both readings in `## Open Questions`. An oscillating row is
+     an ambiguous spec, not an unfinished audit. A flip driven by a **new citation** is not
+     oscillation — the evidence improved, so the loop continues; freezing there would write a
+     verdict the report's own citations refute.
    * **Round 5 still returning material findings** → stop, and report it as a finding of its own:
      `Loop did not converge in 5 rounds`, plus what kept changing. That means the spec is
      ambiguous or the checklist is not atomic — not that the audit is done. Never let the ceiling
@@ -185,7 +187,8 @@ you have run.
    outstanding` and lists what the last round returned unmerged. Never end early on your own
    judgement that it is enough.
 
-If the subagent tool genuinely errors, name it in the report and quote the error, then run the
+If the subagent tool genuinely errors — and a reviewer killed mid-run by a rate limit or a
+crash is that, not an empty round — name it in the report and quote the error, then run the
 rounds inline — re-deriving the checklist from the spec alone, before looking at the report again.
 
 ### 5. Lint the report
@@ -229,6 +232,10 @@ it is excluded.
 
 **Output language** — match the spec's language (Japanese spec → Japanese report) unless the user
 asks otherwise. Same rule in Mode B, keyed to the question's language.
+
+**If the gaps turn into work that has to be driven to completion**, the `goalrun` skill measures
+it: keep the `REQ-` ids — they become its ledger rows, one per requirement, and its
+`--lint-ledger --requirements` fails on any requirement the ledger forgot.
 
 ### 7. Fix mode — only if asked
 

@@ -55,6 +55,8 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 | ----- | ------ | --------- |
 | 🎯 [`goalrun`](.agents/skills/goalrun/SKILL.md) | Biến một mục tiêu thành ledger các check, giao từng phase cho subagent độc lập, và không báo xong khi script chưa exit 0 | "làm X, chạy tới khi xong" |
 
+Ba skill ghép thành một chuỗi: **`docs-review`** nói cần gì, **`testcase`** nói chứng minh thế nào, **`goalrun`** nói đã đạt chưa. Mỗi skill vẫn dùng riêng được.
+
 ### QA
 
 | Skill | Làm gì | Kích hoạt |

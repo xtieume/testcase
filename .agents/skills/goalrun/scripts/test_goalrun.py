@@ -490,6 +490,25 @@ def test_a_symlink_deliverable_survives_the_snapshot():
         assert os.path.islink(os.path.join(tmp, 'out', 'link')), 'the link did not survive'
 
 
+def test_a_break_writing_through_a_symlink_is_caught_at_the_target():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('audit\n')
+        os.symlink('report.html', os.path.join(tmp, 'out', 'link'))
+        run_cli(tmp, '--baseline')
+        # the link never changes — only what it points at does, and by a variable, so the
+        # command's text names neither
+        ledger(tmp, 'A\tlink ships\ttest -e out/link\tout/link\t'
+                    'f=out/link; echo pwned > "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == 'audit\n', 'the target was not put back'
+
+
 def test_a_break_cannot_redirect_over_another_rows_ignored_artifact():
     with tempfile.TemporaryDirectory() as tmp:
         make_repo(tmp)
@@ -587,16 +606,22 @@ def test_a_second_run_refuses_to_race_the_first():
             assert out.returncode == 2 and 'another goalrun' in out.stderr, out
         finally:
             first.wait()
-        # the lock is dropped when it ends, and a stale one never wedges the next run.
-        # the slow check has done its job; the rest of this test only needs the lock
+        # the kernel drops the lock when the holder dies, so whatever a dead run left in the
+        # file is just bytes: it never wedges the next run, and there is no stale pid to parse
         ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
-        open(lock, 'w').write('999999\n')
-        assert run_cli(tmp, '--only', 'A').returncode == 0
-        # a run killed between creating the lock and writing its pid leaves it empty; pid 0
-        # would read as alive (os.kill(0, 0) signals our own group) and wedge every run after
-        for corrupt in ('', '\n', 'not-a-pid\n', '0\n', '-1\n', '9' * 20 + '\n'):
-            open(lock, 'w').write(corrupt)
-            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {corrupt!r}'
+        for leftover in ('', '\n', 'pid 999999\n', 'not-a-pid\n', '0\n', '9' * 20 + '\n'):
+            open(lock, 'w').write(leftover)
+            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {leftover!r}'
+        # and a directory nobody may write to is a refusal or a run, never a spin
+        os.chmod(os.path.dirname(lock), 0o555)
+        try:
+            done = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              'goalrun.py'), '--only', 'A'],
+                cwd=tmp, capture_output=True, text=True, timeout=60)
+        finally:
+            os.chmod(os.path.dirname(lock), 0o755)
+        assert done.returncode in (0, 2), done
 
 
 # ---- breaks git cannot undo -------------------------------------------------------

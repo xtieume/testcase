@@ -39,8 +39,8 @@ another build goes red for reasons that are not the code.
 
 Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
 """
-import argparse, collections, datetime, glob, hashlib, os, re, shlex, shutil, signal, \
-    subprocess, sys, tempfile, time
+import argparse, collections, datetime, fcntl, glob, hashlib, os, re, shlex, shutil, \
+    signal, subprocess, sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
 LEDGER = os.path.join(GOAL_DIR, 'ledger.tsv')
@@ -211,10 +211,16 @@ def changed_paths(baseline, cwd=None):
     return {p.strip() for p in paths if p.strip()}
 
 
-def baseline_time(baseline, cwd=None):
-    """Unix time of the baseline commit — what an ignored deliverable's mtime is read against."""
-    out = _git('show', '-s', '--format=%ct', baseline, cwd=cwd) if baseline else None
-    return int(out[0]) if out else None
+def baseline_time(baseline, cwd=None, path=BASELINE):
+    """When this run's baseline was taken — what an ignored deliverable's mtime is read against.
+
+    The `baseline` file's own mtime, since that is when `--baseline` ran; the commit's date
+    only when the file is gone, which would count an artifact written days before this run."""
+    try:
+        return os.path.getmtime(os.path.join(cwd or '.', path))
+    except OSError:
+        out = _git('show', '-s', '--format=%ct', baseline, cwd=cwd) if baseline else None
+        return int(out[0]) if out else None
 
 
 def not_shipped(path, touched, cwd=None, since=None):
@@ -474,61 +480,42 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None):
     return same, crossed, [o.id for o in stuck], swept, unswept
 
 
-def _drop_stale(path, held):
-    """Remove a dead run's lock — only while it still reads exactly as it did a moment ago.
-
-    Two runs can reach this together. A plain `os.unlink` lets the slower one delete a lock
-    the faster one has already replaced with its own live claim, which is the race the lock
-    exists to prevent. Compared as text, not as a pid: a truncated or corrupt lock has no pid
-    to compare, and that is precisely the one that must still be removable."""
-    try:
-        if open(path, encoding='utf-8').read() == held:
-            os.unlink(path)
-    except OSError:
-        pass
-
-
 def hold_lock(path=LOCK):
-    """One goalrun runs checks in a tree at a time. Returns the path, or raises Misuse.
+    """One goalrun runs checks in a tree at a time. Returns the open lock, or raises Misuse.
 
     Two runs building the same tree produce reds that belong to neither: a compiler lock, a
     half-written artifact, a port already bound. Such a red is indistinguishable from a real
-    one in the table, so the second run is refused instead. A lock whose process is gone is
-    stale and taken over — a crashed run must not wedge the next one."""
+    one in the table, so the second run is refused instead.
+
+    `flock` rather than a pid file: the kernel drops the lock when the holder dies, however it
+    dies, so a crashed run cannot wedge the next one and there is no stale entry to detect, to
+    race over, or to fail to delete. The pid written inside is only there to name the holder."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    while True:
-        try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, f'{os.getpid()}\n'.encode())
-            os.close(fd)
-            return path
-        except FileExistsError:
-            try:
-                raw = open(path, encoding='utf-8').read()
-                pid = int(raw.strip() or 0)
-            except OSError:                # gone between the create attempt and this read
-                continue
-            except ValueError:
-                pid = 0
-            if pid <= 0:              # crashed between create and write, or truncated;
-                _drop_stale(path, raw)  # `os.kill(0, 0)` signals our own group: reads as alive
-                continue
-            try:
-                os.kill(pid, 0)
-            except (ProcessLookupError, ValueError, OverflowError, PermissionError) as e:
-                if isinstance(e, PermissionError):     # alive, owned by someone else
-                    raise Misuse(f'another goalrun is running checks here (pid {pid}); wait for '
-                                 f'it, or delete {path} if you know it is gone')
-                _drop_stale(path, raw)                 # stale: its process is gone
-                continue
-            raise Misuse(f'another goalrun is running checks here (pid {pid}) — a check racing '
-                         f'another build goes red for reasons that are not the code. Wait for '
-                         f'it, or delete {path} if you know it is gone')
-
-
-def drop_lock(path):
     try:
-        os.unlink(path)
+        fd = open(path, 'a+', encoding='utf-8')
+    except OSError as e:
+        raise Misuse(f'cannot open the run lock {path}: {e}')
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fd.seek(0)
+        who = fd.read().strip() or 'unknown pid'
+        fd.close()
+        raise Misuse(f'another goalrun is running checks here ({who}) — a check racing another '
+                     f'build goes red for reasons that are not the code; wait for it to finish')
+    fd.seek(0)
+    fd.truncate()
+    fd.write(f'pid {os.getpid()}\n')
+    fd.flush()
+    return fd
+
+
+def drop_lock(fd):
+    """Release it. The file stays: unlinking a flocked path races the next run onto a lock
+    nobody else can see."""
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        fd.close()
     except OSError:
         pass
 
@@ -557,6 +544,8 @@ def unrestorable(cmd, cwd=None):
         tokens = shlex.split(cmd, comments=True)
     except ValueError:                      # unbalanced quotes; the shell will complain too
         tokens = cmd.split()
+    # deliberately over-approximate: a break that merely echoes an ignored path is refused
+    # too. Refusing a harmless break costs a rewrite; missing a destructive one costs the file
     here, seen = cwd or '.', []
     for tok in tokens:
         # `>out/x`, `2>out/x` and `>>out/x` are each one token: the path is what follows
@@ -596,8 +585,10 @@ def _digest(path):
 
 def _tree_hashes(root):
     out = {}
-    for base, _dirs, files in os.walk(root):
-        for name in files:
+    for base, dirs, files in os.walk(root):
+        # a symlinked directory is an entry, not a directory to walk into: os.walk lists it
+        # under `dirs` and never yields its contents, so without this it is invisible
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             path = os.path.join(base, name)
             out[os.path.relpath(path, root)] = _digest(path)
     return out
@@ -608,13 +599,24 @@ def snapshot(srcs, cwd=None):
 
     Refusing the break covers what its text names; this covers what it reaches by a variable,
     a subshell or a helper script — the ledger directory and the row's own deliverable."""
+    here = cwd or '.'
+    wanted = []
+    for src in (x for x in srcs if x):
+        wanted.append(src)
+        # a break writing *through* a symlink changes the target and leaves the link alone,
+        # so the link's own digest sees nothing; follow it, while it stays inside the repo
+        full = os.path.join(here, src)
+        if os.path.islink(full):
+            target = os.path.relpath(os.path.realpath(full), here)
+            if not target.startswith('..') and not os.path.isabs(target):
+                wanted.append(target)
     held, kept = tempfile.mkdtemp(prefix='goalrun-snap-'), []
-    for i, src in enumerate(x for x in srcs if x):
-        root = os.path.join(cwd or '.', src)
-        if not os.path.exists(root):
+    for i, src in enumerate(dict.fromkeys(wanted)):
+        root = os.path.join(here, src)
+        if not os.path.lexists(root):
             continue
         aside = os.path.join(held, str(i))
-        if os.path.isdir(root):
+        if os.path.isdir(root) and not os.path.islink(root):
             shutil.copytree(root, aside, symlinks=True)
         else:
             shutil.copy2(root, aside, follow_symlinks=False)

@@ -34,8 +34,8 @@ grep -qxE '/?\.testcases/' "$gitdir/info/exclude" 2>/dev/null \
 ```
 
 Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores — read the
-other way, that same sentence is the trap: what git ignores, git also cannot restore (step 5).
-The script is POSIX-only (`sh -c`, process groups, git) — no Windows.
+other way, that sentence is the trap: what git ignores, git also cannot restore (step 5). The
+script is POSIX-only (`sh -c`, process groups, `flock`, git) — no Windows.
 
 ## Four modes
 
@@ -73,18 +73,12 @@ row.**
 5. **Write the ledger** per `references/ledger-design.md`: one row per requirement, `check`
    pointing at the tests step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect — for work not yet written that is `rm -f <deliverable>`, never a
-   guess at a symbol inside it. **A break may only touch files git can restore**, which the
-   restore — `git checkout -- . && git clean -fdq` — does not do for a gitignored path:
-   deleting one destroys it, and rewriting one (a check script under `.testcases/`, which is
-   untracked by design) leaves the row measuring less than the ledger says, past the end of the
-   run. `--lint-ledger` names such a break at the gate and `--verify` refuses it
-   (`UNRESTORABLE`); what a break reaches indirectly is snapshotted and put back. Track the
-   file, point the break at a tracked one, or verify that row by hand and waive it. The same
-   blind spot from the other side: a **gitignored deliverable** ships by mtime rather than by
-   git, which the lint says on every run — dropping the deliverable column to escape that
-   switches rule 6 off for the one artifact the run exists to produce, so track it instead
-   (`ledger-design.md` has the mechanism). **If you cannot write the check, you do not yet
-   understand the goal.**
+   guess at a symbol inside it. **A break may only touch files git can restore**: the restore
+   is `git checkout`/`git clean`, so a break on a gitignored path — deleting a report,
+   rewriting a check under `.testcases/` — is refused, and a **gitignored deliverable** ships
+   by the weaker standard of mtime rather than by git. Both are the same blind spot, and
+   `ledger-design.md` has the mechanism; the rule is to track the artifact. **If you cannot
+   write the check, you do not yet understand the goal.**
 6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
    spec, ledger = the document set, and run its step 4 loop as written — round log,
    convergence, an oscillating row frozen `Undecided`. `Missing` = a requirement no row
@@ -285,7 +279,7 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "'No' is safe, so skip the script" | The table is the content of "no". |
 | "Code I wrote fast and never exercised" | A spec item not met, dressed as a caveat. |
 | "Quick status, the table is overkill" | A status is a claim. The script takes seconds. |
-| "It passes when I run it in my shell" | The script runs it under `sh -c`, with another PATH. Different shell, different `python3`. |
+| "It passes when I run it in my shell" | Different shell, different PATH — different `python3`. |
 | "I'll mark it green and caveat in prose" | A caveat on `PASS` is `FAIL` with makeup. |
 | "I know the user would approve" | ⛔ Rule 9. Ask, wait, then `--sign`. |
 | "I read the code, I know what the rows are" | Wrong oracle. Requirements come from the spec; the code is what they judge. |

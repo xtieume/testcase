@@ -49,6 +49,8 @@ BASELINE = os.path.join(GOAL_DIR, 'baseline')
 # beside the ledger directory, not inside it: a break's restore rmtree's that directory
 # and recreates it, and a lock that blinks out of existence is a lock a racing run takes
 LOCK = os.path.join('.testcases', 'goalrun.lock')
+SNAP_PREFIX = 'goalrun-snap-'
+LOST_MARK = '(snapshot destroyed too)'
 NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
 NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0` is 0 seconds
@@ -378,9 +380,9 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         # at plan time the deliverable is not written yet and `rm -f <deliverable>` names a
         # path nothing can stat — the shape SKILL.md prescribes, and the one that destroys an
         # artifact later. check-ignore answers for a path that does not exist
-        if (row.brk and row.deliverable
-                and os.path.normpath(row.deliverable) in os.path.normpath(row.brk)
-                and _is_ignored(row.deliverable) and row.deliverable not in doomed):
+        named = (row.brk and row.deliverable
+                 and os.path.normpath(row.deliverable) in _tokens(row.brk))
+        if named and _is_ignored(row.deliverable) and row.deliverable not in doomed:
             doomed = doomed + [row.deliverable]
         if doomed:
             problems.append(f'{row.id}: its break names {", ".join(doomed)}, which git ignores '
@@ -493,6 +495,8 @@ def hold_lock(path=LOCK):
     race over, or to fail to delete. The pid written inside is only there to name the holder."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
     try:
+        # `a+`, never `w`: `w` truncates before the lock is taken, wiping the pid of whoever
+        # is holding it. The truncate below happens after the lock is ours
         fd = open(path, 'a+', encoding='utf-8')
     except OSError as e:
         raise Misuse(f'cannot open the run lock {path}: {e}')
@@ -544,6 +548,22 @@ def _is_ignored(path, cwd=None):
     return _IGNORED[key]
 
 
+def _tokens(cmd):
+    """The command's words, each reduced to the path it names — a redirection's target, a
+    `./` prefix and a `~` are the same file under another spelling."""
+    try:
+        raw = shlex.split(cmd)
+    except ValueError:                      # unbalanced quotes; the shell will complain too
+        raw = cmd.split()
+    out = []
+    for tok in raw:
+        # `>out/x`, `2>out/x`, `>>out/x`, `<>out/x`: the path is what follows
+        tok = re.sub(r'^\d?(?:<>|>\||>>|>|<)&?', '', tok)
+        if tok:
+            out.append(os.path.normpath(os.path.expanduser(tok)))
+    return out
+
+
 def unrestorable(cmd, cwd=None):
     """Existing gitignored paths a break command names — the ones restore cannot undo.
 
@@ -558,17 +578,12 @@ def unrestorable(cmd, cwd=None):
     `rm -f out/report*.html` and `>out/report.html` name a file as surely as `rm out/report.html`
     does. A break that hides its target behind a variable or a subshell is still beyond this,
     which is why the row's own deliverable and the ledger directory are snapshotted as well."""
-    try:
-        tokens = shlex.split(cmd)
-    except ValueError:                      # unbalanced quotes; the shell will complain too
-        tokens = cmd.split()
+    tokens = _tokens(cmd)
     # deliberately over-approximate: a break that merely echoes an ignored path is refused
     # too. Refusing a harmless break costs a rewrite; missing a destructive one costs the file
     here, seen = cwd or '.', []
     for tok in tokens:
-        # `>out/x`, `2>out/x`, `>>out/x`, `<>out/x`: the path is what follows
-        tok = re.sub(r'^\d?(?:<>|>\||>>|>|<)&?', '', tok)
-        if not tok or tok.startswith('-'):
+        if tok.startswith('-'):
             continue
         # a glob names every file it matches; an unmatched pattern names nothing
         found = (glob.glob(os.path.join(here, tok)) if glob.has_magic(tok)
@@ -612,6 +627,20 @@ def _tree_hashes(root):
     return out
 
 
+def sweep_orphan_snapshots():
+    """Remove snapshots whose run is gone. The lock is per tree, the temp directory is not:
+    a run in another repository may be holding a live copy right now, and deleting that one
+    loses the artifact it exists to put back. Its pid is what tells the two apart."""
+    for path in glob.glob(os.path.join(tempfile.gettempdir(), SNAP_PREFIX + '*')):
+        owner = os.path.basename(path)[len(SNAP_PREFIX):].partition('-')[0]
+        try:
+            os.kill(int(owner), 0)
+        except (ProcessLookupError, ValueError, OverflowError):
+            shutil.rmtree(path, ignore_errors=True)
+        except (PermissionError, OSError):
+            pass                                  # alive, or not ours to judge: leave it
+
+
 def snapshot(srcs, cwd=None):
     """Copy gitignored paths aside so a break cannot make one a one-way door.
 
@@ -630,8 +659,9 @@ def snapshot(srcs, cwd=None):
                 wanted.append(target)
     # outside the repo: a copy kept inside the tree it protects is destroyed by the same
     # break, and then there is nothing to restore from. mkdtemp is 0700, so a system temp
-    # directory is not a disclosure; an orphan left by a killed run is swept at the next run
-    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-'), []
+    # directory is not a disclosure. The pid is in the name because that temp directory is
+    # shared with runs in other trees, whose live copies must not be swept as orphans
+    held, kept = tempfile.mkdtemp(prefix=f'{SNAP_PREFIX}{os.getpid()}-'), []
     for i, src in enumerate(dict.fromkeys(wanted)):
         root = os.path.join(here, src)
         if not os.path.lexists(root):
@@ -659,7 +689,7 @@ def restore_snapshot(snap, cwd=None):
             if not os.path.lexists(aside):
                 # the break reached the copy itself. Whatever is in the tree now is all there
                 # is: destroying it for a restore that cannot follow would lose it outright
-                changed.append(f'{src} (its snapshot was destroyed; left as the break made it)')
+                changed.append(f'{src} {LOST_MARK}')
                 continue
             if os.path.isdir(aside) and not os.path.islink(aside):
                 before, after = _tree_hashes(aside), _tree_hashes(root)
@@ -667,7 +697,12 @@ def restore_snapshot(snap, cwd=None):
                              | {p for p in set(before) & set(after) if before[p] != after[p]})
                 if hit:
                     changed += [os.path.join(src, p) for p in hit]
-                    shutil.rmtree(root, ignore_errors=True)
+                    # the break may have left a file (or a link) where the directory was;
+                    # rmtree is a no-op on those and copytree would then collide
+                    if os.path.isdir(root) and not os.path.islink(root):
+                        shutil.rmtree(root, ignore_errors=True)
+                    elif os.path.lexists(root):
+                        os.unlink(root)
                     shutil.copytree(aside, root, symlinks=True)
             else:
                 # a symlink is a leaf, whatever it points at: `isdir` follows it, and a
@@ -715,8 +750,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # its break makes it fail again, and it reddens every other row's sweep for reasons that
     # have nothing to do with the planted defect. Costs one run per row, not one per pair —
     # and only the selection when no sweep will read the rest.
-    for orphan in glob.glob(os.path.join(tempfile.gettempdir(), 'goalrun-snap-*')):
-        shutil.rmtree(orphan, ignore_errors=True)   # left by a run that was killed mid-verify
+    sweep_orphan_snapshots()
     scan = everything if blast else rows
     already = {r.id for r in scan
                if not r.check.startswith('MANUAL:') and not run_check(r.check, timeout)[0]}
@@ -765,8 +799,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             all_ok, ran = False, ran + 1   # it ran; `ran` counts attempts, not successes
             print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
             if clobbered:
-                print(f'  and it had already changed {_few(clobbered)}; restored from '
-                      f'a snapshot')
+                print(f'  and it had already changed {_few(clobbered)}')
             continue
         ok, note, hung = run_check(row.check, timeout)
         if blast:
@@ -794,10 +827,13 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                   f'same file do')
         if clobbered:
             all_ok, ran = False, ran + 1
+            lost = [c for c in clobbered if LOST_MARK in c]
+            fate = ('and its snapshot went with them, so they are left as the break made them'
+                    if lost else 'and goalrun put them back from a snapshot')
             print(f'UNRESTORABLE {row.id} — its break changed {_few(clobbered)}, which git '
-                  f'cannot restore; goalrun put back what it had a snapshot of. A break that '
-                  f'rewrites a check or an ignored artifact measures less than the ledger '
-                  f'claims, so this row is unproven until the break points at a tracked file')
+                  f'cannot restore, {fate}. A break that rewrites a check or an ignored '
+                  f'artifact measures less than the ledger claims, so this row is unproven '
+                  f'until the break points at a tracked file')
         elif hung:
             all_ok, ran = False, ran + 1
             print(f'STUCK {row.id} — its check timed out under the break rather than failing; '

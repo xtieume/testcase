@@ -98,8 +98,9 @@ row.**
    of the list, is a bulk pass wearing per-id clothes**, and the gate fails on that too — one
    waiver on a short list is the exception it leaves you. Varying the
    wording does not make it smaller — either the rows exist, or `reqs.txt` is wider than what
-   this run is about and gets cut down to the part it measures. The lint prints the ratio;
-   carry it into the table, because `DONE` over a mostly-waived list is a claim about 17 rows,
+   this run is about and gets cut down to the part it measures. The lint prints the ratio —
+   `coverage: 629 requirement(s) · 17 carried by rows · 612 waived (97%)` — and that line goes
+   into the table verbatim, because `DONE` over a mostly-waived list is a claim about 17 rows,
    not 629 requirements.
 
    The gate only knows the list you wrote, and only that the id is *mentioned* by a row. A
@@ -108,7 +109,7 @@ row.**
 8. **Slice phases** — groups of row ids, by dependency.
 9. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
    building while it runs: a check racing another compile goes red for reasons that are
-   not the code. Two goalruns refuse each other by lock; a build *you* started in another
+   not the code. Two goalruns *in one tree* refuse each other by lock; a build *you* started in another
    shell is yours to wait for. A red you think is contention is not a finding either way —
    name the build, wait, and re-run that row with `--only`; the re-run is the evidence.
 
@@ -154,8 +155,8 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    defect this break planted — it tests nothing, or nothing about *this* clause; fix the
    check, not the row. `STUCK` = its check hung under the break instead of failing, which
    proves nothing either way. `UNRESTORABLE` = the break names a file git ignores, so it was
-   refused — or it reached one anyway and was undone from a snapshot; either way that row is
-   unproven until the break points at a tracked file. `NOTHING VERIFIED` = no row ran a break
+   refused — or it reached one anyway, and the run either put it back from a snapshot or says
+   it could not; either way that row is unproven until the break points at a tracked file. `NOTHING VERIFIED` = no row ran a break
    at all — every one was skipped, `MANUAL`, or already red; that run proved nothing and
    exits 1.
 

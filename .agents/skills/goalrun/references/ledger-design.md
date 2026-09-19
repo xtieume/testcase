@@ -247,7 +247,9 @@ so a break naming a gitignored path is refused (`UNRESTORABLE`). Around that ref
   covered by a snapshot of the ledger directory and of every ignored deliverable, taken before
   each break and compared after. The copy lives outside the repo, so a break that wipes the
   scaffolding does not wipe it too; if one is destroyed anyway, the tree is left as the break
-  made it rather than deleted for a copy that can no longer be read.
+  made it rather than deleted for a copy that can no longer be read. It carries the pid of the
+  run that made it, since the temp directory is shared with runs in other trees and only a
+  dead owner's copy is an orphan to sweep.
 - **Symlinks** — a deliverable that is a symlink has its target snapshotted as well, since a
   write *through* the link moves the target while the link itself never changes. A target
   outside the repo is not followed.
@@ -260,5 +262,6 @@ so a break naming a gitignored path is refused (`UNRESTORABLE`). Around that ref
   exists, so a check writing into `.testcases/` there sets the state everything is compared
   against; the copy is taken per break, so many rows plus a large ignored deliverable means
   copying it many times; a background process a check leaves running outlives the lock and
-  races the *next* run; and state outside the repo — databases, services, `$HOME` — is never
-  undone.
+  races the *next* run; `--lint-ledger` reads the ledger without the lock, so running it
+  against a tree mid-`--verify` can catch the restore rewriting that directory; and state
+  outside the repo — databases, services, `$HOME` — is never undone.

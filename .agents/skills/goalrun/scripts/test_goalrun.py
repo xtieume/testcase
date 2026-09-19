@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, os, signal, subprocess, sys, tempfile, time
+import io, os, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -525,6 +525,37 @@ def test_a_symlink_to_a_directory_is_not_reported_as_changed():
         out = run_cli(tmp, '--verify', 'A')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
         assert 'UNRESTORABLE' not in out.stdout, out.stdout
+
+
+def test_the_orphan_sweep_spares_a_live_runs_snapshot():
+    """The lock is per tree; the temp directory is shared with every other tree. A run
+    elsewhere may be holding a snapshot right now, and sweeping it loses that run's artifact."""
+    import tempfile as tf
+    mine = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}{os.getpid()}-')
+    dead = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}2147480000-')      # a pid nothing holds
+    junk = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}not-a-pid-')
+    try:
+        goalrun.sweep_orphan_snapshots()
+        assert os.path.isdir(mine), 'swept a snapshot whose run is alive'
+        assert not os.path.isdir(dead), 'left a snapshot whose run is gone'
+        assert not os.path.isdir(junk), 'left a snapshot with no readable owner'
+    finally:
+        for d in (mine, dead, junk):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_break_that_swaps_a_snapshotted_directory_for_a_file():
+    """rmtree is a no-op on a plain file, so the copy back used to collide and exit 2 with no
+    verdict at all — and the ledger was gone with it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        path = ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\t'
+                           'f=.testcases/goalrun; rm -rf "$f"; touch "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1, out
+        assert 'Traceback' not in out.stderr, out.stderr
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert os.path.exists(path), 'the ledger was not put back'
 
 
 def test_a_break_that_destroys_the_snapshot_leaves_the_ledger_standing():

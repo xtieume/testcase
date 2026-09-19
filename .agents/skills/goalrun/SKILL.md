@@ -183,9 +183,8 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    `references/pressure-test.md` and update the record.
 
 `DONE` only when every row is `PASS`. Anything short: the table, `NOT DONE`. A `--verify`
-that ends `BLAST`, `STUCK`, `ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` or
-`SWEEP STOPPED` has not
-proven the ledger, whatever the rows said a minute earlier.
+that ends `BLAST`, `STUCK`, `ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` or `SWEEP
+STOPPED` has not proven the ledger, whatever the rows said a minute earlier.
 
 ## Report the ledger, not a narrative
 
@@ -292,6 +291,6 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "`--verify` exited 0, so the ledger is proven" | Three ways it still lies: no row ran (`NOTHING VERIFIED`), two rows measure each other's defects (`BLAST`), or a break plants something cruder than the requirement. |
 | "The break fires, so the row is verified" | It fires against *something*. Deleting the function reddens a rounding check without testing rounding. |
 | "`rm -f` the report is the obvious break" | Not if git ignores it. The restore is `git checkout`; an ignored file never comes back. |
-| "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at. More than one, past 30%, is a bulk pass — the gate says so. |
+| "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at; past the step 7 threshold it is a bulk pass, and the gate says so. |
 | "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

@@ -527,6 +527,21 @@ def test_a_symlink_to_a_directory_is_not_reported_as_changed():
         assert 'UNRESTORABLE' not in out.stdout, out.stdout
 
 
+def test_a_break_that_destroys_the_snapshot_leaves_the_ledger_standing():
+    """Two ways a break reaches the scaffolding itself. The snapshot lives outside the repo so
+    it survives both; when it does not, the restore leaves the tree alone rather than deleting
+    the original for a copy it can no longer read."""
+    for brk in ('rm -rf "$TMPDIR"/goalrun-snap-* /tmp/goalrun-snap-*; echo new > old.txt',
+                'f=.testcases; rm -rf "$f"'):
+        with tempfile.TemporaryDirectory() as tmp:
+            make_repo(tmp)
+            path = ledger(tmp, f'A\told is old\tgrep -q old old.txt\t—\t{brk}\n')
+            out = run_cli(tmp, '--verify', 'A')
+            assert out.returncode == 1, (brk, out)
+            assert 'Traceback' not in out.stderr, (brk, out.stderr)
+            assert os.path.exists(path), f'{brk} left no ledger behind'
+
+
 def test_a_break_reaching_the_ledger_directory_by_variable_is_put_back():
     with tempfile.TemporaryDirectory() as tmp:
         make_repo(tmp)
@@ -665,6 +680,8 @@ def test_a_second_run_refuses_to_race_the_first():
             open(lock, 'w').write(leftover)
             assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {leftover!r}'
         # and a directory nobody may write to is a refusal or a run, never a spin
+        if os.geteuid() == 0:
+            return                  # root writes through 0555; nothing to observe
         os.chmod(os.path.dirname(lock), 0o555)
         try:
             done = subprocess.run(
@@ -700,6 +717,8 @@ def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
 def test_an_unwritable_lock_directory_says_so_instead_of_spinning():
     """`.testcases/` a user cannot write used to spin forever with no output: create fails,
     read fails, unlink fails, loop. A hang gives the caller nothing to act on."""
+    if os.geteuid() == 0:
+        return                      # root writes through 0555, so there is nothing to refuse
     with tempfile.TemporaryDirectory() as tmp:
         make_repo(tmp)
         ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')

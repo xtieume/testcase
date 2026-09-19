@@ -236,23 +236,29 @@ prints `NOTHING VERIFIED` and exits 1 — a run that proved nothing is not a pas
 | 2 | misuse or broken ledger — no ledger, empty check, duplicate id, an empty requirements file, `--blast`/`--no-blast` without `--verify`, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify`, `--requirements` without `--lint-ledger` or naming a file that does not exist, another goalrun already running checks in this tree |
 
 `check` and `break` run with the caller's shell and permissions in the caller's cwd. POSIX
-only: process groups (`os.killpg`), `sh -c` and git — not for Windows. A ledger is an
-executable file: read every row before running it, as you would a `Makefile`. A break may only touch files git can restore: the restore is `git checkout`/`git clean`, so a
-break naming a gitignored path is refused (`UNRESTORABLE`). What a break reaches indirectly —
-through a variable, a subshell, a symlink — is covered instead by a snapshot of the ledger
-directory and of every ignored deliverable, taken before each break and compared after. One
-consequence: a check that *regenerates* its own ignored deliverable during `--verify` reads as
-a break that changed it, so let the check assert the artifact rather than rebuild it. A
-deliverable git does not track cannot be seen to change either, so it ships by mtime against
-the moment `--baseline` ran — a weaker standard the lint names on every run, and one a tracked
-file never falls to, ignore pattern or not. A deliverable that is a symlink has its target
-snapshotted too, so a break writing *through* the link is seen and put back — the link itself
-never moves, which is what makes that write invisible otherwise. A target outside the repo is
-not followed.
+only: process groups (`os.killpg`), `sh -c`, `flock` and git — not for Windows. A ledger is an
+executable file: read every row before running it, as you would a `Makefile`.
 
-Two edges the snapshot does not cover, both cheap to avoid: the pre-pass that runs every check
-once on the clean tree happens before any snapshot is taken, so a check writing into
-`.testcases/` there sets the state everything is later compared against; and the copy is taken
-per break, so a ledger of many rows with a large ignored deliverable copies it many times —
-keep artifacts the run ships small, or leave them out of the deliverable column. A break that
-touches state outside the repo (databases, services, `$HOME`) is not undone.
+
+**A break may only touch files git can restore.** The restore is `git checkout`/`git clean`,
+so a break naming a gitignored path is refused (`UNRESTORABLE`). Around that refusal:
+
+- **Indirection** — what a break reaches through a variable, a subshell or a helper script is
+  covered by a snapshot of the ledger directory and of every ignored deliverable, taken before
+  each break and compared after. The copy lives outside the repo, so a break that wipes the
+  scaffolding does not wipe it too; if one is destroyed anyway, the tree is left as the break
+  made it rather than deleted for a copy that can no longer be read.
+- **Symlinks** — a deliverable that is a symlink has its target snapshotted as well, since a
+  write *through* the link moves the target while the link itself never changes. A target
+  outside the repo is not followed.
+- **Shipping** — a deliverable git does not track cannot be seen to change, so it ships by
+  mtime against the moment `--baseline` ran: a weaker standard the lint names on every run,
+  and one a tracked file never falls to, ignore pattern or not.
+- **A check that rebuilds its own ignored deliverable** during `--verify` reads as a break
+  that changed it. Let the check assert the artifact rather than regenerate it.
+- **Not covered**, all cheap to avoid: the pre-pass runs every check once before any snapshot
+  exists, so a check writing into `.testcases/` there sets the state everything is compared
+  against; the copy is taken per break, so many rows plus a large ignored deliverable means
+  copying it many times; a background process a check leaves running outlives the lock and
+  races the *next* run; and state outside the repo — databases, services, `$HOME` — is never
+  undone.

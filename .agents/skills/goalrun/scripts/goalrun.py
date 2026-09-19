@@ -378,7 +378,8 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         # at plan time the deliverable is not written yet and `rm -f <deliverable>` names a
         # path nothing can stat — the shape SKILL.md prescribes, and the one that destroys an
         # artifact later. check-ignore answers for a path that does not exist
-        if (row.brk and row.deliverable and row.deliverable in row.brk
+        if (row.brk and row.deliverable
+                and os.path.normpath(row.deliverable) in os.path.normpath(row.brk)
                 and _is_ignored(row.deliverable) and row.deliverable not in doomed):
             doomed = doomed + [row.deliverable]
         if doomed:
@@ -520,6 +521,9 @@ def drop_lock(fd):
         pass
 
 
+_IGNORED = {}
+
+
 def _is_ignored(path, cwd=None):
     """True when git can neither restore nor delete this path — ignored *and* not tracked.
 
@@ -527,13 +531,17 @@ def _is_ignored(path, cwd=None):
     tracked file: `git checkout` restores it and `git diff` sees it change. Reading only
     `check-ignore` would hand it the weaker mtime standard, where a build step touching it is
     enough to call it shipped."""
-    ignored = subprocess.run(('git', 'check-ignore', '-q', '--', path),
-                             cwd=cwd, capture_output=True).returncode == 0
-    if not ignored:
-        return False
-    tracked = subprocess.run(('git', 'ls-files', '--error-unmatch', '--', path),
-                             cwd=cwd, capture_output=True).returncode == 0
-    return not tracked
+    # a lint over 629 rows asks this of every token of every break; git answers the same way
+    # each time within one run, and two spawns per question is what made that gate slow
+    key = (os.path.normpath(path), cwd)
+    if key not in _IGNORED:
+        ignored = subprocess.run(('git', 'check-ignore', '-q', '--', path),
+                                 cwd=cwd, capture_output=True).returncode == 0
+        tracked = ignored and subprocess.run(
+            ('git', 'ls-files', '--error-unmatch', '--', path),
+            cwd=cwd, capture_output=True).returncode == 0
+        _IGNORED[key] = ignored and not tracked
+    return _IGNORED[key]
 
 
 def unrestorable(cmd, cwd=None):
@@ -551,7 +559,7 @@ def unrestorable(cmd, cwd=None):
     does. A break that hides its target behind a variable or a subshell is still beyond this,
     which is why the row's own deliverable and the ledger directory are snapshotted as well."""
     try:
-        tokens = shlex.split(cmd, comments=True)
+        tokens = shlex.split(cmd)
     except ValueError:                      # unbalanced quotes; the shell will complain too
         tokens = cmd.split()
     # deliberately over-approximate: a break that merely echoes an ignored path is refused
@@ -566,7 +574,7 @@ def unrestorable(cmd, cwd=None):
         found = (glob.glob(os.path.join(here, tok)) if glob.has_magic(tok)
                  else [os.path.join(here, tok)])
         for full in found:
-            rel = os.path.relpath(full, here)
+            rel = os.path.normpath(os.path.relpath(full, here))
             if os.path.lexists(full) and _is_ignored(rel, cwd):
                 seen.append(rel)
     return sorted(set(seen))
@@ -620,11 +628,10 @@ def snapshot(srcs, cwd=None):
             target = os.path.relpath(os.path.realpath(full), here)
             if not target.startswith('..') and not os.path.isabs(target):
                 wanted.append(target)
-    aside_root = os.path.join(here, os.path.dirname(GOAL_DIR) or '.')
-    os.makedirs(aside_root, exist_ok=True)
-    # inside the excluded tree, not /tmp: a snapshot is a copy of the run's own artifacts, and
-    # a SIGKILL between here and the restore would leave it world-readable in a shared /tmp
-    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-', dir=aside_root), []
+    # outside the repo: a copy kept inside the tree it protects is destroyed by the same
+    # break, and then there is nothing to restore from. mkdtemp is 0700, so a system temp
+    # directory is not a disclosure; an orphan left by a killed run is swept at the next run
+    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-'), []
     for i, src in enumerate(dict.fromkeys(wanted)):
         root = os.path.join(here, src)
         if not os.path.lexists(root):
@@ -649,6 +656,11 @@ def restore_snapshot(snap, cwd=None):
     try:
         for src, aside in kept:
             root = os.path.join(cwd or '.', src)
+            if not os.path.lexists(aside):
+                # the break reached the copy itself. Whatever is in the tree now is all there
+                # is: destroying it for a restore that cannot follow would lose it outright
+                changed.append(f'{src} (its snapshot was destroyed; left as the break made it)')
+                continue
             if os.path.isdir(aside) and not os.path.islink(aside):
                 before, after = _tree_hashes(aside), _tree_hashes(root)
                 hit = sorted(set(before) ^ set(after)
@@ -660,17 +672,22 @@ def restore_snapshot(snap, cwd=None):
             else:
                 # a symlink is a leaf, whatever it points at: `isdir` follows it, and a
                 # link to a directory would otherwise never compare equal to itself
+                kept_digest = _digest(aside)
                 same = (os.path.lexists(root)
                         and (os.path.islink(root) or not os.path.isdir(root))
-                        and _digest(aside) == _digest(root) != 'unreadable')
-                if not same:
-                    changed.append(src)
-                    if os.path.isdir(root) and not os.path.islink(root):
-                        shutil.rmtree(root, ignore_errors=True)
-                    elif os.path.lexists(root):
-                        os.unlink(root)
-                    os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
-                    shutil.copy2(aside, root, follow_symlinks=False)
+                        and kept_digest == _digest(root) != 'unreadable')
+                if same:
+                    continue
+                changed.append(src)
+                if kept_digest == 'unreadable':      # nothing to put back; keep what is there
+                    continue
+                # the destructive half runs only once the copy has been read back
+                if os.path.isdir(root) and not os.path.islink(root):
+                    shutil.rmtree(root, ignore_errors=True)
+                elif os.path.lexists(root):
+                    os.unlink(root)
+                os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
+                shutil.copy2(aside, root, follow_symlinks=False)
     finally:                                  # a crash mid-restore must not leak the copy
         shutil.rmtree(held, ignore_errors=True)
     return sorted(changed)
@@ -698,8 +715,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # its break makes it fail again, and it reddens every other row's sweep for reasons that
     # have nothing to do with the planted defect. Costs one run per row, not one per pair —
     # and only the selection when no sweep will read the rest.
-    for orphan in glob.glob(os.path.join(cwd or '.', os.path.dirname(GOAL_DIR),
-                                         'goalrun-snap-*')):
+    for orphan in glob.glob(os.path.join(tempfile.gettempdir(), 'goalrun-snap-*')):
         shutil.rmtree(orphan, ignore_errors=True)   # left by a run that was killed mid-verify
     scan = everything if blast else rows
     already = {r.id for r in scan
@@ -779,9 +795,9 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         if clobbered:
             all_ok, ran = False, ran + 1
             print(f'UNRESTORABLE {row.id} — its break changed {_few(clobbered)}, which git '
-                  f'cannot restore; goalrun put it back from a snapshot. A break that rewrites '
-                  f'a check or an ignored artifact measures less than the ledger claims, so '
-                  f'this row is unproven until the break points at a tracked file')
+                  f'cannot restore; goalrun put back what it had a snapshot of. A break that '
+                  f'rewrites a check or an ignored artifact measures less than the ledger '
+                  f'claims, so this row is unproven until the break points at a tracked file')
         elif hung:
             all_ok, ran = False, ran + 1
             print(f'STUCK {row.id} — its check timed out under the break rather than failing; '

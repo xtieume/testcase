@@ -1,7 +1,7 @@
 {
   "name": "testcase",
   "description": "Skills for Claude Code, ZCode, Cursor and Antigravity. Installs the whole .agents/skills catalog — each skill ending in an independent review pass. See the repository README for the current skill list.",
-  "version": "1.9.3",
+  "version": "1.10.0",
   "author": {
     "name": "xtieume"
   },

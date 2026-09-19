@@ -102,9 +102,11 @@ Tell each reviewer plainly: **an empty round is a valid result.** Every finding 
 
 A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 8) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
 
-**Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop, and still finding P0/P1 gaps at round 4 → report **unconverged**, not finished.
+**Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop. Rounds do not stop because a number was reached — if P0/P1 gaps are still appearing at round 4, run round 5, and if you are made to stop while they are, report the loop **unconverged** rather than finished. Stopping early and converging are different outcomes and never share a word.
 
-No subagent tool: do pass 2 inline, one lens at a time, re-deriving the coverage map from the requirement before looking at your table.
+No subagent tool, or a reviewer that died mid-run (rate limit, crash — quote the error in the
+table): do pass 2 inline, one lens at a time, re-deriving the coverage map from the requirement
+before looking at your table. A killed reviewer is not an empty round.
 
 ### 5. Merge the findings
 
@@ -148,6 +150,8 @@ No reason = lint error. Stale (requirement gained risk cases, or has no live cas
 The table is the spec; the runnable tests are the other half of the deliverable. Implement every `Automatable: Y` case, unless the user asked for the table only.
 
 Use the test framework already in the repo — its runner, its helpers, its fixtures — and put the files where that repo already puts tests. No new dependency, no second harness alongside the existing one. No framework at all: say so and stop here rather than picking one unasked.
+
+**When the work also has to be driven to done**, hand over to the `goalrun` skill: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
 
 **Each test names its case ID**, e.g. `test('TC-DROPDOWN-004 — rejects a 101-character name', ...)`. That ID is the only thing tying the code back to the table; without it the step-6 traceability ends at the file boundary.
 

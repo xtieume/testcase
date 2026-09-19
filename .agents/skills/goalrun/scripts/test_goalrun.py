@@ -104,33 +104,34 @@ def test_empty_ledger_is_misuse_not_done():
 # ---- running checks ---------------------------------------------------------------
 
 def test_check_passes_on_exit_zero():
-    ok, note = goalrun.run_check('true')
+    ok, note, _hung = goalrun.run_check('true')
     assert ok, note
 
 
 def test_check_fails_on_nonzero_with_last_line():
-    ok, note = goalrun.run_check('echo boom >&2; exit 1')
+    ok, note, _hung = goalrun.run_check('echo boom >&2; exit 1')
     assert not ok and 'boom' in note
 
 
 def test_check_times_out_and_kills_the_group():
     t = time.time()
-    ok, note = goalrun.run_check('sleep 30', timeout=1)
+    ok, note, hung = goalrun.run_check('sleep 30', timeout=1)
+    assert hung is True, 'a timeout is reported structurally, not by its wording'
     assert not ok and 'timed out after 1s' in note
     assert time.time() - t < 5
 
 
 def test_background_child_does_not_hold_the_run_open():
     t = time.time()
-    ok, _ = goalrun.run_check('(sleep 5 &) ; exit 0')
+    ok, _, _hung = goalrun.run_check('(sleep 5 &) ; exit 0')
     assert ok
     assert time.time() - t < 3, 'the pipe was held by the orphan; use a file, not communicate()'
 
 
 def test_non_utf8_output_does_not_crash():
-    ok, note = goalrun.run_check("printf '\\xff ok'")
+    ok, note, _hung = goalrun.run_check("printf '\\xff ok'")
     assert ok, note
-    ok, note = goalrun.run_check("printf '\\xff'; exit 1")
+    ok, note, _hung = goalrun.run_check("printf '\\xff'; exit 1")
     assert not ok
     with tempfile.TemporaryDirectory() as tmp:
         ledger(tmp, "A\tbytes\tprintf '\\xff ok'\n")
@@ -338,7 +339,10 @@ def test_only_empty_selection_is_misuse():
 
 def test_ctrl_c_kills_the_running_check():
     with tempfile.TemporaryDirectory() as tmp:
-        ledger(tmp, 'A\tslow\tsleep 30\n')
+        # a marker unique to this run: `pgrep -f 'sleep 30'` matched any sleep on the machine,
+        # so an unrelated process made the test fail and read like a leaked check
+        mark = f'goalrun-ctrlc-{os.getpid()}-{int(time.time())}'
+        ledger(tmp, f'A\tslow\tsleep 30 # {mark}\n')
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
         p = subprocess.Popen([sys.executable, script], cwd=tmp,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -347,8 +351,30 @@ def test_ctrl_c_kills_the_running_check():
         os.kill(p.pid, signal.SIGINT)
         p.wait(timeout=10)
         time.sleep(0.5)
-        r = subprocess.run(['pgrep', '-f', 'sleep 30'], capture_output=True)
+        r = subprocess.run(['pgrep', '-f', mark], capture_output=True)
         assert r.returncode != 0, 'the check outlived Ctrl-C'
+
+
+def test_a_row_whose_own_check_hangs_under_the_break_is_not_verified():
+    """A hang is not a red. Counting it as proof is the fake green this flag exists to kill —
+    and the sweep already calls the same event `stuck` when it happens to a sibling."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        # passes at once while the file is there, hangs once the break removes it
+        ledger(tmp, 'A\thangs\ttest -f old.txt || sleep 30\told.txt\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', '--timeout', '1')
+        assert out.returncode == 1, out.stdout
+        assert 'STUCK A' in out.stdout and 'VERIFIED' not in out.stdout, out.stdout
+
+
+def test_a_check_whose_output_says_timed_out_is_still_a_red_sibling():
+    """`curl: (28) Connection timed out` is a failing check, not a hung one; classifying it by
+    wording would silently downgrade a BLAST finding."""
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    sib = goalrun.Row('SIB', 'y', 'echo "connection timed out."; exit 1', 'src/y.py', '')
+    same, crossed, stuck, _, _ = goalrun.blast_radius(row, [row, sib], 5)
+    assert crossed == ['SIB'] and stuck == [], (crossed, stuck)
 
 
 def test_only_unknown_id_is_misuse():
@@ -363,7 +389,7 @@ def test_only_subset_never_says_done():
         ledger(tmp, 'GOOD\tpasses\ttrue\nBAD\tfails\tfalse\nC\tc\ttrue\nD\td\ttrue\n')
         ok = run_cli(tmp, '--only', 'GOOD,C')
         assert ok.returncode == 0 and 'DONE' not in ok.stdout, ok.stdout
-        assert 'PHASE OK — 2 rows pass (2 of 4 in ledger)' in ok.stdout, ok.stdout
+        assert 'PHASE OK — 2 row(s) pass (2 of 4 in ledger)' in ok.stdout, ok.stdout
         bad = run_cli(tmp, '--only', 'BAD')
         assert bad.returncode == 1 and 'PHASE NOT OK — 1 failing (BAD)' in bad.stdout, bad.stdout
 
@@ -436,16 +462,414 @@ def test_load_rejects_manual_without_colon():
 
 
 def test_lint_warns_when_mostly_manual_but_allows_one():
-    r = lambda i, c: goalrun.Row(i, 'x', c, '', '')
+    r = lambda i, c: goalrun.Row(i, 'x', c, '', '' if c.startswith('MANUAL:') else 'rm -f x')
     assert any('30%' in p for p in goalrun.lint([r('A', 'MANUAL:me'), r('B', 'MANUAL:me'),
                                                  r('C', 'npm test')]))
     assert goalrun.lint([r('A', 'npm test'), r('B', 'npm run lint'), r('UX', 'MANUAL:t')]) == []
 
 
-def test_lint_deliverables_need_a_baseline_but_not_a_break():
-    row = goalrun.Row('DARK', 'x', 'npm test', 'src/t.ts', '')
+def test_lint_deliverables_need_a_baseline():
+    row = goalrun.Row('DARK', 'x', 'npm test', 'src/t.ts', 'rm src/t.ts')
     assert any('baseline' in p for p in goalrun.lint([row], has_baseline=False))
-    assert goalrun.lint([row], has_baseline=True) == [], 'no break column is not a problem'
+    assert goalrun.lint([row], has_baseline=True) == []
+
+
+def test_lint_flags_a_row_that_can_never_go_red():
+    """A missing break is the cheapest way to fake a green ledger — lint has to say so."""
+    rows = [goalrun.Row('A', 'suite passes', 'true', '', ''),
+            goalrun.Row('UX', 'looks ok', 'MANUAL:t', '', '')]
+    problems = goalrun.lint(rows)
+    assert any('no break' in p and 'A' in p for p in problems), problems
+    assert not any('UX' in p for p in problems), 'a MANUAL row has nothing to break'
+
+
+def test_lint_honours_a_verify_ok_waiver():
+    rows = [goalrun.Row('A', 'suite passes', 'true', '', '')]
+    waived = {'verify-ok': {'A': 'smoke row'}, 'no-row-ok': {}}
+    assert goalrun.lint(rows, waived=waived) == []
+
+
+def test_waivers_need_a_reason():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = ledger(tmp, '# verify-ok: A\n# verify-ok: B — measured upstream\n'
+                           '# no-row-ok: REQ-1 — out of scope\nA\tx\ttrue\n')
+        w = goalrun.waivers(path)
+        assert w['verify-ok'] == {'B': 'measured upstream'}, w
+        assert w['no-row-ok'] == {'REQ-1': 'out of scope'}, w
+
+
+def test_a_reasonless_waiver_cannot_eat_its_own_id():
+    """`# verify-ok: REQ-A-001` must not parse as id REQ-A with reason 001 — that waives
+    a different row than the one written, and waives it without a reason at all."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = ledger(tmp, '# verify-ok: REQ-A-001\n'
+                           '# verify-ok: REQ-A-010 - \n'
+                           '# no-row-ok: REQ-B-002 — ships from the docs repo\n'
+                           'A\tx\ttrue\n')
+        w = goalrun.waivers(path)
+        assert w['verify-ok'] == {}, w
+        assert w['no-row-ok'] == {'REQ-B-002': 'ships from the docs repo'}, w
+        rows = [goalrun.Row('REQ-A-1', 'x', 'true', '', ''),
+                goalrun.Row('REQ-A-10', 'y', 'true', '', '')]
+        assert len(goalrun.lint(rows, waived=w)) == 1, 'neither row is waived'
+
+
+def test_an_empty_requirements_file_is_misuse():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('# only a comment\n\n')
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert out.returncode == 2 and 'no requirement ids' in out.stderr, out.stderr
+
+
+def test_lint_says_when_coverage_was_not_checked():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 0 and 'coverage not checked' in out.stdout, out.stdout
+
+
+def test_blast_separates_shared_deliverables_from_crossed_ones():
+    """Two rows shipping one file go red together on purpose; a row shipping something else
+    going red means its check cannot tell this defect from its own."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
+        open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'files')
+        run_cli(tmp, '--baseline')
+        # SIB ships a.txt like A does; WIDE greps both files, so it reddens on A's break too
+        ledger(tmp, 'A\tx\ttest -f a.txt\ta.txt\trm -f a.txt\n'
+                    'SIB\ty\tgrep -q a a.txt\ta.txt\t—\n'
+                    'WIDE\tz\tcat a.txt b.txt\tb.txt\t—\n')
+        out = run_cli(tmp, '--verify', 'A', '--blast')
+        assert 'shared A — SIB' in out.stdout, out.stdout
+        assert 'BLAST A' in out.stdout and 'WIDE' in out.stdout, out.stdout
+        assert out.returncode == 1, out.stdout
+        # a row waived from needing a break is undiscriminating on purpose: not its fault
+        ledger(tmp, '# verify-ok: WIDE — reads every file; it reddens on any defect\n'
+                    'A\tx\ttest -f a.txt\ta.txt\trm -f a.txt\n'
+                    'WIDE\tz\tcat a.txt b.txt\tb.txt\t—\n')
+        quiet = run_cli(tmp, '--verify', 'A', '--blast')
+        assert 'BLAST' not in quiet.stdout and quiet.returncode == 0, quiet.stdout
+
+
+def test_blast_normalises_the_deliverable_before_comparing():
+    """`./src/x` and `src/x` are one file; comparing raw strings flips shared into BLAST."""
+    a = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    b = goalrun.Row('B', 'y', 'false', './src/x.py', '')
+    c = goalrun.Row('C', 'z', 'exit 1', 'src/other.py', '')
+    same, crossed, stuck, swept, _ = goalrun.blast_radius(a, [a, b, c], 5)
+    assert same == ['B'] and crossed == ['C'] and stuck == [], (same, crossed, stuck)
+    assert swept == 2, swept
+
+
+def test_blast_separates_a_hung_check_from_a_confused_one():
+    slow = goalrun.Row('SLOW', 'y', 'sleep 5', 'src/other.py', '')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    same, crossed, stuck, _, _ = goalrun.blast_radius(row, [row, slow], 1)
+    assert stuck == ['SLOW'] and crossed == [] and same == [], (same, crossed, stuck)
+
+
+def test_blast_runs_one_identical_check_once():
+    """Rows sharing a command share its result — the pathological ledger is also the
+    expensive one, so the sweep must not pay for it twice."""
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    twins = [goalrun.Row(i, 'y', 'sleep 0.4; false', 'src/y.py', '') for i in ('B', 'C', 'D')]
+    start = time.time()
+    same, crossed, stuck, swept, _ = goalrun.blast_radius(row, [row] + twins, 5)
+    assert swept == 1, swept
+    assert crossed == ['B', 'C', 'D'], crossed
+    assert time.time() - start < 1.2, 'the shared command ran more than once'
+
+
+def test_lint_flags_a_waiver_pointing_at_nothing():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    waived = {'verify-ok': {'GONE': 'stale'}, 'no-row-ok': {'REQ-9': 'stale'}}
+    problems = goalrun.lint(rows, waived=waived, requirements=['REQ-1'])
+    assert any('verify-ok: GONE' in p for p in problems), problems
+    assert any('no-row-ok: REQ-9' in p for p in problems), problems
+    # without a requirement list there is nothing to check coverage waivers against
+    assert not any('REQ-9' in p for p in goalrun.lint(rows, waived=waived))
+
+
+def test_requirements_file_rejects_a_line_that_is_not_an_id():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'reqs.txt')
+        open(path, 'w').write('REQ-A-001: fine\n1. pasted from the spec\n')
+        expect_misuse(goalrun.read_requirements, path)
+
+
+def test_a_sibling_starved_by_the_deadline_is_unswept_not_stuck():
+    """A slow check the sweep ran out of time for has not hung — filing it as `stuck` would
+    turn a real BLAST into a footnote and let verify exit 0."""
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    slow_red = goalrun.Row('SLOW-RED', 'y', 'sleep 3; exit 1', 'src/y.py', '')
+    same, crossed, stuck, swept, unswept = goalrun.blast_radius(
+        row, [row, slow_red], 60, allowance=1)
+    assert unswept == ['SLOW-RED'], unswept
+    assert stuck == [] and crossed == [] and swept == 0, (stuck, crossed, swept)
+
+
+def test_the_allowance_bounds_the_whole_sweep_not_each_check():
+    """Distinct slow commands inside one sweep must not each get the full budget."""
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    slow = [goalrun.Row(f'S{i}', 'y', f'sleep 4; exit {i}', 'src/y.py', '') for i in range(1, 4)]
+    began = time.monotonic()
+    *_, unswept = goalrun.blast_radius(row, [row] + slow, 60, allowance=2)
+    assert time.monotonic() - began < 6, 'one sweep spent more than the whole budget'
+    assert len(unswept) >= 2, unswept
+
+
+def test_the_budget_is_spent_on_sweeping_not_on_the_rows_own_checks():
+    """A row's break and check are the proof, not the sweep. Charging them to the sweep's
+    budget stopped it before it had run a single sibling."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        # slow breaks, fast checks: the sweep itself needs almost no time
+        ledger(tmp, 'A\tx\ttest -f old.txt\told.txt\tsleep 2; rm -f old.txt\n'
+                    'B\ty\ttest -f old.txt\told.txt\tsleep 2; rm -f old.txt\n')
+        out = run_cli(tmp, '--verify', '--blast', '3')
+        assert 'SWEEP STOPPED' not in out.stdout, out.stdout
+        assert out.returncode == 0, out.stdout
+
+
+def test_sweep_stopped_names_the_rows_it_could_not_finish():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tx\ttest -f old.txt\told.txt\trm -f old.txt\n'
+                    'B\ty\tsleep 4; test -f old.txt\told.txt\t—\n')
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            rows = goalrun.load(os.path.join(tmp, goalrun.GOAL_DIR, 'ledger.tsv'))
+            import io, contextlib
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ok = goalrun.verify(rows, '', 60, blast=True, budget=1)
+        finally:
+            os.chdir(here)
+        out = buf.getvalue()
+        assert ok is False, out
+        assert 'SWEEP STOPPED' in out and 'the sweeps for A are incomplete' in out, out
+
+
+def test_a_row_already_red_is_not_verified_and_is_kept_out_of_the_sweep():
+    """An honest row for unbuilt work is red before anything is planted. Its break proves
+    nothing, and letting it into the sweep makes every other row report BLAST."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'GOOD\tx\ttest -f old.txt\told.txt\trm -f old.txt\n'
+                    'UNBUILT\ty\ttest -f src/cli.py\tsrc/cli.py\trm -f src/cli.py\n')
+        out = run_cli(tmp, '--verify')
+        assert 'already red before any break: UNBUILT' in out.stdout, out.stdout
+        assert 'ALREADY RED UNBUILT' in out.stdout, out.stdout
+        assert 'VERIFIED GOOD' in out.stdout, out.stdout
+        assert 'BLAST' not in out.stdout, 'a row red for its own reasons is not collateral'
+        assert out.returncode == 1, out.stdout
+
+
+def test_verify_survives_a_check_that_litters():
+    """The pre-pass runs every check before any gate; one that writes an unignored artifact
+    must not fail the later clean-tree check for dirt the script itself made."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tx\ttouch junk.junk && test -f old.txt\told.txt\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', '--no-blast')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout + out.stderr
+        assert 'clean working tree' not in out.stderr, out.stderr
+
+
+def test_verify_pre_pass_restores_an_empty_repo():
+    """git checkout -- . errors on a repo with nothing tracked; the restore must not."""
+    with tempfile.TemporaryDirectory() as tmp:
+        git(tmp, '-c', 'init.defaultBranch=main', 'init', '-q')
+        git(tmp, 'config', 'user.email', 't@example.com')
+        git(tmp, 'config', 'user.name', 't')
+        git(tmp, 'commit', '-q', '--allow-empty', '-m', 'base')
+        open(os.path.join(tmp, '.git', 'info', 'exclude'), 'a').write('.testcases/\n')
+        ledger(tmp, 'A\tx\ttrue\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1 and 'NOTHING VERIFIED' in out.stdout, out.stdout + out.stderr
+
+
+def test_requirements_file_rejects_two_ids_before_a_colon():
+    """`REQ-A-001 REQ-A-002: shared description` escaped the no-colon guard and silently
+    dropped the second id — the exact blind spot the gate exists to close."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'reqs.txt')
+        open(path, 'w').write('REQ-A-001 REQ-A-002: shared description\n')
+        expect_misuse(goalrun.read_requirements, path)
+
+
+def test_lint_flags_a_verify_ok_on_a_row_that_has_a_break():
+    """A verify-ok on a row that carries a break silently removes it from every sweep —
+    the waiver turns off the detector."""
+    rows = [goalrun.Row('A', 'x', 'true', '', 'rm -f x')]
+    waived = {'verify-ok': {'A': 'why'}, 'no-row-ok': {}}
+    assert any('has a break' in p for p in goalrun.lint(rows, waived=waived))
+
+
+def test_lint_flags_a_verify_ok_on_a_manual_row():
+    rows = [goalrun.Row('UX', 'looks ok', 'MANUAL:t', '', ''),
+            goalrun.Row('A', 'x', 'true', '', 'rm -f x')]
+    waived = {'verify-ok': {'UX': 'no break needed'}, 'no-row-ok': {}}
+    assert any('MANUAL row' in p and 'UX' in p for p in goalrun.lint(rows, waived=waived))
+
+
+def test_requirements_file_rejects_two_ids_on_one_line():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'reqs.txt')
+        open(path, 'w').write('REQ-A-001 REQ-A-002\n')
+        expect_misuse(goalrun.read_requirements, path)
+        open(path, 'w').write('REQ-A-001: one id, then a description\n')
+        assert goalrun.read_requirements(path) == ['REQ-A-001']
+
+
+def test_blast_takes_a_budget_in_seconds():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tx\ttest -f old.txt\told.txt\trm -f old.txt\n'
+                    'B\ty\tsleep 4; test -f old.txt\told.txt\trm -f old.txt\n')
+        tight = run_cli(tmp, '--verify', '--blast', '1')
+        assert 'SWEEP STOPPED' in tight.stdout and tight.returncode == 1, tight.stdout
+        assert run_cli(tmp, '--blast', '30').returncode == 2, 'still needs --verify'
+
+
+def test_the_sweep_stops_on_its_budget_and_says_so():
+    """An O(rows²) sweep on a slow suite can run for hours; silence there would be the same
+    lie as a proof that never ran."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        rows = [goalrun.Row(f'R{i}', 'x', 'sleep 0.3; test -f old.txt', 'old.txt',
+                            f'rm -f old.txt; : {i}') for i in range(4)]
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            ok = goalrun.verify(rows, '', 5, blast=True, budget=0.2)
+        finally:
+            os.chdir(here)
+        assert ok is False, 'a partly-swept proof is not a pass'
+
+
+def test_an_empty_only_is_misuse_not_a_whole_ledger_done():
+    """`--only` may never print `DONE` — that is the whole point of a phase run. An empty
+    selection falling through to the whole ledger printed exactly that."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tone\ttrue\t—\tfalse\nB\ttwo\ttrue\t—\tfalse\n')
+        out = run_cli(tmp, '--only', '')
+        assert out.returncode == 2, out.stdout + out.stderr
+        assert 'DONE' not in out.stdout, out.stdout
+        assert 'no row ids given' in out.stderr, out.stderr
+
+
+def test_blast_zero_is_a_zero_second_budget_not_an_unlimited_one():
+    """`--blast 0` reads as the smallest budget, so it must not mean the largest. The sweep
+    is the part that runs for hours; a flag that silently removes its bound is the one
+    mistake the budget exists to prevent."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
+        open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'files')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt\trm -f a.txt\n'
+                    'B\ty\tcat a.txt b.txt\tb.txt\trm -f b.txt\n')
+        zero = run_cli(tmp, '--verify', '--blast', '0')
+        assert 'SWEEP STOPPED' in zero.stdout and zero.returncode == 1, zero.stdout
+        # ...while bare --blast still means no bound at all, and finds what the sweep is for
+        bare = run_cli(tmp, '--verify', '--blast')
+        assert 'BLAST' in bare.stdout and 'SWEEP STOPPED' not in bare.stdout, bare.stdout
+
+
+def test_a_whole_ledger_verify_blasts_by_default():
+    """Knowing whether rows tell defects apart requires the sweep, so the proof run does it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
+        open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'files')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt\trm -f a.txt\n'
+                    'B\ty\tcat a.txt b.txt\tb.txt\trm -f b.txt\n')
+        whole = run_cli(tmp, '--verify')
+        assert 'BLAST' in whole.stdout and whole.returncode == 1, whole.stdout
+        subset = run_cli(tmp, '--verify', 'A')
+        assert 'BLAST' not in subset.stdout and subset.returncode == 0, subset.stdout
+        off = run_cli(tmp, '--verify', '--no-blast')
+        assert 'BLAST' not in off.stdout and off.returncode == 0, off.stdout
+        assert 'sweep skipped' in off.stdout, 'the docs promise --no-blast names the blind spot'
+        assert run_cli(tmp, '--no-blast').returncode == 2
+        assert run_cli(tmp, '--blast').returncode == 2
+
+
+def test_verify_says_the_selection_ran_nothing():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tx\ttrue\nB\ty\ttrue\t\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'no row in this selection' in out.stdout, out.stdout
+
+
+def test_waived_shape_survives_a_requirements_call():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    with tempfile.TemporaryDirectory() as tmp:
+        path = ledger(tmp, '# no-row-ok: REQ-2 — out of scope\nA\tREQ-1 x\ttrue\t\trm -f x\n')
+        problems = goalrun.lint(rows, waived=goalrun.waivers(path),
+                                requirements=['REQ-1', 'REQ-2'])
+        assert problems == [], problems
+
+
+def test_lint_names_requirements_no_row_measures():
+    rows = [goalrun.Row('EXPORT', 'REQ-EXP-001 csv export', 'true', '', 'rm -f x')]
+    problems = goalrun.lint(rows, requirements=['REQ-EXP-001', 'REQ-DOC-002'])
+    assert any('REQ-DOC-002' in p for p in problems), problems
+    assert not any('REQ-EXP-001' in p for p in problems), problems
+    waived = {'verify-ok': {}, 'no-row-ok': {'REQ-DOC-002': 'ships elsewhere'}}
+    assert goalrun.lint(rows, requirements=['REQ-DOC-002'], waived=waived) == []
+
+
+def test_lint_does_not_let_req_10_satisfy_req_1():
+    rows = [goalrun.Row('A', 'REQ-10 done', 'true', '', 'rm -f x')]
+    assert any('REQ-1:' in p for p in goalrun.lint(rows, requirements=['REQ-1']))
+    assert goalrun.lint(rows, requirements=['REQ-10']) == []
+
+
+def test_read_requirements_takes_ids_or_id_plus_description():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, 'reqs.txt')
+        open(path, 'w').write('# comment\nREQ-A-001: amount rejects 0\nREQ-A-002\nREQ-A-001\n')
+        assert goalrun.read_requirements(path) == ['REQ-A-001', 'REQ-A-002']
+
+
+def test_cli_requirements_only_reads_with_lint():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\n')
+        assert run_cli(tmp, '--requirements', 'reqs.txt').returncode == 2
+        missing = run_cli(tmp, '--lint-ledger', '--requirements', 'nope.txt')
+        assert missing.returncode == 2 and 'no requirements file' in missing.stderr
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert out.returncode == 1 and 'REQ-1' in out.stdout, out.stdout
+
+
+def test_verify_that_ran_no_break_is_not_a_pass():
+    """Exit 0 from a --verify that skipped every row is the fake green this flag exists to kill."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tsuite passes\ttrue\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1, out.stdout
+        assert 'NOTHING VERIFIED' in out.stdout, out.stdout
 
 
 def test_lint_flags_stale_signatures():
@@ -461,7 +885,9 @@ def test_cli_lint_ledger_end_to_end():
         bad = run_cli(tmp, '--lint-ledger')
         assert bad.returncode == 1 and 'no owner' in bad.stdout and 'baseline' in bad.stdout, bad.stdout
         run_cli(tmp, '--baseline')
-        ledger(tmp, 'A\tsuite\tnpm test\nB\tlint\tnpm run lint\nUX\tok\tMANUAL:t\t—\n')
+        ledger(tmp, 'A\tsuite\tnpm test\t—\trm -rf src\n'
+                    'B\tlint\tnpm run lint\t—\tprintf "x" >> src/a.js\n'
+                    'UX\tok\tMANUAL:t\t—\n')
         good = run_cli(tmp, '--lint-ledger')
         assert good.returncode == 0, good.stdout
         ledger(tmp, '# nothing\n')
@@ -506,6 +932,8 @@ if __name__ == '__main__':
             except BaseException as e:
                 noise = sys.stderr.getvalue()
                 sys.stderr = real
+                if isinstance(e, KeyboardInterrupt):
+                    raise
                 failures += 1
                 print(f'FAIL {name}: {e}')
                 for line in noise.splitlines():

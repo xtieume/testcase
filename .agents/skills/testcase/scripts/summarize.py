@@ -149,7 +149,11 @@ def norm(key):
 
 
 def suppressions(text):
-    """Return ({key: reason}, problems) for the coverage-ok comments in the file."""
+    """Return ({key: reason}, problems) for the coverage-ok comments in the file.
+
+    `goalrun` has a sibling marker, `no-row-ok:`, for a requirement with no ledger row.
+    Deliberately a different word: this one never excuses a requirement with no case.
+    """
     found, problems = {}, []
     for m in SUPPRESS_RE.finditer(text):
         parts = SUPPRESS_SPLIT.split(m.group("body").strip(), maxsplit=1)
@@ -316,10 +320,25 @@ def diff_tables(old_text, new_text):
         return "", ["--diff needs a markdown test case table in both files"]
 
     def index(headers, rows):
+        # the marker is allowed in the ID cell, so strip it before matching — otherwise
+        # marking a case obsolete there reads as the ID being deleted outright
         i = col(headers, "id")
-        return {get(r, i): r for r in rows if get(r, i)}
+        out, clashes = {}, []
+        for r in rows:
+            key = get(r, i).replace(OBSOLETE, "").strip()
+            # a raw duplicate id is lint's finding elsewhere; a collision created by stripping
+            # the marker — a live case and its [OBSOLETE] namesake — the diff cannot read
+            if key in out and (OBSOLETE in get(r, i)) != (OBSOLETE in get(out[key], i)):
+                clashes.append(f"--diff: {key} appears both live and [OBSOLETE] — the diff "
+                               f"cannot tell which row changed")
+            out[key] = r
+        return out, clashes
 
-    old, new = index(o_head, o_rows), index(n_head, n_rows)
+    (old, o_clash), (new, n_clash) = index(o_head, o_rows), index(n_head, n_rows)
+    if o_clash or n_clash:
+        # same shape as an unreadable table above: no report, and the reason on the problem
+        # channel this function already returns, not a process kill from inside a helper
+        return "", o_clash + n_clash
     added = [k for k in new if k not in old]
     removed = [k for k in old if k not in new]
 
@@ -502,6 +521,17 @@ def selfcheck():
     marked = SAMPLE.replace("| TC-A-004 | R2 | Positive | gone |", "| TC-A-004 | R2 | Positive | gone [OBSOLETE] |")
     report, diff_problems = diff_tables(SAMPLE, marked)
     assert "~ TC-A-004 [OBSOLETE]" in report and diff_problems == [], report
+    # SKILL.md allows the marker in the ID cell too; that must read as obsoleted, not deleted
+    in_id = SAMPLE.replace("| TC-A-004 | R2 |", "| TC-A-004 [OBSOLETE] | R2 |")
+    report, diff_problems = diff_tables(SAMPLE, in_id)
+    assert "~ TC-A-004 [OBSOLETE]" in report and diff_problems == [], report
+    # ...but a table holding the id both live and obsoleted is unreadable, not last-wins
+    both = SAMPLE.replace("| TC-A-004 | R2 | Positive | gone |",
+                          "| TC-A-004 | R2 | Positive | gone |\n"
+                          "| TC-A-004 [OBSOLETE] | R2 | Positive | old |")
+    report, diff_problems = diff_tables(SAMPLE, both)
+    assert report == "" and any("both live and [OBSOLETE]" in p for p in diff_problems), \
+        (report, diff_problems)
     edited = SAMPLE.replace("| saved | P2 | Y |", "| saved and logged | P0 | Y |")
     report, _ = diff_tables(SAMPLE, edited)
     assert "* TC-A-004: Expected Result, Priority" in report, report

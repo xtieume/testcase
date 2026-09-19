@@ -9,7 +9,9 @@ Reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (
 `check`       a shell command, or `MANUAL:<owner>` when a human must decide. Never empty.
               A MANUAL row is decided by a person and cannot also name a deliverable.
 `deliverable` optional path this row must have produced; `—`, `-` or empty means none.
-`break`       optional command that plants the defect `check` exists to catch (`--verify`).
+`break`       the command that plants the defect `check` exists to catch (`--verify`).
+              A row without one has never gone red; `--lint-ledger` says so unless the
+              ledger waives it with a comment line `# verify-ok: <id> — <reason>`.
 Extra columns are ignored.
 
 Verdict per row:
@@ -25,17 +27,20 @@ Modes (mutually exclusive):
                      the tree with `git checkout -- . && git clean -fdq`, so it demands a
                      clean tree first. Break commands that touch state outside the repo
                      (databases, services, $HOME) are NOT undone.
-  --lint-ledger      problems with the ledger itself
+  --lint-ledger      problems with the ledger itself; with --requirements FILE it also
+                     names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
 Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
 """
-import argparse, collections, datetime, hashlib, os, signal, subprocess, sys, tempfile
+import argparse, collections, datetime, hashlib, os, re, signal, subprocess, sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
 LEDGER = os.path.join(GOAL_DIR, 'ledger.tsv')
 SIGNOFF = os.path.join(GOAL_DIR, 'signoff.tsv')
 BASELINE = os.path.join(GOAL_DIR, 'baseline')
 NONE = ('', '—', '-')
+SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
+NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0` is 0 seconds
 
 Row = collections.namedtuple('Row', 'id what check deliverable brk')
 
@@ -73,6 +78,57 @@ def load(path):
     return rows
 
 
+def waivers(path):
+    """`# verify-ok: ID — reason` / `# no-row-ok: ID — reason` comment lines in the ledger.
+
+    A gap the author accepted on purpose, with the reason written down. Silence is not a
+    waiver, and a waiver with no reason is silence with a prefix — here that line is ignored,
+    so the gap it meant to excuse is reported.
+
+    `no-row-ok:` is deliberately not spelled `coverage-ok:`, which `testcase` uses for a
+    different thing: there it excuses a requirement whose cases are all success-path, and it
+    refuses to excuse a requirement with no case at all. Here it excuses a requirement with no
+    row. One marker with opposite preconditions in two halves of one pipeline is a trap."""
+    out = {'verify-ok': {}, 'no-row-ok': {}}
+    if not os.path.exists(path):
+        return out
+    # the separator must be surrounded by spaces: ids contain `-` (REQ-A-001), so a looser
+    # pattern lets a reasonless waiver split its own id and pass `001` off as the reason
+    pat = re.compile(r'\s*#\s*(verify-ok|no-row-ok)\s*:\s*(\S+)\s+[—-]\s+(\S.*?)\s*$')
+    with open(path, encoding='utf-8-sig') as f:
+        for raw in f:
+            m = pat.match(raw)
+            if m:
+                out[m.group(1)][m.group(2)] = m.group(3)
+    return out
+
+
+def read_requirements(path):
+    """Requirement ids, one per line. `#` comments and `ID: description` both fine."""
+    ids, seen = [], set()
+    with open(path, encoding='utf-8-sig') as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith('#'):
+                head, sep, desc = line.partition(':')
+                # `REQ-A-001 REQ-A-002` — with or without a trailing description — would
+                # silently measure only the first, and a requirement missing from this file
+                # is the blind spot the gate has
+                if len(head.split()) > 1:
+                    raise Misuse(f'{path}: {line!r} holds more than one id — one per line, or '
+                                 f'`REQ-A-001: description`')
+                rid = head.strip()
+                if not re.match(r'^[A-Za-z0-9][\w.-]*$', rid) or not re.search(r'[A-Za-z]', rid):
+                    raise Misuse(f'{path}: {rid!r} is not a requirement id — one id per line, '
+                                 f'`REQ-A-001: description` or bare')
+                if rid not in seen:
+                    seen.add(rid)
+                    ids.append(rid)
+    if not ids:
+        raise Misuse(f'no requirement ids in {path} — an empty list gates nothing')
+    return ids
+
+
 def owner_of(row):
     return ' '.join(row.check.partition(':')[2].split())
 
@@ -91,7 +147,10 @@ def _kill_group(p):
 
 
 def run_check(cmd, timeout=1800):
-    """Return (ok, one-line summary). A check passes only on exit 0.
+    """Return (ok, one-line summary, timed_out). A check passes only on exit 0.
+
+    Timeout is reported structurally, not as text: a check that hangs says nothing either way,
+    and a check's own output may legitimately end in the words "timed out".
 
     Output goes to a tempfile, not a pipe, so a backgrounded child that inherits stdout
     cannot hold the run open; the whole session is killed on timeout."""
@@ -102,14 +161,14 @@ def run_check(cmd, timeout=1800):
             code = p.wait(timeout)
         except subprocess.TimeoutExpired:
             _kill_group(p)
-            return False, f'timed out after {timeout}s'
+            return False, f'timed out after {timeout}s', True
         except KeyboardInterrupt:
             _kill_group(p)
             raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
     tail = [l.strip() for l in text.splitlines() if l.strip()]
-    return code == 0, (tail[-1][:96] if tail else f'exit {code}')
+    return code == 0, (tail[-1][:96] if tail else f'exit {code}'), False
 
 
 def _git(*args, cwd=None):
@@ -179,7 +238,7 @@ def decide(row, signatures, touched=frozenset(), timeout=1800, cwd=None):
         if sig['what_hash'] != what_hash(row.what):
             return 'WAIT', f'awaiting {owner} — signature is for an older wording'
         return 'PASS', f'signed by {sig["who"]} on {sig["date"]} — {sig["note"]}'
-    ok, note = run_check(row.check, timeout)
+    ok, note, _ = run_check(row.check, timeout)
     if not ok:
         return 'FAIL', note
     if row.deliverable:
@@ -235,9 +294,15 @@ def sign(rows, row_id, who, note, path=SIGNOFF, today=None):
     return today
 
 
-def lint(rows, signatures=None, has_baseline=True):
-    """Problems with the ledger itself. Empty list means the ledger measures something."""
+def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=None):
+    """Problems with the ledger itself. Empty list means the ledger measures something.
+
+    Two gaps a ledger closes by omission, so both are checked here rather than trusted to
+    prose: a row with no `break` (nothing proves its check can fail) and a requirement with
+    no row (nothing measures it at all). Either can be waived in the ledger with a reason."""
     problems = []
+    if waived is None:
+        waived = {'verify-ok': {}, 'no-row-ok': {}}
     if not rows:
         return ['ledger has no rows — nothing is being measured']
     manual = [r for r in rows if r.check.startswith('MANUAL:')]
@@ -254,18 +319,130 @@ def lint(rows, signatures=None, has_baseline=True):
     if shipping and not has_baseline:
         problems.append(f'rows {", ".join(shipping)} name deliverables but no baseline is '
                         f'recorded — run --baseline first')
+    unbreakable = [r.id for r in rows
+                   if not r.brk and not r.check.startswith('MANUAL:')
+                   and r.id not in waived['verify-ok']]
+    if unbreakable:
+        problems.append(f'rows {", ".join(unbreakable)} have no break — nothing proves their '
+                        f'check can fail; add one, or waive it in the ledger with '
+                        f'`# verify-ok: <id> — <reason>`')
     ids = {r.id for r in rows}
     for sid in (signatures or {}):
         if sid not in ids:
             problems.append(f'signature for {sid!r} but no such row — stale signoff.tsv')
+    manual_ids = {r.id for r in manual}
+    broken = {r.id for r in rows if r.brk}
+    for wid in waived['verify-ok']:
+        if wid in broken and wid not in manual_ids:
+            problems.append(f'`# verify-ok: {wid}` waives a row that has a break — the waiver '
+                            f'silently removes it from every sweep; delete one of the two')
+        elif wid in manual_ids:
+            problems.append(f'`# verify-ok: {wid}` waives a break on a MANUAL row, which never '
+                            f'needs one — delete the line')
+        elif wid not in ids:
+            problems.append(f'`# verify-ok: {wid}` but no such row — a waiver for nothing reads '
+                            f'as a gap someone accepted; delete the line or fix the id')
+    if requirements is not None:
+        for wid in waived['no-row-ok']:
+            if wid not in requirements:
+                problems.append(f'`# no-row-ok: {wid}` but no such requirement — delete the '
+                                f'line or fix the id')
+    for req in (requirements or []):
+        if req in waived['no-row-ok']:
+            continue
+        # whole-token match, so REQ-1 is not satisfied by a row that names REQ-10
+        pat = re.compile(rf'(?<![\w-]){re.escape(req)}(?![\w-])')
+        if not any(pat.search(r.id) or pat.search(r.what) for r in rows):
+            problems.append(f'{req}: no row measures it — a requirement with no row is a '
+                            f'permanent pass; add a row, or waive it in the ledger with '
+                            f'`# no-row-ok: {req} — <reason>`')
     return problems
 
 
-def verify(rows, ids, timeout, cwd=None):
+def blast_radius(row, rows, timeout, waived=(), allowance=None):
+    """Other rows whose check also goes red under this row's planted break.
+
+    Returns (same-deliverable siblings, crossed rows, rows that hung, checks run, rows the
+    sweep had no time left for).
+
+    `waived` names rows the sweep must ignore: ones waived from needing a break, and ones
+    already red before anything was planted.
+
+    A sibling delivering the same file is expected collateral — `rm -f src/export.py` reddens
+    every row that ships it. A row delivering something else going red means its check cannot
+    tell this defect from its own, so neither row proves what it claims. A row waived from
+    needing a break has already declared itself undiscriminating (a whole-suite row reddens on
+    every defect, which is its job) and is not counted.
+    """
+    # ponytail: O(rows²) checks. On by default for the whole-ledger proof, bounded by an
+    # absolute deadline; --no-blast opts out, a --verify subset never sweeps
+    ships = lambda r: os.path.normpath(r.deliverable) if r.deliverable else ''
+    hit, stuck, unswept, seen = [], [], [], {}
+    # the clock starts when the sweeping does — a row's own break and check are the proof,
+    # not the sweep, and charging them to the sweep's budget stops it before it begins
+    deadline = time.monotonic() + allowance if allowance is not None else None
+    for other in rows:
+        if other.id == row.id or other.check.startswith('MANUAL:') or other.id in waived:
+            continue
+        # rows running the identical command share one result under this break; that is the
+        # ledger shape the sweep exists to catch, and also the one that would cost the most
+        if other.check not in seen:
+            left = deadline - time.monotonic() if deadline else None
+            if left is not None and left < 1:
+                seen[other.check] = 'unswept'
+            else:
+                lim = timeout if left is None else min(timeout, int(left))
+                ok, _, hung = run_check(other.check, lim)
+                # hitting the sweep's own cap is the sweep running out of time, not the check
+                # hanging — calling that `stuck` would file a real BLAST as a footnote
+                seen[other.check] = ('unswept' if hung and lim < timeout else
+                                     'ok' if ok else 'stuck' if hung else 'red')
+        verdict = seen[other.check]
+        if verdict == 'unswept':
+            unswept.append(other.id)
+        elif verdict == 'stuck':
+            stuck.append(other)
+        elif verdict == 'red':
+            hit.append(other)
+    same = [o.id for o in hit if ships(o) and ships(o) == ships(row)]
+    crossed = [o.id for o in hit if o.id not in same]
+    swept = sum(1 for v in seen.values() if v != 'unswept')
+    return same, crossed, [o.id for o in stuck], swept, unswept
+
+
+def _demand_clean_tree(cwd=None):
+    """--verify restores with git checkout/clean, so it refuses to start from a dirty one."""
+    dirty = _git('status', '--porcelain', cwd=cwd)
+    if dirty:
+        top = GOAL_DIR.split(os.sep)[0] + '/'   # git lists an untracked dir as `?? .testcases/`
+        hint = ('commit or stash first' if not all(top in l for l in dirty) else
+                f'add `/{top}` to .git/info/exclude — {GOAL_DIR} is what is dirty')
+        raise Misuse(f'--verify needs a clean working tree; {hint}')
+
+
+def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET):
     """Plant each row's break, prove its check goes red, restore. Return True if all did."""
+    everything = rows                       # --blast scans the whole ledger, not the selection
     if ids:
         rows = select(rows, ids)
-    all_ok = True
+    # the clean-tree gate comes first: the pre-pass below runs checks, and a check that writes
+    # an unignored artifact would otherwise fail this gate for dirt the script itself made
+    _demand_clean_tree(cwd)
+    # One pass over the clean tree first: a row whose check already fails proves nothing when
+    # its break makes it fail again, and it reddens every other row's sweep for reasons that
+    # have nothing to do with the planted defect. Costs one run per row, not one per pair —
+    # and only the selection when no sweep will read the rest.
+    scan = everything if blast else rows
+    already = {r.id for r in scan
+               if not r.check.startswith('MANUAL:') and not run_check(r.check, timeout)[0]}
+    if _git('status', '--porcelain', cwd=cwd):
+        subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
+                       shell=True, cwd=cwd, check=True)
+    if already:
+        print(f'already red before any break: {", ".join(sorted(already))} — those rows prove '
+              f'nothing until they pass, and the sweep ignores them')
+    all_ok, ran, sweeps, spent = True, 0, 0, 0.0
+    incomplete = []
     for row in rows:
         if not row.brk:
             print(f'skip {row.id} — no break column')
@@ -273,28 +450,74 @@ def verify(rows, ids, timeout, cwd=None):
         if row.check.startswith('MANUAL:'):
             print(f'skip {row.id} — MANUAL row')
             continue
-        dirty = _git('status', '--porcelain', cwd=cwd)
-        if dirty:
-            top = GOAL_DIR.split(os.sep)[0] + '/'   # git lists an untracked dir as `?? .testcases/`
-            hint = ('commit or stash first' if not all(top in l for l in dirty) else
-                    f'add `/{top}` to .git/info/exclude — {GOAL_DIR} is what is dirty')
-            raise Misuse(f'--verify needs a clean working tree; {hint}')
-        planted, why = run_check(row.brk, timeout)
+        _demand_clean_tree(cwd)
+        if row.id in already:
+            all_ok = False
+            print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
+                  f'the break proves nothing; fix the row, then verify it')
+            continue
+        planted, why, _ = run_check(row.brk, timeout)
         if not planted:
             subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                            shell=True, cwd=cwd, check=True)
-            all_ok = False
+            all_ok, ran = False, ran + 1   # it ran; `ran` counts attempts, not successes
             print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
             continue
-        ok, note = run_check(row.check, timeout)
+        ok, note, hung = run_check(row.check, timeout)
+        if blast:
+            began = time.monotonic()
+            left = None if budget is None else max(0.0, budget - spent)
+            same, crossed, stuck, swept, unswept = blast_radius(
+                row, everything, timeout, set(waived) | already, left)
+            spent, sweeps = spent + time.monotonic() - began, sweeps + swept
+            if unswept:
+                incomplete.append(row.id)
+        else:
+            same, crossed, stuck = [], [], []
         subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                        shell=True, cwd=cwd, check=True)
-        if ok:
+        if crossed:
             all_ok = False
+            print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which ship '
+                  f'elsewhere; those checks cannot tell this defect from their own')
+        if stuck:
+            print(f'stuck {row.id} — {", ".join(stuck)} timed out under its break; those checks '
+                  f'hang rather than fail, which the sweep cannot read either way')
+        if same:
+            print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering the '
+                  f'same file do')
+        if hung:
+            all_ok, ran = False, ran + 1
+            print(f'STUCK {row.id} — its check timed out under the break rather than failing; '
+                  f'a check that hangs proves nothing about the defect')
+        elif ok:
+            all_ok, ran = False, ran + 1
             print(f'HOLLOW {row.id} — check still passed after break; it does not test what '
                   f'it claims')
         else:
+            ran += 1
             print(f'VERIFIED {row.id} — {note}')
+    if not ran:
+        # rule 2, turned on the script itself: a run that proved nothing is not a pass
+        where = 'no row in this selection' if ids else 'no row'
+        print(f'NOTHING VERIFIED — {where} ran a break; --verify proved nothing')
+        return False
+    if not blast and not ids:
+        # the docs promise --no-blast names the blind spot; silence here would be the same
+        # failure mode the rest of the script refuses
+        print('sweep skipped (--no-blast) — rows are not proven against each other\'s defects')
+    if blast and incomplete:
+        # not 'spent the budget': a budget under a check's runtime buys no sweep at all,
+        # and 0 check(s) in 0s having spent 1s reads as a bug in the accounting
+        print(f'SWEEP STOPPED — a {budget:g}s sweep budget was not enough; {sweeps} sibling '
+              f'check(s) ran in {spent:.1f}s and the sweeps for {", ".join(incomplete)} '
+              f'are incomplete, '
+              f'so those rows are unproven against the rest. Rerun with `--blast SECONDS` for '
+              f'a bigger budget, `--blast` for none at all, or `--no-blast` to accept the '
+              f'proof without the sweep')
+        all_ok = False
+    elif blast:
+        print(f'swept {sweeps} sibling check(s) across {ran} break(s) in {spent:.0f}s')
     return all_ok
 
 
@@ -314,6 +537,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--ledger', default=LEDGER)
     ap.add_argument('--timeout', type=int, default=1800, help='seconds per check')
+    ap.add_argument('--requirements', metavar='PATH',
+                    help='file of requirement ids, one per line; with --lint-ledger, names '
+                         'the ones no row measures')
     ap.add_argument('--who')
     ap.add_argument('--note', default='')
     mode = ap.add_mutually_exclusive_group()
@@ -322,6 +548,25 @@ def main():
     mode.add_argument('--baseline', nargs='?', const='HEAD', metavar='SHA')
     mode.add_argument('--lint-ledger', action='store_true')
     mode.add_argument('--verify', nargs='?', const='', metavar='A,B')
+    blast = ap.add_mutually_exclusive_group()
+    def _seconds(v):
+        n = int(v)
+        if n < 0:
+            raise argparse.ArgumentTypeError('seconds (or nothing for no budget); '
+                                             '--no-blast skips the sweep')
+        return n
+
+    blast.add_argument('--blast', dest='blast', nargs='?', const=NO_BUDGET, type=_seconds,
+                       default=None,
+                       metavar='SECONDS',
+                       help='with --verify: also run every other row under each planted break, '
+                            'to find rows whose checks cannot tell one defect from another. On '
+                            f'by default for a whole-ledger --verify with a {SWEEP_BUDGET}s '
+                            'budget, off for a subset; SECONDS sets a different budget (0 '
+                            'sweeps nothing), bare --blast removes it')
+    blast.add_argument('--no-blast', dest='blast', action='store_const', const=-1,
+                       help='skip that sweep; the proof is then blind to rows measuring each '
+                            "other's defects")
     a = ap.parse_args()
     try:
         return run(a)
@@ -336,6 +581,13 @@ def main():
 def run(a):
     if (a.who or a.note) and not a.sign:
         raise Misuse('--who/--note only mean something with --sign')
+    if a.requirements and not a.lint_ledger:
+        raise Misuse('--requirements is read by --lint-ledger')
+    if a.blast is not None and a.verify is None:
+        raise Misuse('--blast/--no-blast is read by --verify')
+
+    if a.requirements and not os.path.exists(a.requirements):
+        raise Misuse(f'no requirements file at {a.requirements}')
 
     if a.baseline:
         sha = resolve_commit(a.baseline)
@@ -354,9 +606,14 @@ def run(a):
     baseline = read_baseline()
 
     if a.lint_ledger:
-        problems = lint(rows, load_signatures(), has_baseline=baseline is not None)
+        problems = lint(rows, load_signatures(), has_baseline=baseline is not None,
+                        waived=waivers(a.ledger),
+                        requirements=read_requirements(a.requirements) if a.requirements else None)
         for p in problems:
             print(p)
+        if not a.requirements:
+            print('coverage not checked — no --requirements file; only the rows that exist '
+                  'were linted')
         print('ledger measures something' if not problems else
               f'{len(problems)} problem(s) with the ledger itself')
         return 1 if problems else 0
@@ -365,9 +622,20 @@ def run(a):
         raise Misuse('ledger has no rows')
 
     if a.verify is not None:
-        return 0 if verify(rows, a.verify, a.timeout) else 1
+        # the condition for wanting the sweep is only knowable by running it, so the whole-ledger
+        # proof runs it unless told not to; a subset run is iterative work, not the proof
+        # bare --blast means no budget; --blast N sets one, and N=0 sweeps nothing rather
+        # than everything; --no-blast (-1) skips the
+        # sweep; left alone, the whole-ledger proof sweeps under the default budget
+        blast = (a.blast != -1) if a.blast is not None else not a.verify
+        budget = (SWEEP_BUDGET if a.blast is None else
+                  None if a.blast == NO_BUDGET else max(0, a.blast))
+        return 0 if verify(rows, a.verify, a.timeout, blast=blast,
+                           waived=waivers(a.ledger)['verify-ok'], budget=budget) else 1
 
-    chosen = select(rows, a.only) if a.only else rows
+    # `is not None`, not truthiness: `--only ''` names no row, and falling through to the
+    # whole ledger turns a phase run into a `DONE` — the one verdict --only may never print
+    chosen = select(rows, a.only) if a.only is not None else rows
     shipping = [r.id for r in chosen if r.deliverable]
     if shipping and baseline is None:
         raise Misuse(f'rows {", ".join(shipping)} name deliverables but no baseline is '
@@ -377,15 +645,15 @@ def run(a):
     results = report(chosen, load_signatures(), touched, a.timeout)
     passed = sum(1 for s, _ in results if s == 'PASS')
     print()
-    if a.only:
+    if a.only is not None:
         tail = f'({len(chosen)} of {len(rows)} in ledger)'
         if passed == len(chosen):
-            print(f'PHASE OK — {passed} rows pass {tail}')
+            print(f'PHASE OK — {passed} row(s) pass {tail}')
             return 0
         print(f'PHASE NOT OK — {summary(results)} {tail}')
         return 1
     if passed == len(chosen):
-        print(f'DONE — all {passed} checks pass')
+        print(f'DONE — all {passed} check(s) pass')
         return 0
     print(f'NOT DONE — {summary(results)}')
     return 1

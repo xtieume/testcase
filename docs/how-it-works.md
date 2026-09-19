@@ -1,5 +1,7 @@
 # How these skills work
 
+[Tiếng Việt](how-it-works.vi.md)
+
 Four pictures. Everything here is drawn from the skills' own `SKILL.md` files.
 
 ## 1. The pipeline

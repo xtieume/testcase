@@ -39,13 +39,16 @@ another build goes red for reasons that are not the code.
 
 Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
 """
-import argparse, collections, datetime, hashlib, os, re, shlex, shutil, signal, subprocess, \
-    sys, tempfile, time
+import argparse, collections, datetime, glob, hashlib, os, re, shlex, shutil, signal, \
+    subprocess, sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
 LEDGER = os.path.join(GOAL_DIR, 'ledger.tsv')
 SIGNOFF = os.path.join(GOAL_DIR, 'signoff.tsv')
 BASELINE = os.path.join(GOAL_DIR, 'baseline')
+# beside the ledger directory, not inside it: a break's restore rmtree's that directory
+# and recreates it, and a lock that blinks out of existence is a lock a racing run takes
+LOCK = os.path.join('.testcases', 'goalrun.lock')
 NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
 NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0` is 0 seconds
@@ -233,10 +236,16 @@ def not_shipped(path, touched, cwd=None, since=None):
     if _is_ignored(norm, cwd):
         if since is None:
             return 'git ignores it and no baseline time is known — shipping cannot be measured'
-        newest = os.path.getmtime(full)
-        for base, _dirs, files in os.walk(full):     # a directory ships when anything in it does
-            newest = max([newest] + [os.path.getmtime(os.path.join(base, f)) for f in files])
-        return '' if newest > since else 'not written since baseline (mtime; git ignores it)'
+        def when(p):
+            try:
+                return os.path.getmtime(p)
+            except OSError:                  # a dangling symlink has no mtime; it ships nothing
+                return 0
+        newest = when(full)
+        for base, dirs, files in os.walk(full):     # a directory ships when anything in it does
+            newest = max([newest] + [when(os.path.join(base, x)) for x in files + dirs])
+        # `>=`: a file written in the same second as the baseline commit was written after it
+        return '' if newest >= since else 'not written since baseline (mtime; git ignores it)'
     return 'unchanged since baseline'
 
 
@@ -360,6 +369,12 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     # there is the common form
     for row in rows:
         doomed = unrestorable(row.brk) if row.brk else []
+        # at plan time the deliverable is not written yet and `rm -f <deliverable>` names a
+        # path nothing can stat — the shape SKILL.md prescribes, and the one that destroys an
+        # artifact later. check-ignore answers for a path that does not exist
+        if (row.brk and row.deliverable and row.deliverable in row.brk
+                and _is_ignored(row.deliverable) and row.deliverable not in doomed):
+            doomed = doomed + [row.deliverable]
         if doomed:
             problems.append(f'{row.id}: its break names {", ".join(doomed)}, which git ignores '
                             f'— `--verify` restores with git, so that break cannot be undone '
@@ -390,7 +405,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         # wearing per-id clothes, and the gate it defeats is the only one that sees a
         # requirement no row measures. Varying the wording does not make it smaller
         skipped = [r for r in requirements if r in waived['no-row-ok']]
-        if len(skipped) > 3 and len(skipped) / len(requirements) > 0.30:
+        if len(skipped) > 1 and len(skipped) / len(requirements) > 0.30:
             problems.append(
                 f'{len(skipped)} of {len(requirements)} requirements are waived with '
                 f'`# no-row-ok:` (>30%) — a ledger measuring {len(requirements) - len(skipped)} '
@@ -459,7 +474,7 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None):
     return same, crossed, [o.id for o in stuck], swept, unswept
 
 
-def hold_lock(path=os.path.join(GOAL_DIR, 'lock')):
+def hold_lock(path=LOCK):
     """One goalrun runs checks in a tree at a time. Returns the path, or raises Misuse.
 
     Two runs building the same tree produce reds that belong to neither: a compiler lock, a
@@ -517,17 +532,33 @@ def unrestorable(cmd, cwd=None):
     the run. Both happen with the plan-time default `rm -f <deliverable>` the moment the
     deliverable is ignored, so the break is refused rather than planted.
 
-    Reads the literal path tokens only: a break that hides its target behind a variable or a
-    subshell is beyond this, which is why the ledger, its checks and its signatures are
-    snapshotted separately."""
+    Reads path tokens, including what a glob expands to and what a redirection writes to —
+    `rm -f out/report*.html` and `>out/report.html` name a file as surely as `rm out/report.html`
+    does. A break that hides its target behind a variable or a subshell is still beyond this,
+    which is why the row's own deliverable and the ledger directory are snapshotted as well."""
     try:
         tokens = shlex.split(cmd, comments=True)
     except ValueError:                      # unbalanced quotes; the shell will complain too
         tokens = cmd.split()
-    hits = {t for t in tokens
-            if t and not t.startswith('-')
-            and os.path.lexists(os.path.join(cwd or '.', t)) and _is_ignored(t, cwd)}
-    return sorted(hits)
+    here, seen = cwd or '.', []
+    for tok in tokens:
+        tok = tok.lstrip('<>')              # `>out/x` is one token: the path is what follows
+        if not tok or tok.startswith('-'):
+            continue
+        # a glob names every file it matches; an unmatched pattern names nothing
+        found = (glob.glob(os.path.join(here, tok)) if glob.has_magic(tok)
+                 else [os.path.join(here, tok)])
+        for full in found:
+            rel = os.path.relpath(full, here)
+            if os.path.lexists(full) and _is_ignored(rel, cwd):
+                seen.append(rel)
+    return sorted(set(seen))
+
+
+def _few(paths, n=3):
+    """Name a few and count the rest — a truncated list reads as the whole one."""
+    head = ', '.join(paths[:n])
+    return head if len(paths) <= n else f'{head} and {len(paths) - n} more'
 
 
 def _tree_hashes(root):
@@ -544,29 +575,54 @@ def _tree_hashes(root):
     return out
 
 
-def snapshot(src, cwd=None):
-    """Copy a gitignored directory aside so a break cannot make it a one-way door."""
-    root = os.path.join(cwd or '.', src)
-    if not os.path.isdir(root):
+def snapshot(srcs, cwd=None):
+    """Copy gitignored paths aside so a break cannot make one a one-way door.
+
+    Refusing the break covers what its text names; this covers what it reaches by a variable,
+    a subshell or a helper script — the ledger directory and the row's own deliverable."""
+    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-'), []
+    for i, src in enumerate(x for x in srcs if x):
+        root = os.path.join(cwd or '.', src)
+        if not os.path.exists(root):
+            continue
+        aside = os.path.join(held, str(i))
+        if os.path.isdir(root):
+            shutil.copytree(root, aside, symlinks=True)
+        else:
+            shutil.copy2(root, aside, follow_symlinks=False)
+        kept.append((src, aside))
+    if not kept:
+        shutil.rmtree(held, ignore_errors=True)
         return None
-    held = tempfile.mkdtemp(prefix='goalrun-snap-')
-    shutil.copytree(root, os.path.join(held, 'tree'), symlinks=True)
-    return held
+    return held, kept
 
 
-def restore_snapshot(held, src, cwd=None):
-    """Put it back exactly; return the paths a break had changed (empty when it behaved)."""
-    if not held:
+def restore_snapshot(snap, cwd=None):
+    """Put them back exactly; return the paths a break had changed (empty when it behaved)."""
+    if not snap:
         return []
-    root, keep = os.path.join(cwd or '.', src), os.path.join(held, 'tree')
-    before, after = _tree_hashes(keep), _tree_hashes(root)
-    changed = sorted(set(before) ^ set(after)
-                     | {p for p in set(before) & set(after) if before[p] != after[p]})
-    if changed:
-        shutil.rmtree(root, ignore_errors=True)
-        shutil.copytree(keep, root, symlinks=True)
+    held, kept, changed = snap[0], snap[1], []
+    for src, aside in kept:
+        root = os.path.join(cwd or '.', src)
+        if os.path.isdir(aside):
+            before, after = _tree_hashes(aside), _tree_hashes(root)
+            hit = sorted(set(before) ^ set(after)
+                         | {p for p in set(before) & set(after) if before[p] != after[p]})
+            if hit:
+                changed += [os.path.join(src, p) for p in hit]
+                shutil.rmtree(root, ignore_errors=True)
+                shutil.copytree(aside, root, symlinks=True)
+        else:
+            same = (os.path.lexists(root) and not os.path.isdir(root)
+                    and open(aside, 'rb').read() == open(root, 'rb').read())
+            if not same:
+                changed.append(src)
+                if os.path.isdir(root):
+                    shutil.rmtree(root, ignore_errors=True)
+                os.makedirs(os.path.dirname(root) or '.', exist_ok=True)
+                shutil.copy2(aside, root, follow_symlinks=False)
     shutil.rmtree(held, ignore_errors=True)
-    return changed
+    return sorted(changed)
 
 
 def _demand_clean_tree(cwd=None):
@@ -623,19 +679,21 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                   f'planted. Track the file, point the break at a tracked one, or verify this '
                   f'row by hand and waive it with `# verify-ok: {row.id} — <reason>`')
             continue
-        # the ledger and its check scripts live in a gitignored directory, so a break that
-        # edits one outlives the restore and leaves the row measuring less than it claims
-        held = snapshot(GOAL_DIR, cwd)
+        # the ledger and its check scripts live in a gitignored directory, and an ignored
+        # deliverable is outside git too: a break reaching either through a variable outlives
+        # the restore — one leaves the row measuring less, the other loses the artifact
+        held = snapshot([GOAL_DIR, row.deliverable if row.deliverable
+                         and _is_ignored(row.deliverable, cwd) else None], cwd)
         planted, why, _ = run_check(row.brk, timeout)
         if not planted:
             subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                            shell=True, cwd=cwd, check=True)
-            clobbered = restore_snapshot(held, GOAL_DIR, cwd)
+            clobbered = restore_snapshot(held, cwd)
             all_ok, ran = False, ran + 1   # it ran; `ran` counts attempts, not successes
             print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
             if clobbered:
-                print(f'  and it had already changed {", ".join(clobbered[:3])} under '
-                      f'{GOAL_DIR}; restored from a snapshot')
+                print(f'  and it had already changed {_few(clobbered)}; restored from '
+                      f'a snapshot')
             continue
         ok, note, hung = run_check(row.check, timeout)
         if blast:
@@ -650,7 +708,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             same, crossed, stuck = [], [], []
         subprocess.run('git -c core.quotePath=false checkout -- . && git clean -fdq',
                        shell=True, cwd=cwd, check=True)
-        clobbered = restore_snapshot(held, GOAL_DIR, cwd)
+        clobbered = restore_snapshot(held, cwd)
         if crossed:
             all_ok = False
             print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which ship '
@@ -663,9 +721,9 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                   f'same file do')
         if clobbered:
             all_ok, ran = False, ran + 1
-            print(f'UNRESTORABLE {row.id} — its break changed {", ".join(clobbered[:3])} under '
-                  f'{GOAL_DIR}, which git cannot restore; goalrun put it back from a snapshot. '
-                  f'A break that rewrites a check measures less than the ledger claims, so '
+            print(f'UNRESTORABLE {row.id} — its break changed {_few(clobbered)}, which git '
+                  f'cannot restore; goalrun put it back from a snapshot. A break that rewrites '
+                  f'a check or an ignored artifact measures less than the ledger claims, so '
                   f'this row is unproven until the break points at a tracked file')
         elif hung:
             all_ok, ran = False, ran + 1
@@ -788,9 +846,9 @@ def run(a):
 
     if a.lint_ledger:
         waived = waivers(a.ledger)
+        reqs = read_requirements(a.requirements) if a.requirements else None
         problems = lint(rows, load_signatures(), has_baseline=baseline is not None,
-                        waived=waived,
-                        requirements=read_requirements(a.requirements) if a.requirements else None)
+                        waived=waived, requirements=reqs)
         for p in problems:
             print(p)
         # not a problem — a weaker standard, said out loud. git sees neither the content nor
@@ -801,8 +859,7 @@ def run(a):
                 print(f'{row.id}: git ignores {row.deliverable}, so shipping is measured by '
                       f'mtime and no break may touch it — track the file to measure it '
                       f'properly')
-        if a.requirements:
-            reqs = read_requirements(a.requirements)
+        if reqs:
             skipped = sum(1 for r in reqs if r in waived['no-row-ok'])
             print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped} carried by '
                   f'rows · {skipped} waived ({skipped * 100 // len(reqs)}%)')

@@ -437,6 +437,68 @@ def test_verify_flags_a_hollow_check():
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
 
 
+def test_a_break_cannot_destroy_an_ignored_deliverable_through_a_glob():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        run_cli(tmp, '--baseline')
+        # the same defect written three ways: a literal path, a glob, and a redirection
+        for brk in ('rm -f out/report.html', 'rm -f out/report*.html', ': >out/report.html'):
+            ledger(tmp, f'A\treport\ttest -s out/report.html\tout/report.html\t{brk}\n')
+            out = run_cli(tmp, '--verify', 'A')
+            assert out.returncode == 1, (brk, out.stdout)
+            assert 'UNRESTORABLE A' in out.stdout, (brk, out.stdout)
+            assert open(report).read() == '86KB of audit\n', f'{brk} destroyed the report'
+
+
+def test_a_break_reaching_an_ignored_deliverable_indirectly_is_put_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        run_cli(tmp, '--baseline')
+        # behind a variable, so no reading of the command's text can see the path
+        ledger(tmp, 'A\treport\ttest -s out/report.html\tout/report.html\t'
+                    'f=out/report.html; rm -f "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == '86KB of audit\n', 'snapshot did not put it back'
+
+
+def test_lint_catches_the_plan_time_break_before_the_deliverable_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        run_cli(tmp, '--baseline')
+        # nothing has been written yet — the shape the skill prescribes for work not yet done
+        ledger(tmp, 'A\treport\ttest -s out/report.html\tout/report.html\t'
+                    'rm -f out/report.html\n')
+        assert not os.path.exists(os.path.join(tmp, 'out', 'report.html'))
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 1, out
+        assert 'its break names out/report.html' in out.stdout, out.stdout
+
+
+def test_lint_waiver_gate_holds_on_a_small_list():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    reqs = ['REQ-1', 'REQ-2', 'REQ-3']
+    waived = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere', 'REQ-3': 'next run'}}
+    problems = goalrun.lint(rows, waived=waived, requirements=reqs)
+    assert any('2 of 3 requirements are waived' in p for p in problems), problems
+    # one of three is under the line and stays a waiver, not a bulk pass
+    ok = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere'}}
+    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in ('REQ-1', 'REQ-3')]
+    assert goalrun.lint(rows, waived=ok, requirements=reqs) == []
+
+
 # ---- ignored deliverables and the run lock ----------------------------------------
 
 def test_gitignored_deliverable_ships_when_written_after_the_baseline():
@@ -477,14 +539,19 @@ def test_a_second_run_refuses_to_race_the_first():
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
         first = subprocess.Popen([sys.executable, script], cwd=tmp,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lock = os.path.join(tmp, goalrun.LOCK)
         try:
-            time.sleep(0.8)
+            # wait for the lock to appear rather than for a guessed number of seconds: on a
+            # loaded runner python's own startup can outlast any sleep short enough to be useful
+            deadline = time.time() + 20
+            while not os.path.exists(lock) and time.time() < deadline:
+                time.sleep(0.02)
+            assert os.path.exists(lock), 'first run never took the lock'
             out = run_cli(tmp, '--only', 'A')
             assert out.returncode == 2 and 'another goalrun' in out.stderr, out
         finally:
             first.wait()
         # the lock is dropped when it ends, and a stale one never wedges the next run
-        lock = os.path.join(tmp, goalrun.GOAL_DIR, 'lock')
         open(lock, 'w').write('999999\n')
         assert run_cli(tmp, '--only', 'A').returncode == 0
         # a run killed between creating the lock and writing its pid leaves it empty; pid 0

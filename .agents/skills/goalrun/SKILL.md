@@ -33,10 +33,9 @@ grep -qxE '/?\.testcases/' "$gitdir/info/exclude" 2>/dev/null \
   || echo '/.testcases/' >> "$gitdir/info/exclude"
 ```
 
-Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores — and that
-same sentence read the other way is the trap: what git ignores, git also cannot restore, so a
-break must never touch one (below, step 5). The
-script is POSIX-only (`sh -c`, process groups, git) — no Windows.
+Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores — read the
+other way, that same sentence is the trap: what git ignores, git also cannot restore (step 5).
+The script is POSIX-only (`sh -c`, process groups, git) — no Windows.
 
 ## Four modes
 
@@ -74,21 +73,18 @@ row.**
 5. **Write the ledger** per `references/ledger-design.md`: one row per requirement, `check`
    pointing at the tests step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect — for work not yet written that is `rm -f <deliverable>`, never a
-   guess at a symbol inside it. **A break may only touch files git can restore.** The restore
-   is `git checkout -- . && git clean -fdq`, so a gitignored path — a report under an ignored
-   output directory, a check script under `.testcases/` — is outside it: deleting one destroys
-   it, and rewriting one leaves the row measuring less than the ledger says, past the end of
-   the run. `--verify` refuses such a break (`UNRESTORABLE`) instead of planting it, and puts
-   `.testcases/` back from a snapshot when a break got there first — and `--lint-ledger`
-   names such a break at the gate, before the proof. **A break never reaches into
-   `.testcases/`**: that whole tree is untracked by design, so a break editing a check
-   script there survives the restore and the row measures less from then on. Track the file, point the
-   break at a tracked one, or verify that row by hand and waive it. A **gitignored
-   deliverable** is the same blind spot from the other side: git sees neither its content
-   nor its history, so shipping falls back to mtime against the baseline commit and the
-   lint says so on every run. Dropping the deliverable column to escape that switches
-   rule 6 off for the one artifact the run exists to produce — track the file instead.
-   **If you cannot write the check, you do not yet understand the goal.**
+   guess at a symbol inside it. **A break may only touch files git can restore**, which the
+   restore — `git checkout -- . && git clean -fdq` — does not do for a gitignored path:
+   deleting one destroys it, and rewriting one (a check script under `.testcases/`, which is
+   untracked by design) leaves the row measuring less than the ledger says, past the end of the
+   run. `--lint-ledger` names such a break at the gate and `--verify` refuses it
+   (`UNRESTORABLE`); what a break reaches indirectly is snapshotted and put back. Track the
+   file, point the break at a tracked one, or verify that row by hand and waive it. The same
+   blind spot from the other side: a **gitignored deliverable** ships by mtime rather than by
+   git, which the lint says on every run — dropping the deliverable column to escape that
+   switches rule 6 off for the one artifact the run exists to produce, so track it instead
+   (`ledger-design.md` has the mechanism). **If you cannot write the check, you do not yet
+   understand the goal.**
 6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
    spec, ledger = the document set, and run its step 4 loop as written — round log,
    convergence, an oscillating row frozen `Undecided`. `Missing` = a requirement no row

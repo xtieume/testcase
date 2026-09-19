@@ -33,7 +33,9 @@ grep -qxE '/?\.testcases/' "$gitdir/info/exclude" 2>/dev/null \
   || echo '/.testcases/' >> "$gitdir/info/exclude"
 ```
 
-Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores. The
+Not optional: `--verify` runs `git clean -fdq`, which spares only what git ignores — and that
+same sentence read the other way is the trap: what git ignores, git also cannot restore, so a
+break must never touch one (below, step 5). The
 script is POSIX-only (`sh -c`, process groups, git) — no Windows.
 
 ## Four modes

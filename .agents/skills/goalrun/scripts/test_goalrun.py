@@ -31,10 +31,12 @@ def ledger(tmp, text):
     return path
 
 
-def run_cli(cwd, *args):
+def run_cli(cwd, *args, timeout=None):
+    """`timeout` only where a hang is the very thing under test: a test that hangs reports
+    nothing, so the run has to be cut short and read as a failure."""
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
     return subprocess.run([sys.executable, script, *args],
-                          cwd=cwd, capture_output=True, text=True)
+                          cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
 def expect_misuse(fn, *args, **kw):
@@ -624,7 +626,44 @@ def test_a_second_run_refuses_to_race_the_first():
         assert done.returncode in (0, 2), done
 
 
-# ---- breaks git cannot undo -------------------------------------------------------
+def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
+    """The kernel drops an flock however the holder dies — including SIGKILL, where no
+    cleanup of ours can run. This is the case the pid heuristic existed to guess at."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tslow\tsleep 30\t—\trm -f old.txt\n')
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+        first = subprocess.Popen([sys.executable, script], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lock = os.path.join(tmp, goalrun.LOCK)
+        deadline = time.time() + 20
+        while not os.path.exists(lock) and time.time() < deadline:
+            time.sleep(0.02)
+        assert os.path.exists(lock), 'first run never took the lock'
+        first.kill()                      # SIGKILL: no atexit, no finally, no drop_lock
+        first.wait()
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 0, out   # lock file still there, lock itself gone with the pid
+
+
+def test_an_unwritable_lock_directory_says_so_instead_of_spinning():
+    """`.testcases/` a user cannot write used to spin forever with no output: create fails,
+    read fails, unlink fails, loop. A hang gives the caller nothing to act on."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        held = os.path.join(tmp, os.path.dirname(goalrun.LOCK))
+        os.makedirs(held, exist_ok=True)
+        mode = os.stat(held).st_mode
+        os.chmod(held, 0o555)
+        try:
+            out = run_cli(tmp, '--only', 'A', timeout=30)
+        finally:
+            os.chmod(held, mode)
+        assert out.returncode == 2, out
+        assert 'run lock' in out.stderr, out.stderr
+
 
 def test_lint_catches_a_break_git_cannot_undo_before_verify_does():
     with tempfile.TemporaryDirectory() as tmp:

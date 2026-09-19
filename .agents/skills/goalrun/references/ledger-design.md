@@ -244,5 +244,7 @@ directory and of every ignored deliverable, taken before each break and compared
 consequence: a check that *regenerates* its own ignored deliverable during `--verify` reads as
 a break that changed it, so let the check assert the artifact rather than rebuild it. A
 deliverable git ignores cannot be seen to change either, so it ships by mtime against the
-moment `--baseline` ran — a weaker standard the lint names on every run. A break that
+moment `--baseline` ran — a weaker standard the lint names on every run. A deliverable that is a symlink has its target snapshotted too, so a break writing *through* the
+link is seen and put back — the link itself never moves, which is what makes that write invisible
+otherwise. A target outside the repo is not followed. A break that
 touches state outside the repo (databases, services, `$HOME`) is not undone.

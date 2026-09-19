@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, os, signal, subprocess, sys, tempfile, time
+import glob, io, os, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -31,10 +31,12 @@ def ledger(tmp, text):
     return path
 
 
-def run_cli(cwd, *args):
+def run_cli(cwd, *args, timeout=None):
+    """`timeout` only where a hang is the very thing under test: a test that hangs reports
+    nothing, so the run has to be cut short and read as a failure."""
     script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
     return subprocess.run([sys.executable, script, *args],
-                          cwd=cwd, capture_output=True, text=True)
+                          cwd=cwd, capture_output=True, text=True, timeout=timeout)
 
 
 def expect_misuse(fn, *args, **kw):
@@ -437,6 +439,410 @@ def test_verify_flags_a_hollow_check():
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
 
 
+def test_a_break_cannot_destroy_an_ignored_deliverable_through_a_glob():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        run_cli(tmp, '--baseline')
+        # the same defect written three ways: a literal path, a glob, and a redirection
+        for brk in ('rm -f out/report.html', 'rm -f out/report*.html', ': >out/report.html'):
+            ledger(tmp, f'A\treport\ttest -s out/report.html\tout/report.html\t{brk}\n')
+            out = run_cli(tmp, '--verify', 'A')
+            assert out.returncode == 1, (brk, out.stdout)
+            assert 'UNRESTORABLE A' in out.stdout, (brk, out.stdout)
+            assert open(report).read() == '86KB of audit\n', f'{brk} destroyed the report'
+
+
+def test_a_break_reaching_an_ignored_deliverable_indirectly_is_put_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        run_cli(tmp, '--baseline')
+        # behind a variable, so no reading of the command's text can see the path
+        ledger(tmp, 'A\treport\ttest -s out/report.html\tout/report.html\t'
+                    'f=out/report.html; rm -f "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == '86KB of audit\n', 'snapshot did not put it back'
+
+
+def test_a_symlink_deliverable_survives_the_snapshot():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('audit\n')
+        # relative: dangling when read from the snapshot directory, so it must be copied and
+        # compared as a link, never opened through
+        os.symlink('report.html', os.path.join(tmp, 'out', 'link'))
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tlink ships\ttest -e out/link\tout/link\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1, out
+        assert 'Error' not in out.stderr and 'Traceback' not in out.stderr, out.stderr
+        # the break touches a tracked file only, so this row is HOLLOW — never UNRESTORABLE,
+        # which would mean the restore thought the untouched link had changed
+        assert 'HOLLOW A' in out.stdout and 'UNRESTORABLE' not in out.stdout, out.stdout
+        assert os.path.islink(os.path.join(tmp, 'out', 'link')), 'the link did not survive'
+
+
+def test_a_tracked_file_matching_an_ignore_pattern_is_still_measured_by_git():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('audit\n')
+        git(tmp, 'add', '-A'); git(tmp, 'add', '-f', 'out/report.html')
+        git(tmp, 'commit', '-qm', 'report tracked despite the pattern')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\treport\ttrue\tout/report.html\t—\n')
+        os.utime(os.path.join(tmp, 'out', 'report.html'))   # touched, not written
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 1, out
+        assert 'unchanged since baseline' in out.stdout, out.stdout
+
+
+def test_a_symlink_to_a_directory_is_not_reported_as_changed():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out', 'v1'))
+        open(os.path.join(tmp, 'out', 'v1', 'index.html'), 'w').write('v1\n')
+        os.symlink('v1', os.path.join(tmp, 'out', 'pub'))
+        run_cli(tmp, '--baseline')
+        # the break touches a tracked file; nothing ignored moves
+        ledger(tmp, 'A\tpub ships\ttest -s old.txt\tout/pub\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
+        assert 'UNRESTORABLE' not in out.stdout, out.stdout
+
+
+def test_a_file_the_run_cannot_read_refuses_the_break_instead_of_crashing():
+    """A file it cannot copy is a file it cannot put back, so planting the break would leave
+    it at the break's mercy. Refusing is the honest end — with a verdict, and no copy left
+    behind in the temp directory."""
+    if os.geteuid() == 0:
+        return                                # root reads through mode 000
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        path = ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\techo new > old.txt\n')
+        unreadable = os.path.join(tmp, goalrun.GOAL_DIR, 'notes.txt')
+        open(unreadable, 'w').write('x\n')
+        os.chmod(unreadable, 0o000)
+        before = set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                            goalrun.SNAP_PREFIX + '*')))
+        try:
+            out = run_cli(tmp, '--verify', 'A')
+        finally:
+            os.chmod(unreadable, 0o644)
+        assert out.returncode == 2, out
+        assert 'cannot snapshot' in out.stderr, out.stderr
+        assert 'Traceback' not in out.stderr, out.stderr
+        assert os.path.exists(path)
+        after = set(glob.glob(os.path.join(tempfile.gettempdir(),
+                                           goalrun.SNAP_PREFIX + '*')))
+        assert after == before, 'the half-made snapshot was left behind'
+
+
+def test_the_orphan_sweep_spares_a_live_runs_snapshot():
+    """The lock is per tree; the temp directory is shared with every other tree. A run
+    elsewhere may be holding a snapshot right now, and sweeping it loses that run's artifact."""
+    import tempfile as tf
+    mine = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}{os.getpid()}-')
+    dead = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}2147480000-')      # a pid nothing holds
+    junk = tf.mkdtemp(prefix=f'{goalrun.SNAP_PREFIX}not-a-pid-')
+    try:
+        goalrun.sweep_orphan_snapshots()
+        assert os.path.isdir(mine), 'swept a snapshot whose run is alive'
+        assert not os.path.isdir(dead), 'left a snapshot whose run is gone'
+        assert not os.path.isdir(junk), 'left a snapshot with no readable owner'
+    finally:
+        for d in (mine, dead, junk):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def test_a_break_that_swaps_a_snapshotted_directory_for_a_file():
+    """rmtree is a no-op on a plain file, so the copy back used to collide and exit 2 with no
+    verdict at all — and the ledger was gone with it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        path = ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\t'
+                           'f=.testcases/goalrun; rm -rf "$f"; touch "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1, out
+        assert 'Traceback' not in out.stderr, out.stderr
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert os.path.exists(path), 'the ledger was not put back'
+
+
+def test_a_break_that_destroys_the_snapshot_leaves_the_ledger_standing():
+    """Two ways a break reaches the scaffolding itself. The snapshot lives outside the repo so
+    it survives both; when it does not, the restore leaves the tree alone rather than deleting
+    the original for a copy it can no longer read."""
+    for brk in ('rm -rf "$TMPDIR"/goalrun-snap-* /tmp/goalrun-snap-*; echo new > old.txt',
+                'f=.testcases; rm -rf "$f"'):
+        with tempfile.TemporaryDirectory() as tmp:
+            make_repo(tmp)
+            path = ledger(tmp, f'A\told is old\tgrep -q old old.txt\t—\t{brk}\n')
+            out = run_cli(tmp, '--verify', 'A')
+            assert out.returncode == 1, (brk, out)
+            assert 'Traceback' not in out.stderr, (brk, out.stderr)
+            assert os.path.exists(path), f'{brk} left no ledger behind'
+
+
+def test_a_break_reaching_the_ledger_directory_by_variable_is_put_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('grep -q old old.txt\n')
+        # the path the pressure-test record named as never exercised: indirection into the
+        # ledger directory, which no reading of the command's text can refuse
+        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'f=.testcases/goalrun/chk.sh; printf "true\\n" > "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(chk).read() == 'grep -q old old.txt\n', 'the check was not put back'
+
+
+def test_a_break_writing_through_a_symlink_is_caught_at_the_target():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('audit\n')
+        os.symlink('report.html', os.path.join(tmp, 'out', 'link'))
+        run_cli(tmp, '--baseline')
+        # the link never changes — only what it points at does, and by a variable, so the
+        # command's text names neither
+        ledger(tmp, 'A\tlink ships\ttest -e out/link\tout/link\t'
+                    'f=out/link; echo pwned > "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == 'audit\n', 'the target was not put back'
+
+
+def test_a_break_cannot_redirect_over_another_rows_ignored_artifact():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('audit\n')
+        run_cli(tmp, '--baseline')
+        # A never names the report; its stderr redirect lands on B's deliverable
+        ledger(tmp, 'A\told\ttest -s old.txt\t—\tsh -c "echo x 2>out/report.html; '
+                    'rm -f old.txt"\n'
+                    'B\treport\ttest -s out/report.html\tout/report.html\t—\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == 'audit\n', "the sibling's artifact was not put back"
+
+
+def test_lint_catches_the_plan_time_break_before_the_deliverable_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        run_cli(tmp, '--baseline')
+        # nothing has been written yet — the shape the skill prescribes for work not yet done
+        ledger(tmp, 'A\treport\ttest -s out/report.html\tout/report.html\t'
+                    'rm -f out/report.html\n')
+        assert not os.path.exists(os.path.join(tmp, 'out', 'report.html'))
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 1, out
+        assert 'its break names out/report.html' in out.stdout, out.stdout
+
+
+def test_lint_waiver_gate_holds_on_a_small_list():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    reqs = ['REQ-1', 'REQ-2', 'REQ-3']
+    waived = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere', 'REQ-3': 'next run'}}
+    problems = goalrun.lint(rows, waived=waived, requirements=reqs)
+    assert any('2 of 3 requirements are waived' in p for p in problems), problems
+    # a single waiver is the exemption the gate leaves, whatever the ratio of a short list
+    ok = {'verify-ok': {}, 'no-row-ok': {'REQ-2': 'ships elsewhere'}}
+    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in ('REQ-1', 'REQ-3')]
+    assert goalrun.lint(rows, waived=ok, requirements=reqs) == []
+
+
+# ---- ignored deliverables and the run lock ----------------------------------------
+
+def test_gitignored_deliverable_ships_when_written_after_the_baseline():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        run_cli(tmp, '--baseline')
+        os.makedirs(os.path.join(tmp, 'out'))
+        report = os.path.join(tmp, 'out', 'report.html')
+        open(report, 'w').write('<h1>audit</h1>\n')
+        ledger(tmp, 'A\treport written\ttrue\tout/report.html\t—\n')
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 0 and 'PASS' in out.stdout, out.stdout
+        # older than the baseline commit: not this run's work, and git cannot tell us
+        os.utime(report, (1, 1))
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 1 and 'mtime' in out.stdout, out.stdout
+
+
+def test_lint_names_a_deliverable_git_ignores():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('x\n')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\treport\ttrue\tout/report.html\trm -f old.txt\n')
+        out = run_cli(tmp, '--lint-ledger')
+        assert 'out/report.html' in out.stdout and 'mtime' in out.stdout, out.stdout
+
+
+def test_a_second_run_refuses_to_race_the_first():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tslow\tsleep 3\t—\trm -f old.txt\n')
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+        first = subprocess.Popen([sys.executable, script], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lock = os.path.join(tmp, goalrun.LOCK)
+        try:
+            # wait for the lock to appear rather than for a guessed number of seconds: on a
+            # loaded runner python's own startup can outlast any sleep short enough to be useful
+            deadline = time.time() + 20
+            while not os.path.exists(lock) and time.time() < deadline:
+                time.sleep(0.02)
+            assert os.path.exists(lock), 'first run never took the lock'
+            out = run_cli(tmp, '--only', 'A')
+            assert out.returncode == 2 and 'another goalrun' in out.stderr, out
+        finally:
+            first.wait()
+        # the kernel drops the lock when the holder dies, so whatever a dead run left in the
+        # file is just bytes: it never wedges the next run, and there is no stale pid to parse
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        for leftover in ('', '\n', 'pid 999999\n', 'not-a-pid\n', '0\n', '9' * 20 + '\n'):
+            open(lock, 'w').write(leftover)
+            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {leftover!r}'
+        # and a directory nobody may write to is a refusal or a run, never a spin
+        if os.geteuid() == 0:
+            return                  # root writes through 0555; nothing to observe
+        os.chmod(os.path.dirname(lock), 0o555)
+        try:
+            done = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              'goalrun.py'), '--only', 'A'],
+                cwd=tmp, capture_output=True, text=True, timeout=60)
+        finally:
+            os.chmod(os.path.dirname(lock), 0o755)
+        assert done.returncode in (0, 2), done
+
+
+def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
+    """The kernel drops an flock however the holder dies — including SIGKILL, where no
+    cleanup of ours can run. This is the case the pid heuristic existed to guess at."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tslow\tsleep 30\t—\trm -f old.txt\n')
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+        first = subprocess.Popen([sys.executable, script], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        lock = os.path.join(tmp, goalrun.LOCK)
+        deadline = time.time() + 20
+        while not os.path.exists(lock) and time.time() < deadline:
+            time.sleep(0.02)
+        assert os.path.exists(lock), 'first run never took the lock'
+        first.kill()                      # SIGKILL: no atexit, no finally, no drop_lock
+        first.wait()
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 0, out   # lock file still there, lock itself gone with the pid
+
+
+def test_an_unwritable_lock_directory_says_so_instead_of_spinning():
+    """`.testcases/` a user cannot write used to spin forever with no output: create fails,
+    read fails, unlink fails, loop. A hang gives the caller nothing to act on."""
+    if os.geteuid() == 0:
+        return                      # root writes through 0555, so there is nothing to refuse
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        held = os.path.join(tmp, os.path.dirname(goalrun.LOCK))
+        os.makedirs(held, exist_ok=True)
+        mode = os.stat(held).st_mode
+        os.chmod(held, 0o555)
+        try:
+            out = run_cli(tmp, '--only', 'A', timeout=30)
+        finally:
+            os.chmod(held, mode)
+        assert out.returncode == 2, out
+        assert 'run lock' in out.stderr, out.stderr
+
+
+def test_lint_catches_a_break_git_cannot_undo_before_verify_does():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('true\n')
+        ledger(tmp, 'A\tok\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'printf "true\\n" > .testcases/goalrun/chk.sh\n')
+        out = run_cli(tmp, '--lint-ledger')
+        assert out.returncode == 1, out
+        assert 'A: its break names .testcases/goalrun/chk.sh' in out.stdout, out.stdout
+
+
+def test_verify_refuses_a_break_that_names_a_gitignored_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('report.html\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        report = os.path.join(tmp, 'report.html')
+        open(report, 'w').write('86KB of audit\n')
+        ledger(tmp, 'A\treport exists\ttest -s report.html\t—\trm -f report.html\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1, out
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(report).read() == '86KB of audit\n', 'the break must not have run'
+
+
+def test_verify_restores_a_check_script_a_break_rewrote():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('grep -q old old.txt\n')
+        # the break mutates the check itself — a file git ignores, so restore cannot undo it
+        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'printf "true\\n" > .testcases/goalrun/chk.sh\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 1, out
+        assert 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(chk).read() == 'grep -q old old.txt\n', 'check script not put back'
+
+
+def test_verify_still_proves_a_break_on_a_tracked_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out
+        assert os.path.exists(os.path.join(tmp, 'old.txt'))
+
+
 # ---- --lint-ledger ----------------------------------------------------------------
 
 def test_lint_empty_ledger():
@@ -593,6 +999,31 @@ def test_lint_flags_a_waiver_pointing_at_nothing():
     assert any('no-row-ok: REQ-9' in p for p in problems), problems
     # without a requirement list there is nothing to check coverage waivers against
     assert not any('REQ-9' in p for p in goalrun.lint(rows, waived=waived))
+
+
+def test_lint_refuses_a_ledger_that_waives_most_of_the_list():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    reqs = [f'REQ-{n}' for n in range(1, 11)]
+    # nine ids waived one by one, each with its own reason — the shape that passed before
+    waived = {'verify-ok': {}, 'no-row-ok': {r: f'reason {r}' for r in reqs[1:]}}
+    problems = goalrun.lint(rows, waived=waived, requirements=reqs)
+    assert any('9 of 10 requirements are waived' in p for p in problems), problems
+    # a third of the list is still a gate
+    ok = {'verify-ok': {}, 'no-row-ok': {r: 'ships elsewhere' for r in reqs[:2]}}
+    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in reqs[2:]]
+    assert not goalrun.lint(rows, waived=ok, requirements=reqs), goalrun.lint(
+        rows, waived=ok, requirements=reqs)
+
+
+def test_lint_prints_the_coverage_ratio():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        ledger(tmp, '# no-row-ok: REQ-2 — ships in the other repo\n'
+                    'A\tREQ-1 holds\ttrue\t—\trm -f old.txt\n')
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\n')
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert 'coverage: 2 requirement(s) · 1 carried by rows · 1 waived (50%)' in out.stdout, \
+            out.stdout
 
 
 def test_requirements_file_rejects_a_line_that_is_not_an_id():

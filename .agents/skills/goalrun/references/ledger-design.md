@@ -232,10 +232,36 @@ prints `NOTHING VERIFIED` and exits 1 — a run that proved nothing is not a pas
 | Exit | Means |
 | ---- | ----- |
 | 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED`, `--lint-ledger` finds no problems |
-| 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; `--lint-ledger` found problems |
-| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, an empty requirements file, `--blast`/`--no-blast` without `--verify`, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify`, `--requirements` without `--lint-ledger` or naming a file that does not exist |
+| 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `UNRESTORABLE`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; `--lint-ledger` found problems |
+| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, an empty requirements file, `--blast`/`--no-blast` without `--verify`, unknown or empty `--only`/`--verify` id, unresolvable baseline, deliverable without baseline, `MANUAL` row that names a deliverable, bare `MANUAL` check, bad `--sign`, dirty tree for `--verify`, `--requirements` without `--lint-ledger` or naming a file that does not exist, another goalrun already running checks in this tree |
 
 `check` and `break` run with the caller's shell and permissions in the caller's cwd. POSIX
-only: process groups (`os.killpg`), `sh -c` and git — not for Windows. A ledger is an
-executable file: read every row before running it, as you would a `Makefile`. A break that
-touches state outside the repo (databases, services, `$HOME`) is not undone.
+only: process groups (`os.killpg`), `sh -c`, `flock` and git — not for Windows. A ledger is an
+executable file: read every row before running it, as you would a `Makefile`.
+
+
+**A break may only touch files git can restore.** The restore is `git checkout`/`git clean`,
+so a break naming a gitignored path is refused (`UNRESTORABLE`). Around that refusal:
+
+- **Indirection** — what a break reaches through a variable, a subshell or a helper script is
+  covered by a snapshot of the ledger directory and of every ignored deliverable, taken before
+  each break and compared after. The copy lives outside the repo, so a break that wipes the
+  scaffolding does not wipe it too; if one is destroyed anyway, the tree is left as the break
+  made it rather than deleted for a copy that can no longer be read. It carries the pid of the
+  run that made it, since the temp directory is shared with runs in other trees and only a
+  dead owner's copy is an orphan to sweep.
+- **Symlinks** — a deliverable that is a symlink has its target snapshotted as well, since a
+  write *through* the link moves the target while the link itself never changes. A target
+  outside the repo is not followed.
+- **Shipping** — a deliverable git does not track cannot be seen to change, so it ships by
+  mtime against the moment `--baseline` ran: a weaker standard the lint names on every run,
+  and one a tracked file never falls to, ignore pattern or not.
+- **A check that rebuilds its own ignored deliverable** during `--verify` reads as a break
+  that changed it. Let the check assert the artifact rather than regenerate it.
+- **Not covered**, all cheap to avoid: the pre-pass runs every check once before any snapshot
+  exists, so a check writing into `.testcases/` there sets the state everything is compared
+  against; the copy is taken per break, so many rows plus a large ignored deliverable means
+  copying it many times; a background process a check leaves running outlives the lock and
+  races the *next* run; `--lint-ledger` reads the ledger without the lock, so running it
+  against a tree mid-`--verify` can catch the restore rewriting that directory; and state
+  outside the repo — databases, services, `$HOME` — is never undone.

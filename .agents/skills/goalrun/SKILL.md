@@ -75,8 +75,9 @@ row.**
    planting the defect — for work not yet written that is `rm -f <deliverable>`, never a
    guess at a symbol inside it. **A break may only touch files git can restore**: the restore
    is `git checkout`/`git clean`, so a break on a gitignored path — deleting a report,
-   rewriting a check under `.testcases/` — is refused, and a **gitignored deliverable** ships
-   by the weaker standard of mtime rather than by git. Both are the same blind spot, and
+   rewriting a check under `.testcases/` — is refused, and a deliverable **git does not track**
+   ships by the weaker standard of mtime rather than by git. A tracked file is measured by git
+   whether or not an ignore pattern matches it. Both are the same blind spot, and
    `ledger-design.md` has the mechanism; the rule is to track the artifact. **If you cannot
    write the check, you do not yet understand the goal.**
 6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the

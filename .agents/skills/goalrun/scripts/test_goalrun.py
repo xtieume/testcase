@@ -489,7 +489,57 @@ def test_a_symlink_deliverable_survives_the_snapshot():
         out = run_cli(tmp, '--verify', 'A')
         assert out.returncode == 1, out
         assert 'Error' not in out.stderr and 'Traceback' not in out.stderr, out.stderr
+        # the break touches a tracked file only, so this row is HOLLOW — never UNRESTORABLE,
+        # which would mean the restore thought the untouched link had changed
+        assert 'HOLLOW A' in out.stdout and 'UNRESTORABLE' not in out.stdout, out.stdout
         assert os.path.islink(os.path.join(tmp, 'out', 'link')), 'the link did not survive'
+
+
+def test_a_tracked_file_matching_an_ignore_pattern_is_still_measured_by_git():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        os.makedirs(os.path.join(tmp, 'out'))
+        open(os.path.join(tmp, 'out', 'report.html'), 'w').write('audit\n')
+        git(tmp, 'add', '-A'); git(tmp, 'add', '-f', 'out/report.html')
+        git(tmp, 'commit', '-qm', 'report tracked despite the pattern')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\treport\ttrue\tout/report.html\t—\n')
+        os.utime(os.path.join(tmp, 'out', 'report.html'))   # touched, not written
+        out = run_cli(tmp, '--only', 'A')
+        assert out.returncode == 1, out
+        assert 'unchanged since baseline' in out.stdout, out.stdout
+
+
+def test_a_symlink_to_a_directory_is_not_reported_as_changed():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        open(os.path.join(tmp, '.gitignore'), 'w').write('out/\n')
+        git(tmp, 'add', '-A'); git(tmp, 'commit', '-qm', 'ignore')
+        os.makedirs(os.path.join(tmp, 'out', 'v1'))
+        open(os.path.join(tmp, 'out', 'v1', 'index.html'), 'w').write('v1\n')
+        os.symlink('v1', os.path.join(tmp, 'out', 'pub'))
+        run_cli(tmp, '--baseline')
+        # the break touches a tracked file; nothing ignored moves
+        ledger(tmp, 'A\tpub ships\ttest -s old.txt\tout/pub\trm -f old.txt\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
+        assert 'UNRESTORABLE' not in out.stdout, out.stdout
+
+
+def test_a_break_reaching_the_ledger_directory_by_variable_is_put_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_repo(tmp)
+        chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
+        os.makedirs(os.path.dirname(chk), exist_ok=True)
+        open(chk, 'w').write('grep -q old old.txt\n')
+        # the path the pressure-test record named as never exercised: indirection into the
+        # ledger directory, which no reading of the command's text can refuse
+        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—\t'
+                    'f=.testcases/goalrun/chk.sh; printf "true\\n" > "$f"\n')
+        out = run_cli(tmp, '--verify', 'A')
+        assert out.returncode == 1 and 'UNRESTORABLE A' in out.stdout, out.stdout
+        assert open(chk).read() == 'grep -q old old.txt\n', 'the check was not put back'
 
 
 def test_a_break_writing_through_a_symlink_is_caught_at_the_target():

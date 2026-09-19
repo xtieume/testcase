@@ -521,9 +521,19 @@ def drop_lock(fd):
 
 
 def _is_ignored(path, cwd=None):
-    """True when git ignores this path, so `checkout`/`clean` can neither restore nor delete it."""
-    return subprocess.run(('git', 'check-ignore', '-q', '--', path),
-                          cwd=cwd, capture_output=True).returncode == 0
+    """True when git can neither restore nor delete this path — ignored *and* not tracked.
+
+    A file that matches an ignore pattern but was committed anyway (`git add -f`) is a normal
+    tracked file: `git checkout` restores it and `git diff` sees it change. Reading only
+    `check-ignore` would hand it the weaker mtime standard, where a build step touching it is
+    enough to call it shipped."""
+    ignored = subprocess.run(('git', 'check-ignore', '-q', '--', path),
+                             cwd=cwd, capture_output=True).returncode == 0
+    if not ignored:
+        return False
+    tracked = subprocess.run(('git', 'ls-files', '--error-unmatch', '--', path),
+                             cwd=cwd, capture_output=True).returncode == 0
+    return not tracked
 
 
 def unrestorable(cmd, cwd=None):
@@ -548,8 +558,8 @@ def unrestorable(cmd, cwd=None):
     # too. Refusing a harmless break costs a rewrite; missing a destructive one costs the file
     here, seen = cwd or '.', []
     for tok in tokens:
-        # `>out/x`, `2>out/x` and `>>out/x` are each one token: the path is what follows
-        tok = re.sub(r'^\d?(?:>>|>|<)&?', '', tok)
+        # `>out/x`, `2>out/x`, `>>out/x`, `<>out/x`: the path is what follows
+        tok = re.sub(r'^\d?(?:<>|>\||>>|>|<)&?', '', tok)
         if not tok or tok.startswith('-'):
             continue
         # a glob names every file it matches; an unmatched pattern names nothing
@@ -610,7 +620,11 @@ def snapshot(srcs, cwd=None):
             target = os.path.relpath(os.path.realpath(full), here)
             if not target.startswith('..') and not os.path.isabs(target):
                 wanted.append(target)
-    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-'), []
+    aside_root = os.path.join(here, os.path.dirname(GOAL_DIR) or '.')
+    os.makedirs(aside_root, exist_ok=True)
+    # inside the excluded tree, not /tmp: a snapshot is a copy of the run's own artifacts, and
+    # a SIGKILL between here and the restore would leave it world-readable in a shared /tmp
+    held, kept = tempfile.mkdtemp(prefix='goalrun-snap-', dir=aside_root), []
     for i, src in enumerate(dict.fromkeys(wanted)):
         root = os.path.join(here, src)
         if not os.path.lexists(root):
@@ -644,7 +658,10 @@ def restore_snapshot(snap, cwd=None):
                     shutil.rmtree(root, ignore_errors=True)
                     shutil.copytree(aside, root, symlinks=True)
             else:
-                same = (os.path.lexists(root) and not os.path.isdir(root)
+                # a symlink is a leaf, whatever it points at: `isdir` follows it, and a
+                # link to a directory would otherwise never compare equal to itself
+                same = (os.path.lexists(root)
+                        and (os.path.islink(root) or not os.path.isdir(root))
                         and _digest(aside) == _digest(root) != 'unreadable')
                 if not same:
                     changed.append(src)
@@ -681,6 +698,9 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # its break makes it fail again, and it reddens every other row's sweep for reasons that
     # have nothing to do with the planted defect. Costs one run per row, not one per pair —
     # and only the selection when no sweep will read the rest.
+    for orphan in glob.glob(os.path.join(cwd or '.', os.path.dirname(GOAL_DIR),
+                                         'goalrun-snap-*')):
+        shutil.rmtree(orphan, ignore_errors=True)   # left by a run that was killed mid-verify
     scan = everything if blast else rows
     already = {r.id for r in scan
                if not r.check.startswith('MANUAL:') and not run_check(r.check, timeout)[0]}
@@ -868,14 +888,24 @@ def run(a):
     if a.baseline:
         sha = resolve_commit(a.baseline)
         os.makedirs(GOAL_DIR, exist_ok=True)
-        open(BASELINE, 'w', encoding='utf-8').write(sha + '\n')
+        # under the lock like the checks: a `--verify` restoring the ledger directory rmtrees
+        # and rewrites it, and a signature or a baseline written in that window is lost
+        lock = hold_lock()
+        try:
+            open(BASELINE, 'w', encoding='utf-8').write(sha + '\n')
+        finally:
+            drop_lock(lock)
         print(f'baseline {sha} -> {BASELINE}')
         return 0
 
     rows = load(a.ledger)
 
     if a.sign:
-        date = sign(rows, a.sign, a.who, a.note)
+        lock = hold_lock()
+        try:
+            date = sign(rows, a.sign, a.who, a.note)
+        finally:
+            drop_lock(lock)
         print(f'{a.sign} signed by {" ".join(a.who.split())} on {date}')
         return 0
 

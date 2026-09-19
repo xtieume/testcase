@@ -243,8 +243,16 @@ through a variable, a subshell, a symlink — is covered instead by a snapshot o
 directory and of every ignored deliverable, taken before each break and compared after. One
 consequence: a check that *regenerates* its own ignored deliverable during `--verify` reads as
 a break that changed it, so let the check assert the artifact rather than rebuild it. A
-deliverable git ignores cannot be seen to change either, so it ships by mtime against the
-moment `--baseline` ran — a weaker standard the lint names on every run. A deliverable that is a symlink has its target snapshotted too, so a break writing *through* the
-link is seen and put back — the link itself never moves, which is what makes that write invisible
-otherwise. A target outside the repo is not followed. A break that
+deliverable git does not track cannot be seen to change either, so it ships by mtime against
+the moment `--baseline` ran — a weaker standard the lint names on every run, and one a tracked
+file never falls to, ignore pattern or not. A deliverable that is a symlink has its target
+snapshotted too, so a break writing *through* the link is seen and put back — the link itself
+never moves, which is what makes that write invisible otherwise. A target outside the repo is
+not followed.
+
+Two edges the snapshot does not cover, both cheap to avoid: the pre-pass that runs every check
+once on the clean tree happens before any snapshot is taken, so a check writing into
+`.testcases/` there sets the state everything is later compared against; and the copy is taken
+per break, so a ledger of many rows with a large ignored deliverable copies it many times —
+keep artifacts the run ships small, or leave them out of the deliverable column. A break that
 touches state outside the repo (databases, services, `$HOME`) is not undone.

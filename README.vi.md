@@ -57,6 +57,8 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 
 Ba skill ghép thành một chuỗi: **`docs-review`** nói cần gì, **`testcase`** nói chứng minh thế nào, **`goalrun`** nói đã đạt chưa. Mỗi skill vẫn dùng riêng được.
 
+Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định một row và chứng minh một check: [Các skill này làm việc thế nào](docs/how-it-works.vi.md).
+
 ### QA
 
 | Skill | Làm gì | Kích hoạt |

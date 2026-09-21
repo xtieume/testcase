@@ -57,6 +57,8 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 
 The three compose into one pipeline: **`docs-review`** says what is required, **`testcase`** says how it is proven, **`goalrun`** says whether it holds. Each still works alone.
 
+Four diagrams of that pipeline, and of how `goalrun` decides a row and proves a check: [How these skills work](docs/how-it-works.md).
+
 ### QA
 
 | Skill | Does | Trigger |

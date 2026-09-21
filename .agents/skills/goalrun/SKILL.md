@@ -77,8 +77,7 @@ row.**
 
    Until an owner is named, a `MANUAL` requirement has no row and `--lint-ledger` fails on it.
    That is the correct state: an unanswered question is not an accepted gap.
-4. `python3 "$GOALRUN" --baseline` — deliverable rows refuse to run without it.
-5. **Write the ledger** per `references/ledger-design.md`: one row per requirement, `check`
+4. **Write the ledger** per `references/ledger-design.md`: one row per requirement, `check`
    pointing at the test step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect the check exists to catch.
 
@@ -92,6 +91,9 @@ row.**
    existed gets no such waiver: nobody ever watched those tests fail.
 
    **If you cannot write the check, you do not yet understand the goal.**
+5. `python3 "$GOALRUN" --baseline` — after the ledger names its deliverables, before any
+   work starts. It records what each deliverable holds now; a row added later gets its mark
+   by running it again, and the marks already taken stay (`--reset` moves them all).
 6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
    spec, ledger = the document set, and run its step 4 loop as written — round log,
    convergence, an oscillating row frozen `Undecided`. `Missing` = a requirement no row

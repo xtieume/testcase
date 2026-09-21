@@ -26,15 +26,14 @@ Modes (mutually exclusive):
                        `.testcases/goalrun/baseline.json` — including ones that don't exist
                        yet (recorded as null). A deliverable with no entry at all in that
                        file is not "shipped" by editing the ledger; it is a reason to run
-                       --baseline again. Takes no argument any more — content is measured
-                       directly, not against a commit
+                       --baseline again, which keeps every mark already taken (--reset
+                       drops them). Takes no argument: content is measured directly
   --sign ID --who W   a human signs a MANUAL row; W must be the row's owner
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
   --verify [A,B]      for each row: clone the tree into a disposable temp directory, plant
                        the row's `break` inside the clone, run the row's `check` there too,
-                       and demand red — then throw the clone away. The working tree is never
-                       written to, so this needs no git, no clean-tree gate, and nothing to
-                       restore
+                       and demand red — then throw the clone away. The working tree is only
+                       ever read
   --lint-ledger       problems with the ledger itself; with --requirements FILE it also
                        names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
@@ -63,6 +62,12 @@ NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0
 # them to stay incremental, so cloning them (not skipping them) is the point of the CoW copy
 CLONE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache'}
 CLONE_PREFIX = 'goalrun-clone-'
+# a check that invokes one of these is a test; the zero-tests gate and the lint's
+# searches-text rule both key off it, so a lint that echoes "0 tests failed" is not a runner
+# that matched nothing, and a grep piped after a runner is still a test
+RUNNER_RE = re.compile(r'\b(pytest|unittest|jest|vitest|mocha|rspec|phpunit|go\s+test|'
+                       r'cargo\s+test|dotnet\s+test|mvn|gradle|npm\s+test|yarn\s+test|'
+                       r'pnpm\s+test)\b')
 
 Row = collections.namedtuple('Row', 'id what check deliverable brk')
 
@@ -179,7 +184,8 @@ def _zero_tests_matched(text):
     for marker in ('no tests ran', 'no test matches', 'collected 0 items'):
         if marker in low:
             return marker
-    if re.search(r'(?<!\d)0\s+tests?\b', low):
+    # `0 tests ran/collected/found`, never `0 tests failed`: the second is a suite that passed
+    if re.search(r'(?<!\d)0\s+tests?\b(?!\s+(failed|failing|skipped|errored|errors?|pending))', low):
         return '0 tests'
     if re.search(r'(?<!\d)0\s+passing\b', low):
         return '0 passing'
@@ -219,7 +225,7 @@ def run_check(cmd, timeout=1800, cwd=None):
             raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
-    if code == 0:
+    if code == 0 and RUNNER_RE.search(cmd):
         marker = _zero_tests_matched(text)
         if marker:
             return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
@@ -230,8 +236,7 @@ def run_check(cmd, timeout=1800, cwd=None):
 
 def _digest(path):
     """Content id of one path. A symlink is its target, not what the target holds — reading
-    through it compares the wrong file, and a relative link is dangling from a clone taken
-    at a different location."""
+    through it compares the wrong file, and a relative link dangles from inside a clone."""
     try:
         if os.path.islink(path):
             return 'link:' + os.readlink(path)
@@ -242,6 +247,21 @@ def _digest(path):
         return h.hexdigest()
     except OSError:
         return 'unreadable'
+
+
+def _tree_stat(root):
+    """(mtime_ns, size) per path — whether anything moved, not what it now holds. Reading every
+    byte of a clone twice per row costs minutes on a build tree; a stat walk costs nothing."""
+    out = {}
+    for base, dirs, files in os.walk(root):
+        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            path = os.path.join(base, name)
+            try:
+                st = os.lstat(path)
+                out[os.path.relpath(path, root)] = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                out[os.path.relpath(path, root)] = None
+    return out
 
 
 def _tree_hashes(root):
@@ -271,22 +291,30 @@ def content_id(path, cwd=None):
     return _digest(full)
 
 
-def take_baseline(rows, cwd=None, path=BASELINE):
-    """Record the content id of every deliverable named anywhere in the ledger — including
-    ones no row has produced yet, as null. A deliverable with no key at all in this file is
-    not "shipped" by a later ledger edit that merely starts naming it; it is a reason to run
-    this again."""
-    files = {}
-    for r in rows:
-        if r.deliverable:
-            files.setdefault(os.path.normpath(r.deliverable), content_id(r.deliverable, cwd))
-    data = {'taken': int(time.time()), 'files': files}
+def take_baseline(rows, cwd=None, path=BASELINE, reset=False):
+    """Record the content id of every deliverable named in the ledger — including ones no row
+    has produced yet, as null — and return (data, added, kept).
+
+    Merges by default: a deliverable already recorded keeps its mark. Rows get added mid-run,
+    and the row that is missing from the baseline says to run this again — if that rewrote
+    every mark, the rows already shipped would read `unchanged since baseline` from then on,
+    their evidence erased by following an instruction. `reset` is the deliberate fresh start."""
     full = os.path.join(cwd or '.', path)
+    kept = {}
+    if not reset and os.path.exists(full):
+        kept = read_baseline(path, cwd)['files']
+    files, added = dict(kept), 0
+    for r in rows:
+        norm = os.path.normpath(r.deliverable) if r.deliverable else ''
+        if norm and norm not in files:
+            files[norm] = content_id(norm, cwd)
+            added += 1
+    data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=2, sort_keys=True)
         f.write('\n')
-    return data
+    return data, added, len(kept)
 
 
 def read_baseline(path=BASELINE, cwd=None):
@@ -308,7 +336,7 @@ def not_shipped(path, baseline_files, cwd=None):
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
     if norm not in baseline_files:
-        return 'not recorded in the baseline — run --baseline again after adding this row'
+        return 'not recorded in the baseline — run --baseline again; rows already recorded keep their mark'
     current = content_id(norm, cwd)
     if current is None:
         return 'does not exist'
@@ -436,9 +464,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     searching = [r.id for r in rows
                  if not r.check.startswith('MANUAL:')
                  and re.search(r'\b(grep|rg|ag|ack)\b', r.check)
-                 and not re.search(r'\b(pytest|unittest|jest|vitest|mocha|rspec|phpunit|'
-                                   r'go\s+test|cargo\s+test|dotnet\s+test|mvn|gradle|npm\s+test|'
-                                   r'yarn\s+test|pnpm\s+test)\b', r.check)]
+                 and not RUNNER_RE.search(r.check)]
     if searching:
         problems.append(f'rows {", ".join(searching)} search text instead of running a test — a '
                         f'search proves the word is present, which survives every defect the '
@@ -606,8 +632,9 @@ def clone_tree(src):
             break
     else:
         shutil.rmtree(dst, ignore_errors=True)
-        shutil.copytree(src, dst, symlinks=True)
-    _prune_skip(dst)
+        shutil.copytree(src, dst, symlinks=True,
+                        ignore=lambda _d, names: [n for n in names if n in CLONE_SKIP])
+    _prune_skip(dst)        # `cp` has no exclude list; the CoW copy of a skip dir is cheap
     return dst
 
 
@@ -615,8 +642,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     """Plant each row's break inside a disposable clone of the tree, prove its check goes red
     there, then throw the clone away. Return True if all did.
 
-    Nothing is ever written to the caller's own tree — there is nothing to undo, so this
-    needs no git, no clean-tree gate, and no snapshot/restore engine."""
+    The caller's own tree is only ever read."""
     everything = rows                       # --blast scans the whole ledger, not the selection
     if ids:
         rows = select(rows, ids)
@@ -650,9 +676,9 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             continue
         clone = clone_tree(cwd or '.')
         try:
-            before = _tree_hashes(clone)
+            before = _tree_stat(clone)
             planted, why, _ = run_check(row.brk, timeout, clone)
-            after = _tree_hashes(clone)
+            after = _tree_stat(clone)
             if not planted:
                 all_ok, ran = False, ran + 1
                 print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
@@ -749,7 +775,10 @@ def main():
     mode.add_argument('--only', metavar='A,B', help='run a subset of rows')
     mode.add_argument('--sign', metavar='ID')
     mode.add_argument('--baseline', nargs='?', const='', default=None, metavar='(no argument)',
-                      help='record the content id of every deliverable named in the ledger')
+                      help='record the content id of every deliverable named in the ledger; '
+                           'deliverables already recorded keep their mark')
+    ap.add_argument('--reset', action='store_true',
+                    help='with --baseline: drop every recorded mark and take them all afresh')
     mode.add_argument('--lint-ledger', action='store_true')
     mode.add_argument('--verify', nargs='?', const='', metavar='A,B')
     blast = ap.add_mutually_exclusive_group()
@@ -785,6 +814,8 @@ def main():
 def run(a):
     if (a.who or a.note) and not a.sign:
         raise Misuse('--who/--note only mean something with --sign')
+    if a.reset and a.baseline is None:
+        raise Misuse('--reset is read by --baseline')
     if a.requirements and not a.lint_ledger:
         raise Misuse('--requirements is read by --lint-ledger')
     if a.blast is not None and a.verify is None:
@@ -797,16 +828,19 @@ def run(a):
 
     if a.baseline is not None:
         if a.baseline:
-            raise Misuse(f'--baseline takes no argument any more — it records every '
-                         f"deliverable's content, not a commit; drop {a.baseline!r}")
+            raise Misuse(f'--baseline takes no argument — it records every deliverable\'s '
+                         f'content; drop {a.baseline!r}')
         # under the lock like the checks: two writers to the baseline file at once could
         # interleave and leave it holding neither write
         lock = hold_lock()
         try:
-            data = take_baseline(rows)
+            data, added, kept = take_baseline(rows, reset=a.reset)
         finally:
             drop_lock(lock)
-        print(f'baseline recorded for {len(data["files"])} deliverable(s) -> {BASELINE}')
+        what = (f'{added} deliverable(s) recorded' if not kept else
+                f'{added} added, {kept} kept — marks already taken are not moved; '
+                f'`--baseline --reset` starts over')
+        print(f'baseline: {what} -> {BASELINE}')
         return 0
 
     if a.sign:

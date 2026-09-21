@@ -37,7 +37,7 @@ it on every push. `LINT` is the exception that proves the shape: a hygiene rule 
 requirement, so no `REQ-` and no test.
 
 ```bash
-python3 "$GOALRUN" --baseline        # first; rows with deliverables refuse to run without it
+python3 "$GOALRUN" --baseline        # once the ledger names its deliverables, before work starts
 python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
 python3 "$GOALRUN"                   # pre-flight, then per phase with --only
 python3 "$GOALRUN" --verify          # VERIFIED / HOLLOW / STUCK / BREAK FAILED, plus the sweep
@@ -110,6 +110,10 @@ copy; your files are read, never written. What that costs, and what it cannot se
 - **Cost** — one copy per break row, a filesystem clone where the platform has one (APFS
   `cp -c`, reflinks on Linux), a plain copy otherwise.
 - **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
+- **Only `--verify` runs in a copy.** A plain run and `--only` run checks in the tree itself,
+  so a check that writes leaves what it wrote.
+- **A directory deliverable** ships when anything under it changes — a check that writes a
+  log into it counts, so keep generated output out of a directory a row names.
 
 ## The sweep
 
@@ -156,7 +160,8 @@ requirements no row measures. It does not catch a fake check or a break that can
 ## Flags and exit codes
 
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
-`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--sign ID --who WHO [--note ...]`. `--requirements
+`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` keeps marks already taken and adds the
+rest; `--baseline --reset` takes them all afresh. `--sign ID --who WHO [--note ...]`. `--requirements
 PATH` is read by `--lint-ledger` only. `--ledger PATH` is for testing the script; the skill uses
 the catalog path.
 
@@ -164,7 +169,7 @@ the catalog path.
 | ---- | ----- |
 | 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED`, lint clean |
 | 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; lint found problems |
-| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, empty requirements file, `--blast` without `--verify`, unknown `--only`/`--verify` id, a SHA passed to `--baseline`, deliverable without baseline, `MANUAL` row naming a deliverable, bad `--sign`, `--requirements` without `--lint-ledger`, another goalrun already running checks in this tree |
+| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, empty requirements file, `--blast` without `--verify`, unknown `--only`/`--verify` id, an argument to `--baseline`, `--reset` without it, deliverable without baseline, `MANUAL` row naming a deliverable, bad `--sign`, `--requirements` without `--lint-ledger`, another goalrun already running checks in this tree |
 
 `check` and `break` run with the caller's shell and permissions. POSIX only (`sh -c`, process
 groups, `flock`); no version control required. A ledger is an executable file — read every row

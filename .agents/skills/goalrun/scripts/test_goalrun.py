@@ -39,7 +39,7 @@ def expect_misuse(fn, *args, **kw):
 def fake_runner(tmp, output, code=0):
     """A stand-in test runner: prints `output`, exits `code`. Lets the zero-tests-matched
     gate be tested without any real framework installed."""
-    path = os.path.join(tmp, 'fake_runner.sh')
+    path = os.path.join(tmp, 'pytest')          # the name is what makes the command a runner
     open(path, 'w').write(f'#!/bin/sh\ncat <<\'GOALRUN_EOF\'\n{output}\nGOALRUN_EOF\nexit {code}\n')
     os.chmod(path, 0o755)
     return path
@@ -195,6 +195,22 @@ def test_zero_tests_spellings_all_fail_the_check():
             assert not ok and 'ran no test' in note, (text, note)
 
 
+def test_a_check_that_is_not_a_runner_may_say_zero_tests_failed():
+    """A lint or a script that reports `0 tests failed` is a pass; the gate judges only what a
+    test runner printed, because that is the only output where "zero" means "nothing ran"."""
+    ok, note, _ = goalrun.run_check('echo "lint ok, 0 tests failed"')
+    assert ok, note
+
+
+def test_a_runner_that_ran_tests_may_say_zero_failed_or_skipped():
+    with tempfile.TemporaryDirectory() as tmp:
+        for text in ('12 tests, 0 tests failed', 'Ran 4 tests\n0 tests skipped\nOK',
+                     'Tests: 0 skipped, 5 passed', '0 errors, 3 tests'):
+            script = fake_runner(tmp, text)
+            ok, note, _ = goalrun.run_check(f'sh {script}')
+            assert ok, (text, note)
+
+
 def test_zero_tests_gate_does_not_false_positive_on_a_normal_pass():
     with tempfile.TemporaryDirectory() as tmp:
         for text in ('42 tests, 0 failures', '15 passing (300ms)', 'Ran 10 tests OK',
@@ -282,6 +298,31 @@ def test_touching_alone_does_not_ship_it():
         baseline = {'old.txt': goalrun.content_id('old.txt', cwd=tmp)}
         os.utime(path, None)
         assert goalrun.not_shipped('old.txt', baseline, cwd=tmp) == 'unchanged since baseline'
+
+
+def test_baseline_merges_so_re_recording_keeps_a_shipped_rows_evidence():
+    """The row added after the baseline says to run --baseline again. If that rewrote every
+    mark, the rows already shipped would read `unchanged` from then on — evidence erased by
+    following an instruction. Marks already taken stay; --reset is the deliberate fresh start."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, 'src'))
+        open(os.path.join(tmp, 'src', 'a.py'), 'w').write('v1\n')
+        open(os.path.join(tmp, 'src', 'b.py'), 'w').write('v1\n')
+        ledger(tmp, 'A\tREQ-1 a\ttrue\tsrc/a.py\trm -f src/a.py\n')
+        assert run_cli(tmp, '--baseline').returncode == 0
+        open(os.path.join(tmp, 'src', 'a.py'), 'w').write('v2 — this run\n')
+        assert 'A  PASS' in run_cli(tmp).stdout
+        ledger(tmp, 'A\tREQ-1 a\ttrue\tsrc/a.py\trm -f src/a.py\n'
+                    'B\tREQ-2 b\ttrue\tsrc/b.py\trm -f src/b.py\n')
+        out = run_cli(tmp, '--baseline')
+        assert '1 added, 1 kept' in out.stdout, out.stdout
+        table = run_cli(tmp).stdout
+        assert 'A  PASS' in table, table                 # its mark was not moved
+        assert 'B  FAIL' in table and 'unchanged' in table, table
+        # --reset moves every mark to now: A is unchanged since *this* baseline
+        assert run_cli(tmp, '--baseline', '--reset').returncode == 0
+        assert 'A  FAIL' in run_cli(tmp).stdout
+        assert run_cli(tmp, '--reset').returncode == 2, '--reset without --baseline is misuse'
 
 
 def test_deliverable_missing_from_baseline_json_is_not_shipped():

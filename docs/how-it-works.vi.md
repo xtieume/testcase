@@ -44,11 +44,15 @@ flowchart TD
     GR3 --> GATE
     GATE -->|"một REQ- không row nào đo"| FAIL1["Exit 1 — thêm row, hoặc waive kèm lý do"]
     GATE -->|"một row không có break"| FAIL2["Exit 1 — thêm break, hoặc waive kèm lý do"]
+    GATE -->|"break nhắm vào path git không khôi phục được"| FAIL3["Exit 1 — trỏ nó vào file git track"]
+    GATE -->|"phần lớn danh sách bị waive"| FAIL4["Exit 1 — waive cả loạt không phải là gap ai đó đã nhìn"]
     GATE -->|"không dính cái nào"| OUT
 
     style OUT fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style FAIL1 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style FAIL2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style FAIL3 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style FAIL4 fill:#f8d7da,stroke:#a3303b,color:#3b1015
 ```
 
 ## 2. Khác biệt nằm ở đâu
@@ -86,7 +90,8 @@ flowchart TD
 ## 3. Một row được quyết thế nào
 
 Một row thuộc về **một câu lệnh** hoặc **một con người**, không bao giờ cả hai. Exit code
-chính là câu trả lời.
+chính là câu trả lời. Deliverable được git track thì git đo; cái git ignore không có lịch sử
+để đọc nên phải đo bằng chuẩn yếu hơn là mtime — đó là lý do luật là hãy track cái artifact.
 
 ```mermaid
 flowchart TD
@@ -100,7 +105,10 @@ flowchart TD
     RUN["Chạy check"]
     CODE{"Exit 0?"}
     DELIV{"Row có khai deliverable?"}
-    SHIPPED{"Đường dẫn tồn tại và đã đổi kể từ baseline?"}
+    EXISTS{"Đường dẫn có tồn tại?"}
+    TRACKED{"Git có track nó không?"}
+    SHIPPED{"Đã đổi kể từ commit baseline?"}
+    MTIME{"Được ghi sau lúc chạy --baseline?"}
 
     PASS["PASS"]
     FAIL["FAIL"]
@@ -117,9 +125,15 @@ flowchart TD
     CODE -->|"khác 0, hoặc quá giờ"| FAIL
     CODE -->|"đúng"| DELIV
     DELIV -->|"không"| PASS
-    DELIV -->|"có"| SHIPPED
+    DELIV -->|"có"| EXISTS
+    EXISTS -->|"không"| FAIL
+    EXISTS -->|"có"| TRACKED
+    TRACKED -->|"có"| SHIPPED
+    TRACKED -->|"không, git ignore nó"| MTIME
     SHIPPED -->|"không"| FAIL
     SHIPPED -->|"có"| PASS
+    MTIME -->|"không"| FAIL
+    MTIME -->|"có"| PASS
 
     style PASS fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style FAIL fill:#f8d7da,stroke:#a3303b,color:#3b1015
@@ -136,6 +150,8 @@ của chính mình.
 ```mermaid
 flowchart TD
     V["goalrun --verify"]
+    LOCK{"Có goalrun khác đang chạy check trên cây này?"}
+    STOPL["Exit 2 — check tranh build với thứ khác thì đỏ vì lý do không phải của code"]
     CLEAN{"Working tree sạch?"}
     STOP2["Exit 2 — commit hoặc stash trước đã"]
 
@@ -143,11 +159,16 @@ flowchart TD
     RED{"Row đã đỏ sẵn?"}
     AR["ALREADY RED — đỏ thêm lần nữa chẳng chứng minh gì, và nó bị loại khỏi sweep"]
 
+    SAFE{"Break có nhắm vào path git không khôi phục được?"}
+    UNRES1["UNRESTORABLE — không trồng gì cả; git không giữ nội dung lẫn sự tồn tại của file bị ignore"]
     PLANT["Trồng break của row"]
     BROKE{"Bản thân lệnh break có chạy được không?"}
     BF["BREAK FAILED"]
 
     CHECK["Chạy check dưới cái break đó"]
+    RESTORE["Khôi phục: git checkout và clean, rồi tới snapshot cho phần git với không tới"]
+    MOVED{"Break có đụng vào thứ git không khôi phục được?"}
+    UNRES2["UNRESTORABLE — đã đặt lại từ snapshot, nhưng row vẫn là chưa chứng minh"]
     RESULT{"Nó làm gì?"}
     HOLLOW["HOLLOW — vẫn xanh, tức là nó chẳng test cái gì"]
     STUCK["STUCK — nó treo, không nói lên điều gì cả"]
@@ -159,16 +180,23 @@ flowchart TD
     BLAST["BLAST — row ship thứ khác, nên cả hai đều không chứng minh được điều nó khai"]
     BUDGET["SWEEP STOPPED — hết budget, những row đó chưa được chứng minh"]
 
-    V --> CLEAN
+    V --> LOCK
+    LOCK -->|"có"| STOPL
+    LOCK -->|"không"| CLEAN
     CLEAN -->|"không"| STOP2
     CLEAN -->|"sạch"| PRE
     PRE --> RED
     RED -->|"đỏ sẵn"| AR
-    RED -->|"không"| PLANT
+    RED -->|"không"| SAFE
+    SAFE -->|"có"| UNRES1
+    SAFE -->|"không"| PLANT
     PLANT --> BROKE
     BROKE -->|"không"| BF
     BROKE -->|"được"| CHECK
-    CHECK --> RESULT
+    CHECK --> RESTORE
+    RESTORE --> MOVED
+    MOVED -->|"có"| UNRES2
+    MOVED -->|"không"| RESULT
     RESULT -->|"vẫn xanh"| HOLLOW
     RESULT -->|"treo"| STUCK
     RESULT -->|"đỏ"| VERIFIED
@@ -186,9 +214,20 @@ flowchart TD
     style BF fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style AR fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style STOP2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style STOPL fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style UNRES1 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style UNRES2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
 Mỗi ô ở trên là một chuỗi mà script **thật sự in ra**. `HOLLOW`, `STUCK`, `BLAST`,
-`ALREADY RED`, `NOTHING VERIFIED` và `SWEEP STOPPED` đều exit 1: một lần chạy không chứng
-minh được gì thì không phải là pass.
+`ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` và `SWEEP STOPPED` đều exit 1: một lần chạy
+không chứng minh được gì thì không phải là pass.
+
+`UNRESTORABLE` là cái duy nhất không nói về check. `--verify` khôi phục bằng `git checkout` và
+`git clean`, mà hai lệnh đó không với tới nội dung lẫn sự tồn tại của file git ignore — nên một
+break xoá report bị ignore là mất hẳn, còn break sửa một check script dưới `.testcases/` thì để
+row đo ít hơn những gì ledger nói, kéo dài qua hết cả lần chạy. Break nào **gọi tên** một path
+như vậy bị từ chối trước khi trồng bất cứ thứ gì; thứ break với tới gián tiếp thì được đặt lại
+từ snapshot chụp trước đó, và row vẫn là chưa chứng minh cho tới khi break trỏ vào file git
+khôi phục được.

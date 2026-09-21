@@ -44,11 +44,15 @@ flowchart TD
     GR3 --> GATE
     GATE -->|"a REQ- no row measures"| FAIL1["Exit 1 — add a row, or waive it with a reason"]
     GATE -->|"a row with no break"| FAIL2["Exit 1 — add a break, or waive it with a reason"]
-    GATE -->|"neither"| OUT
+    GATE -->|"a break on a path git cannot restore"| FAIL3["Exit 1 — point it at a tracked file"]
+    GATE -->|"most of the list waived"| FAIL4["Exit 1 — a bulk pass is not a gap someone looked at"]
+    GATE -->|"none of those"| OUT
 
     style OUT fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style FAIL1 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style FAIL2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style FAIL3 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style FAIL4 fill:#f8d7da,stroke:#a3303b,color:#3b1015
 ```
 
 ## 2. What changes
@@ -85,7 +89,9 @@ flowchart TD
 
 ## 3. How one row is decided
 
-A row belongs to a command or to a person, never both. The exit code is the answer.
+A row belongs to a command or to a person, never both. The exit code is the answer. A
+deliverable git tracks is measured by git; one it ignores has no history to read, so it is
+measured by the weaker standard of mtime — which is why the rule is to track the artifact.
 
 ```mermaid
 flowchart TD
@@ -99,7 +105,10 @@ flowchart TD
     RUN["Run the check"]
     CODE{"Exit 0?"}
     DELIV{"Row names a deliverable?"}
-    SHIPPED{"Path exists and changed since baseline?"}
+    EXISTS{"Path exists?"}
+    TRACKED{"Does git track it?"}
+    SHIPPED{"Changed since the baseline commit?"}
+    MTIME{"Written since --baseline ran?"}
 
     PASS["PASS"]
     FAIL["FAIL"]
@@ -116,9 +125,15 @@ flowchart TD
     CODE -->|"non-zero, or timed out"| FAIL
     CODE -->|"yes"| DELIV
     DELIV -->|"no"| PASS
-    DELIV -->|"yes"| SHIPPED
+    DELIV -->|"yes"| EXISTS
+    EXISTS -->|"no"| FAIL
+    EXISTS -->|"yes"| TRACKED
+    TRACKED -->|"yes"| SHIPPED
+    TRACKED -->|"no, git ignores it"| MTIME
     SHIPPED -->|"no"| FAIL
     SHIPPED -->|"yes"| PASS
+    MTIME -->|"no"| FAIL
+    MTIME -->|"yes"| PASS
 
     style PASS fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style FAIL fill:#f8d7da,stroke:#a3303b,color:#3b1015
@@ -134,6 +149,8 @@ failed for the same defect, which would mean neither can tell one defect from an
 ```mermaid
 flowchart TD
     V["goalrun --verify"]
+    LOCK{"Another goalrun running checks in this tree?"}
+    STOPL["Exit 2 — a check racing another build goes red for reasons that are not the code"]
     CLEAN{"Working tree clean?"}
     STOP2["Exit 2 — commit or stash first"]
 
@@ -141,12 +158,17 @@ flowchart TD
     RED{"Row already red?"}
     AR["ALREADY RED — it proves nothing by going red again, and stays out of the sweep"]
 
+    SAFE{"Does the break name a path git cannot restore?"}
+    UNRES1["UNRESTORABLE — nothing planted; git restores neither an ignored file's content nor its existence"]
     PLANT["Plant the row's break"]
     BROKE{"Break command itself succeeded?"}
     BF["BREAK FAILED"]
 
     CHECK["Run the check under the break"]
-    RESULT{"What did it do?"}
+    RESTORE["Restore: git checkout and clean, then the snapshot for what git cannot reach"]
+    MOVED{"Did the break move something git cannot restore?"}
+    UNRES2["UNRESTORABLE — put back from the snapshot, and the row is unproven either way"]
+    RESULT{"What did the check do?"}
     HOLLOW["HOLLOW — it passed, so it tests nothing"]
     STUCK["STUCK — it hung, which proves nothing either way"]
     VERIFIED["VERIFIED — it went red, as it must"]
@@ -157,16 +179,23 @@ flowchart TD
     BLAST["BLAST — a row shipping something else, so neither row proves what it claims"]
     BUDGET["SWEEP STOPPED — the budget ran out, those rows are unproven"]
 
-    V --> CLEAN
+    V --> LOCK
+    LOCK -->|"yes"| STOPL
+    LOCK -->|"no"| CLEAN
     CLEAN -->|"no"| STOP2
     CLEAN -->|"yes"| PRE
     PRE --> RED
     RED -->|"yes"| AR
-    RED -->|"no"| PLANT
+    RED -->|"no"| SAFE
+    SAFE -->|"yes"| UNRES1
+    SAFE -->|"no"| PLANT
     PLANT --> BROKE
     BROKE -->|"no"| BF
     BROKE -->|"yes"| CHECK
-    CHECK --> RESULT
+    CHECK --> RESTORE
+    RESTORE --> MOVED
+    MOVED -->|"yes"| UNRES2
+    MOVED -->|"no"| RESULT
     RESULT -->|"passed"| HOLLOW
     RESULT -->|"hung"| STUCK
     RESULT -->|"failed"| VERIFIED
@@ -184,9 +213,20 @@ flowchart TD
     style BF fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style AR fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style STOP2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style STOPL fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style UNRES1 fill:#f8d7da,stroke:#a3303b,color:#3b1015
+    style UNRES2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
 Every box above is a string the script actually prints. `HOLLOW`, `STUCK`, `BLAST`,
-`ALREADY RED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that proved nothing
-is not a pass.
+`ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
+proved nothing is not a pass.
+
+`UNRESTORABLE` is the one that is not about the check at all. `--verify` restores with `git
+checkout` and `git clean`, which reach neither the content nor the existence of a file git
+ignores — so a break that deletes an ignored report destroys it, and one that rewrites a check
+script under `.testcases/` leaves the row measuring less than the ledger says, past the end of
+the run. A break naming such a path is refused before anything is planted; what a break reaches
+indirectly is put back from a snapshot taken beforehand, and the row stays unproven until the
+break points at a file git can restore.

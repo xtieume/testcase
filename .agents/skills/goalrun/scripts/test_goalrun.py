@@ -159,6 +159,32 @@ def test_run_check_takes_a_cwd():
 
 # ---- the zero-tests-matched gate ---------------------------------------------------
 
+def test_a_check_whose_tests_were_all_skipped_is_not_a_pass():
+    """`OK (skipped=1)` exits 0 and reads as PASS, having exercised nothing. A row whose only
+    test is `@skip` measures exactly as much as a row whose filter matched nothing."""
+    for text in ('Ran 1 test in 0.000s\n\nOK (skipped=1)\n',
+                 'Ran 3 tests in 0.001s\n\nOK (skipped=3)\n',
+                 '3 skipped in 0.12s\n'):
+        assert goalrun._zero_tests_matched(text), text
+    # a run where something actually passed is fine, skips and all
+    for text in ('Ran 4 tests in 0.01s\n\nOK (skipped=1)\n', '2 passed, 1 skipped in 0.3s\n'):
+        assert not goalrun._zero_tests_matched(text), text
+
+
+def test_lint_flags_a_check_that_searches_text_instead_of_running_a_test():
+    rows = [goalrun.Row('TAX', 'REQ-1 the base includes the inline note',
+                        "grep -q 'AddedLine' src/tax.cs", '', 'rm -f x'),
+            goalrun.Row('REAL', 'REQ-2 rounds half-up',
+                        'python3 -m unittest -q tests.test_tax.TC_002', '', 'rm -f x')]
+    problems = goalrun.lint(rows)
+    assert any('rows TAX search text' in p for p in problems), problems
+    assert not any('REAL' in p for p in problems), problems
+    # a test runner whose command also greps its own output is still a test
+    piped = [goalrun.Row('A', 'REQ-1 x', 'pytest -q tests/test_a.py | grep -q passed', '',
+                         'rm -f x')]
+    assert not any('search text' in p for p in goalrun.lint(piped)), goalrun.lint(piped)
+
+
 def test_zero_tests_spellings_all_fail_the_check():
     with tempfile.TemporaryDirectory() as tmp:
         spellings = ('no tests ran', 'No test matches', 'collected 0 items',
@@ -166,7 +192,7 @@ def test_zero_tests_spellings_all_fail_the_check():
         for text in spellings:
             script = fake_runner(tmp, text)
             ok, note, _ = goalrun.run_check(f'sh {script}')
-            assert not ok and 'matched zero tests' in note, (text, note)
+            assert not ok and 'ran no test' in note, (text, note)
 
 
 def test_zero_tests_gate_does_not_false_positive_on_a_normal_pass():
@@ -184,7 +210,7 @@ def test_cli_row_fails_when_its_runner_matched_nothing():
         ledger(tmp, f'A\tsuite passes\tsh {script}\n')
         out = run_cli(tmp)
         assert out.returncode == 1, out.stdout
-        assert 'FAIL' in out.stdout and 'matched zero tests' in out.stdout, out.stdout
+        assert 'FAIL' in out.stdout and 'ran no test' in out.stdout, out.stdout
 
 
 # ---- baseline & shipping, by content -----------------------------------------------

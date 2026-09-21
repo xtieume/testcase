@@ -185,6 +185,15 @@ def _zero_tests_matched(text):
         return '0 passing'
     if 'test run successful' in low and re.search(r'passed:\s*0\b', low):
         return 'Test Run Successful … Passed: 0'
+    # every test the check ran was skipped: the runner is happy, nothing was exercised, and a
+    # row whose only test is `@skip` reads as PASS while measuring exactly nothing
+    if re.search(r'\bok\b\s*\(skipped=\d+\)', low) and not re.search(r'(?<!\d)[1-9]\d*\s+passed', low):
+        ran = re.search(r'ran\s+(\d+)\s+tests?', low)
+        skip = re.search(r'skipped=(\d+)', low)
+        if ran and skip and ran.group(1) == skip.group(1):
+            return 'every test skipped'
+    if re.search(r'(?<!\d)[1-9]\d*\s+skipped', low) and not re.search(r'(?<!\d)[1-9]\d*\s+passed', low):
+        return 'every test skipped'
     return None
 
 
@@ -213,7 +222,8 @@ def run_check(cmd, timeout=1800, cwd=None):
     if code == 0:
         marker = _zero_tests_matched(text)
         if marker:
-            return False, f'matched zero tests ({marker}) — the filter matched nothing', False
+            return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
+                           f'test it matched was skipped'), False
     tail = [l.strip() for l in text.splitlines() if l.strip()]
     return code == 0, (tail[-1][:96] if tail else f'exit {code}'), False
 
@@ -420,6 +430,21 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
                         f'check can fail; add one, or waive it in the ledger with '
                         f'`# verify-ok: <id> — <reason>` — legitimate when this is test-first '
                         f'and its red phase was already witnessed by hand')
+    # the contract is `check` runs the test implementing this requirement's TC. A search over
+    # text is the shape that slips past `--verify` too: pair it with a break that edits the
+    # same string and the two agree with each other while measuring nothing
+    searching = [r.id for r in rows
+                 if not r.check.startswith('MANUAL:')
+                 and re.search(r'\b(grep|rg|ag|ack)\b', r.check)
+                 and not re.search(r'\b(pytest|unittest|jest|vitest|mocha|rspec|phpunit|'
+                                   r'go\s+test|cargo\s+test|dotnet\s+test|mvn|gradle|npm\s+test|'
+                                   r'yarn\s+test|pnpm\s+test)\b', r.check)]
+    if searching:
+        problems.append(f'rows {", ".join(searching)} search text instead of running a test — a '
+                        f'search proves the word is present, which survives every defect the '
+                        f'requirement is about; give the claim a test in the repo, or say in '
+                        f'the ledger why this row is hygiene rather than a requirement '
+                        f'(`# verify-ok: <id> — <reason>`)')
     ids = {r.id for r in rows}
     for sid in (signatures or {}):
         if sid not in ids:

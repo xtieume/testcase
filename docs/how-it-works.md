@@ -23,13 +23,13 @@ flowchart TD
     subgraph TC["testcase — how it is proven"]
         TC1["Cases from the requirement"]
         TC2["Second pass attacks its own output"]
-        TC3["TC-ids traced to a REQ-, plus runnable tests"]
+        TC3["TC-ids traced to a REQ-, plus tests in the repo's own framework"]
         TC1 --> TC2 --> TC3
     end
 
     subgraph GR["goalrun — whether it holds"]
         GR1["One ledger row per REQ-"]
-        GR2["check runs those tests"]
+        GR2["check runs the test implementing that TC — never a search over text"]
         GR3["break plants the defect the check must catch"]
         GR1 --> GR2 --> GR3
     end
@@ -40,11 +40,11 @@ flowchart TD
     SPEC --> DR1
     DR2 -->|"REQ-ids to reqs.txt"| TC1
     DR2 -->|"REQ-ids to reqs.txt"| GR1
-    TC3 -->|"tests become the row's check"| GR2
+    TC3 -->|"the test becomes the row's check"| GR2
     GR3 --> GATE
     GATE -->|"a REQ- no row measures"| FAIL1["Exit 1 — add a row, or waive it with a reason"]
     GATE -->|"a row with no break"| FAIL2["Exit 1 — add a break, or waive it with a reason"]
-    GATE -->|"a break on a path git cannot restore"| FAIL3["Exit 1 — point it at a tracked file"]
+    GATE -->|"a check that searches text"| FAIL3["Exit 1 — give the claim a test"]
     GATE -->|"most of the list waived"| FAIL4["Exit 1 — a bulk pass is not a gap someone looked at"]
     GATE -->|"none of those"| OUT
 
@@ -90,8 +90,7 @@ flowchart TD
 ## 3. How one row is decided
 
 A row belongs to a command or to a person, never both. The exit code is the answer. A
-deliverable git tracks is measured by git; one it ignores has no history to read, so it is
-measured by the weaker standard of mtime — which is why the rule is to track the artifact.
+deliverable is measured by content: `touch` changes a timestamp and ships nothing.
 
 ```mermaid
 flowchart TD
@@ -103,12 +102,11 @@ flowchart TD
     WAIT["WAIT — awaiting that owner"]
 
     RUN["Run the check"]
+    RAN{"Did it run any test?"}
     CODE{"Exit 0?"}
     DELIV{"Row names a deliverable?"}
     EXISTS{"Path exists?"}
-    TRACKED{"Does git track it?"}
-    SHIPPED{"Changed since the baseline commit?"}
-    MTIME{"Written since --baseline ran?"}
+    SHIPPED{"Content differs from baseline.json?"}
 
     PASS["PASS"]
     FAIL["FAIL"]
@@ -121,19 +119,17 @@ flowchart TD
     HASH -->|"yes"| PASS
 
     KIND -->|"no"| RUN
-    RUN --> CODE
+    RUN --> RAN
+    RAN -->|"no — filter matched nothing, or every test skipped"| FAIL
+    RAN -->|"yes"| CODE
     CODE -->|"non-zero, or timed out"| FAIL
     CODE -->|"yes"| DELIV
     DELIV -->|"no"| PASS
     DELIV -->|"yes"| EXISTS
     EXISTS -->|"no"| FAIL
-    EXISTS -->|"yes"| TRACKED
-    TRACKED -->|"yes"| SHIPPED
-    TRACKED -->|"no, git ignores it"| MTIME
+    EXISTS -->|"yes"| SHIPPED
     SHIPPED -->|"no"| FAIL
     SHIPPED -->|"yes"| PASS
-    MTIME -->|"no"| FAIL
-    MTIME -->|"yes"| PASS
 
     style PASS fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style FAIL fill:#f8d7da,stroke:#a3303b,color:#3b1015
@@ -142,36 +138,32 @@ flowchart TD
 
 ## 4. Proving the checks themselves
 
-A green row proves nothing until its check has been shown able to go red. `--verify` plants
-each row's `break` and demands the check fail; the sweep then asks whether any other row
-failed for the same defect, which would mean neither can tell one defect from another.
+A green row proves nothing until its check has been shown able to go red. `--verify` copies the
+tree, plants the row's `break` in the copy, and demands the check fail there — your own files
+are read, never written. The sweep then asks whether any other row failed for the same defect,
+which would mean neither can tell one defect from another.
 
 ```mermaid
 flowchart TD
     V["goalrun --verify"]
     LOCK{"Another goalrun running checks in this tree?"}
     STOPL["Exit 2 — a check racing another build goes red for reasons that are not the code"]
-    CLEAN{"Working tree clean?"}
-    STOP2["Exit 2 — commit or stash first"]
 
-    PRE["Pre-pass: run every check on the clean tree"]
+    PRE["Pre-pass: run every check on the tree"]
     RED{"Row already red?"}
     AR["ALREADY RED — it proves nothing by going red again, and stays out of the sweep"]
 
-    SAFE{"Does the break name a path git cannot restore?"}
-    UNRES1["UNRESTORABLE — nothing planted; git restores neither an ignored file's content nor its existence"]
-    PLANT["Plant the row's break"]
-    BROKE{"Break command itself succeeded?"}
-    BF["BREAK FAILED"]
+    CLONE["Copy the tree aside"]
+    PLANT["Plant the row's break in the copy"]
+    MOVED{"Did anything in the copy change?"}
+    BF["BREAK FAILED — the break fired nothing, so the check was never tested"]
 
-    CHECK["Run the check under the break"]
-    RESTORE["Restore: git checkout and clean, then the snapshot for what git cannot reach"]
-    MOVED{"Did the break move something git cannot restore?"}
-    UNRES2["UNRESTORABLE — put back from the snapshot, and the row is unproven either way"]
-    RESULT{"What did the check do?"}
-    HOLLOW["HOLLOW — it passed, so it tests nothing"]
+    CHECK["Run the check inside the copy"]
+    RESULT{"What did it do?"}
+    HOLLOW["HOLLOW — it passed, so every input it tries is one this defect is invisible in"]
     STUCK["STUCK — it hung, which proves nothing either way"]
     VERIFIED["VERIFIED — it went red, as it must"]
+    DROP["Delete the copy"]
 
     SWEEP["Sweep: run every other row under this same break"]
     SIB{"Which rows went red?"}
@@ -181,21 +173,15 @@ flowchart TD
 
     V --> LOCK
     LOCK -->|"yes"| STOPL
-    LOCK -->|"no"| CLEAN
-    CLEAN -->|"no"| STOP2
-    CLEAN -->|"yes"| PRE
+    LOCK -->|"no"| PRE
     PRE --> RED
     RED -->|"yes"| AR
-    RED -->|"no"| SAFE
-    SAFE -->|"yes"| UNRES1
-    SAFE -->|"no"| PLANT
-    PLANT --> BROKE
-    BROKE -->|"no"| BF
-    BROKE -->|"yes"| CHECK
-    CHECK --> RESTORE
-    RESTORE --> MOVED
-    MOVED -->|"yes"| UNRES2
-    MOVED -->|"no"| RESULT
+    RED -->|"no"| CLONE
+    CLONE --> PLANT
+    PLANT --> MOVED
+    MOVED -->|"no"| BF
+    MOVED -->|"yes"| CHECK
+    CHECK --> RESULT
     RESULT -->|"passed"| HOLLOW
     RESULT -->|"hung"| STUCK
     RESULT -->|"failed"| VERIFIED
@@ -204,6 +190,9 @@ flowchart TD
     SIB -->|"same deliverable"| SHARED
     SIB -->|"different deliverable"| BLAST
     SWEEP -->|"out of sweeping time"| BUDGET
+    VERIFIED --> DROP
+    HOLLOW --> DROP
+    BF --> DROP
 
     style VERIFIED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style SHARED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
@@ -212,21 +201,15 @@ flowchart TD
     style BLAST fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BF fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style AR fill:#f8d7da,stroke:#a3303b,color:#3b1015
-    style STOP2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style STOPL fill:#f8d7da,stroke:#a3303b,color:#3b1015
-    style UNRES1 fill:#f8d7da,stroke:#a3303b,color:#3b1015
-    style UNRES2 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
 Every box above is a string the script actually prints. `HOLLOW`, `STUCK`, `BLAST`,
-`ALREADY RED`, `UNRESTORABLE`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
+`ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
 proved nothing is not a pass.
 
-`UNRESTORABLE` is the one that is not about the check at all. `--verify` restores with `git
-checkout` and `git clean`, which reach neither the content nor the existence of a file git
-ignores — so a break that deletes an ignored report destroys it, and one that rewrites a check
-script under `.testcases/` leaves the row measuring less than the ledger says, past the end of
-the run. A break naming such a path is refused before anything is planted; what a break reaches
-indirectly is put back from a snapshot taken beforehand, and the row stays unproven until the
-break points at a file git can restore.
+`HOLLOW` is the one that is not about the row. It says the check cannot tell the correct
+behaviour from the defect — every input it tries is an input this defect is invisible in. The
+route back is into `testcase`, whose `Distinguishes from` column names the wrong implementation
+each case rules out, never forwards into the ledger by re-pointing the row.

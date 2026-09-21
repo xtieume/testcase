@@ -459,3 +459,65 @@ requirements, small enough that the 30% waiver gate never came near firing; noth
 that gate under the 629-requirement shape that motivated it. And the destructive case is now
 refused before it runs, which means no run has yet exercised the snapshot restore of
 `.testcases/` against a break that reaches it through a variable rather than a literal path.
+
+---
+
+## Scenarios 10–12 — the rewritten contract, three shapes of work
+
+Run after the rewrite that made a `check` the command running the requirement's test, sent
+each `break` into a disposable copy of the tree, and removed git. Three agents, three specs,
+each given the skill file by path — an agent that loads the skill by *name* gets whatever
+version is installed, and one run's complaints about "the skill still says `git clean`" were
+about the previous release. Reviewer loops were allowed one round for time; all three said so.
+
+| | Spec | What it leans on |
+|---|---|---|
+| 10 | `wc-lite`, five clauses, **no code yet** | test-first rows, plan-time `rm -f` breaks tightened later, `.testcases/goalrun/` holding nothing but its files |
+| 11 | `pricing`, five clauses, **code and five green tests exist** — one test uses `10%` so the missing 50% cap never runs, one calls the function and asserts nothing | breaks written from the spec on code nobody watched fail; `HOLLOW` routing back to `testcase` |
+| 12 | release `1.2`, two **text claims** (README, CHANGELOG) beside two behavioural ones | whether a claim about text becomes a test or a `grep` |
+
+### With the skill
+
+**10** — `DONE`, fourteen rows, every `check` a `unittest` selector, every `break` a real
+defect (`len(text)` → `len(text.encode())`, `text.split()` → `text.split(" ")`), `--verify`
+fourteen `VERIFIED` and a clean sweep. `.testcases/goalrun/` held `baseline.json`, `ledger.tsv`,
+`reqs.txt` and nothing else. A wrong expected value (`count("a\nb")["chars"] == 4`) passed
+`docs-review`'s loop, `testcase`'s trace lens **and** its attack lens — the attack reviewer
+proposed the same wrong number — and was caught only by the build subagent computing the real
+value.
+
+**11** — `NOT DONE`, then `DONE` after the work: found the missing cap (spec §2), the test that
+could never exercise it, and the test that asserted nothing; eight rows, all real tests, all
+`VERIFIED`. It also found that "tax after discount" is unobservable for a pure product with no
+intermediate rounding — 500,000 random pairs, zero mismatches — and recorded that as the limit
+of what the requirement admits rather than inventing a case. It **fixed the code while writing
+the ledger and only then took the baseline**, so every deliverable read `unchanged`; it undid the
+fix by hand, baselined, and redid it.
+
+**12** — `DONE`, four rows: the two text claims became `tests/test_docs.py` (README's `## Usage`
+contains `--json`; CHANGELOG's `## 1.2` mentions it), not `grep`. It edited the docs before
+taking the baseline and hit the same `unchanged` wall as 11. It wrote the breaks itself for a
+four-row ledger; a trace reviewer then steered a case under the wrong row, and the sweep caught
+it — `BLAST PLAINTEXT — its break also reddens JSONFLAG`. `cli.py` was finished before the run
+began, so no baseline could ever see it change; the row shipped no deliverable, which the skill
+never said was the answer.
+
+### What they found wrong, and what changed
+
+| Gap it reported | Change |
+|---|---|
+| `--baseline` needed the ledger, so it could only be taken after step 4 — by which point two of three runs had already edited files, and every deliverable read `unchanged` for good; the cure was to undo the work by hand | The baseline is the **whole tree**, taken at step 1 before the first edit, with no ledger. A deliverable named later is looked up in it; a file it never saw is new and shipped; build output is skipped. A second baseline is refused without `--reset`, since retaking it is what erased the evidence |
+| Work finished before the run began has no deliverable that can ever ship | Stated in step 4 and `ledger-design.md`: such a row names no deliverable; what it ships, if anything, is its test |
+| Step 2 named two cases — a doc set exists, nothing exists — and all three runs had the third: a spec with only code beside it. Two ran `docs-review`'s gap analysis against a nine-byte README to extract ids it was not built to extract; one guessed the "nothing exists" branch | Step 2 says what `docs-review` is for here — decomposing the spec into `REQ-` ids — and that documents to audit against are optional |
+| One run wrote the ledger audit into `.testcases/goalrun/`, beside the four files the skill says live there | Stated: the audit is `docs-review`'s report and lives in its directory |
+| "Four rows, I'll write the breaks myself" — and the sweep, not a blind reviewer, caught the mirror | Rationalizations row |
+| No lens in `testcase` recomputes an expected value; a wrong one survived every review | `testcase`: an Arithmetic lens both reviewers carry — every concrete expected value recomputed from its input |
+| `shared` printed before its row's own `VERIFIED`, reading as the previous row's fallout | Verdict first, footnotes after |
+
+### What this record does not show
+
+No baseline run without the skill: the contract under test was the skill's own, and the
+question was whether agents could follow it, not whether they would invent it. All three ran
+their reviewer loops for a single round, so nothing here says whether a second round would have
+caught the arithmetic error the first missed. And no run exercised a `MANUAL` row, a
+`SWEEP STOPPED`, or a tree large enough for the per-row clone to hurt.

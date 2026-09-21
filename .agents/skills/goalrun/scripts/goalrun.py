@@ -22,12 +22,11 @@ Verdict per row:
   WAIT  MANUAL row without a valid signature in `.testcases/goalrun/signoff.tsv`
 
 Modes (mutually exclusive):
-  --baseline          record the content id of every deliverable named in the ledger, in
-                       `.testcases/goalrun/baseline.json` — including ones that don't exist
-                       yet (recorded as null). A deliverable with no entry at all in that
-                       file is not "shipped" by editing the ledger; it is a reason to run
-                       --baseline again, which keeps every mark already taken (--reset
-                       drops them). Takes no argument: content is measured directly
+  --baseline          record the content of every file in the tree, in
+                       `.testcases/goalrun/baseline.json`. Taken once, before the first
+                       edit, and before the ledger exists; refused when one is present
+                       (--reset replaces it). A deliverable ships when it differs from
+                       this record, or was not in it
   --sign ID --who W   a human signs a MANUAL row; W must be the row's owner
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
   --verify [A,B]      for each row: clone the tree into a disposable temp directory, plant
@@ -275,46 +274,38 @@ def _tree_hashes(root):
     return out
 
 
-def content_id(path, cwd=None):
-    """The content id `--baseline` records and shipping is measured against: one file's own
-    digest, or — for a directory — a combined digest of everything under it (reusing
-    `_tree_hashes` rather than a second walker). None when the path does not exist yet."""
+BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases'}
+
+
+def take_baseline(cwd=None, path=BASELINE, reset=False):
+    """Record the content id of every file in the tree — the mark this run's work is measured
+    against — and return (data, count).
+
+    The whole tree, not the ledger's deliverables: the ledger does not exist yet at the moment
+    this must be taken, which is before the first edit. A baseline taken after the work began
+    reads every deliverable as `unchanged` for ever, and the only cure is to undo the work by
+    hand. Build outputs are skipped — no requirement ships one — which also keeps the walk short.
+
+    A second baseline is refused unless `reset`: retaking it mid-run moves every mark to now and
+    erases the evidence that anything shipped."""
     full = os.path.join(cwd or '.', path)
-    if not os.path.lexists(full):
-        return None
-    if os.path.isdir(full) and not os.path.islink(full):
-        hashes = _tree_hashes(full)
-        combo = hashlib.sha256()
-        for rel in sorted(hashes):
-            combo.update(f'{rel}\0{hashes[rel]}\n'.encode())
-        return combo.hexdigest()
-    return _digest(full)
-
-
-def take_baseline(rows, cwd=None, path=BASELINE, reset=False):
-    """Record the content id of every deliverable named in the ledger — including ones no row
-    has produced yet, as null — and return (data, added, kept).
-
-    Merges by default: a deliverable already recorded keeps its mark. Rows get added mid-run,
-    and the row that is missing from the baseline says to run this again — if that rewrote
-    every mark, the rows already shipped would read `unchanged since baseline` from then on,
-    their evidence erased by following an instruction. `reset` is the deliberate fresh start."""
-    full = os.path.join(cwd or '.', path)
-    kept = {}
-    if not reset and os.path.exists(full):
-        kept = read_baseline(path, cwd)['files']
-    files, added = dict(kept), 0
-    for r in rows:
-        norm = os.path.normpath(r.deliverable) if r.deliverable else ''
-        if norm and norm not in files:
-            files[norm] = content_id(norm, cwd)
-            added += 1
+    if os.path.exists(full) and not reset:
+        raise Misuse(f'a baseline already exists at {path} — the marks this run is measured '
+                     f'against. Retaking it would read every deliverable as unchanged; '
+                     f'`--baseline --reset` if that is really what you want')
+    root = cwd or '.'
+    files = {}
+    for base, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in BASELINE_SKIP]
+        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            p = os.path.join(base, name)
+            files[os.path.normpath(os.path.relpath(p, root))] = _digest(p)
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, sort_keys=True)
+        json.dump(data, f, indent=1, sort_keys=True)
         f.write('\n')
-    return data, added, len(kept)
+    return data, len(files)
 
 
 def read_baseline(path=BASELINE, cwd=None):
@@ -326,21 +317,22 @@ def read_baseline(path=BASELINE, cwd=None):
 
 
 def not_shipped(path, baseline_files, cwd=None):
-    """'' when the deliverable exists and its content differs from the baseline record, else
-    the reason.
+    """'' when the deliverable exists and differs from the baseline, else the reason.
 
-    A path with no key at all in `baseline_files` is not judged "unchanged" — it is a gap in
-    the baseline itself: adding a row that names a file `--baseline` never saw would otherwise
-    make that file this run's deliverable for free, the moment the ledger is edited."""
+    A file the baseline never saw is new since then, so it shipped. A directory shipped when
+    anything under it was added, removed or changed."""
     norm = os.path.normpath(path)
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
-    if norm not in baseline_files:
-        return 'not recorded in the baseline — run --baseline again; rows already recorded keep their mark'
-    current = content_id(norm, cwd)
-    if current is None:
+    full = os.path.join(cwd or '.', norm)
+    if not os.path.lexists(full):
         return 'does not exist'
-    return '' if current != baseline_files[norm] else 'unchanged since baseline'
+    if os.path.isdir(full) and not os.path.islink(full):
+        now = {os.path.normpath(os.path.join(norm, rel)): h for rel, h in _tree_hashes(full).items()}
+        then = {k: v for k, v in baseline_files.items()
+                if k == norm or k.startswith(norm + os.sep)}
+        return '' if now != then else 'unchanged since baseline'
+    return '' if _digest(full) != baseline_files.get(norm) else 'unchanged since baseline'
 
 
 def load_signatures(path=SIGNOFF):
@@ -703,16 +695,8 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                     incomplete.append(row.id)
             else:
                 same, crossed, stuck = [], [], []
-            if crossed:
-                all_ok = False
-                print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which '
-                      f'ship elsewhere; those checks cannot tell this defect from their own')
-            if stuck:
-                print(f'stuck {row.id} — {", ".join(stuck)} timed out under its break; those '
-                      f'checks hang rather than fail, which the sweep cannot read either way')
-            if same:
-                print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
-                      f'the same file do')
+            # the row's own verdict first, its sweep footnotes after — printed the other way
+            # round, `shared` reads as the previous row's fallout
             if hung:
                 all_ok, ran = False, ran + 1
                 print(f'STUCK {row.id} — its check timed out under the break rather than '
@@ -724,6 +708,16 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             else:
                 ran += 1
                 print(f'VERIFIED {row.id} — {note}')
+            if crossed:
+                all_ok = False
+                print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which '
+                      f'ship elsewhere; those checks cannot tell this defect from their own')
+            if stuck:
+                print(f'stuck {row.id} — {", ".join(stuck)} timed out under its break; those '
+                      f'checks hang rather than fail, which the sweep cannot read either way')
+            if same:
+                print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
+                      f'the same file do')
         finally:
             shutil.rmtree(clone, ignore_errors=True)
     if not ran:
@@ -775,10 +769,10 @@ def main():
     mode.add_argument('--only', metavar='A,B', help='run a subset of rows')
     mode.add_argument('--sign', metavar='ID')
     mode.add_argument('--baseline', nargs='?', const='', default=None, metavar='(no argument)',
-                      help='record the content id of every deliverable named in the ledger; '
-                           'deliverables already recorded keep their mark')
+                      help='record the tree before any work: what every deliverable is later '
+                           'measured against. Refused when one exists')
     ap.add_argument('--reset', action='store_true',
-                    help='with --baseline: drop every recorded mark and take them all afresh')
+                    help='with --baseline: replace the existing baseline')
     mode.add_argument('--lint-ledger', action='store_true')
     mode.add_argument('--verify', nargs='?', const='', metavar='A,B')
     blast = ap.add_mutually_exclusive_group()
@@ -824,24 +818,21 @@ def run(a):
     if a.requirements and not os.path.exists(a.requirements):
         raise Misuse(f'no requirements file at {a.requirements}')
 
-    rows = load(a.ledger)
-
     if a.baseline is not None:
         if a.baseline:
-            raise Misuse(f'--baseline takes no argument — it records every deliverable\'s '
-                         f'content; drop {a.baseline!r}')
+            raise Misuse(f'--baseline takes no argument — it records the tree as it is; '
+                         f'drop {a.baseline!r}')
         # under the lock like the checks: two writers to the baseline file at once could
         # interleave and leave it holding neither write
         lock = hold_lock()
         try:
-            data, added, kept = take_baseline(rows, reset=a.reset)
+            _, count = take_baseline(reset=a.reset)
         finally:
             drop_lock(lock)
-        what = (f'{added} deliverable(s) recorded' if not kept else
-                f'{added} added, {kept} kept — marks already taken are not moved; '
-                f'`--baseline --reset` starts over')
-        print(f'baseline: {what} -> {BASELINE}')
+        print(f'baseline: {count} file(s) recorded -> {BASELINE}')
         return 0
+
+    rows = load(a.ledger)
 
     if a.sign:
         lock = hold_lock()

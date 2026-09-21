@@ -231,6 +231,77 @@ def test_cli_row_fails_when_its_runner_matched_nothing():
 
 # ---- baseline & shipping, by content -----------------------------------------------
 
+def test_baseline_records_the_whole_tree_before_any_ledger_exists():
+    """Taken at step 1, before the ledger names anything — because the moment it must be
+    taken is before the first edit, and the ledger does not exist yet then."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, 'src'))
+        os.makedirs(os.path.join(tmp, 'obj'))
+        open(os.path.join(tmp, 'src/a.txt'), 'w').write('v1\n')
+        open(os.path.join(tmp, 'obj/out.bin'), 'w').write('build output\n')
+        out = run_cli(tmp, '--baseline')                 # no ledger anywhere
+        assert out.returncode == 0, out
+        data = json.load(open(os.path.join(tmp, goalrun.BASELINE)))
+        assert 'src/a.txt' in data['files']
+        assert 'obj/out.bin' not in data['files'], 'build output is not a deliverable'
+        assert not any(k.startswith('.testcases') for k in data['files'])
+        # a second one is refused: it would move every mark to now
+        again = run_cli(tmp, '--baseline')
+        assert again.returncode == 2 and 'already exists' in again.stderr, again
+        assert run_cli(tmp, '--baseline', '--reset').returncode == 0
+        assert run_cli(tmp, '--reset').returncode == 2, '--reset without --baseline is misuse'
+
+
+def test_shipping_is_content_against_the_baseline():
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, 'src'))
+        path = os.path.join(tmp, 'src/a.txt')
+        open(path, 'w').write('v1\n')
+        base = {'src/a.txt': goalrun._digest(path)}
+        assert goalrun.not_shipped('src/a.txt', base, cwd=tmp) == 'unchanged since baseline'
+        os.utime(path, None)                              # touch moves mtime, not content
+        assert goalrun.not_shipped('src/a.txt', base, cwd=tmp) == 'unchanged since baseline'
+        open(path, 'w').write('v2\n')
+        assert goalrun.not_shipped('src/a.txt', base, cwd=tmp) == ''
+        assert goalrun.not_shipped('./src/a.txt', base, cwd=tmp) == '', 'normpath'
+
+
+def test_a_file_the_baseline_never_saw_is_new_and_therefore_shipped():
+    """The ledger is written after the baseline, so a deliverable can name a file that did
+    not exist at step 1. Absent then, present now: that is this run's work."""
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, 'new.txt'), 'w').write('x\n')
+        assert goalrun.not_shipped('new.txt', {}, cwd=tmp) == ''
+        assert goalrun.not_shipped('missing.txt', {}, cwd=tmp) == 'does not exist'
+
+
+def test_directory_deliverable_ships_when_anything_inside_it_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        d = os.path.join(tmp, 'out')
+        os.makedirs(d)
+        open(os.path.join(d, 'a.txt'), 'w').write('1\n')
+        base = {'out/a.txt': goalrun._digest(os.path.join(d, 'a.txt'))}
+        assert goalrun.not_shipped('out', base, cwd=tmp) == 'unchanged since baseline'
+        open(os.path.join(d, 'b.txt'), 'w').write('2\n')             # added
+        assert goalrun.not_shipped('out', base, cwd=tmp) == ''
+        os.remove(os.path.join(d, 'b.txt'))
+        os.remove(os.path.join(d, 'a.txt'))                             # removed
+        assert goalrun.not_shipped('out', base, cwd=tmp) == ''
+
+
+def test_work_done_before_the_baseline_reads_unchanged_end_to_end():
+    """The trap two pressure runs walked into: edit first, baseline second. The script cannot
+    know the edit was this run's, so it says `unchanged` — and the fix is to take the baseline
+    before touching anything, never to retake it after."""
+    with tempfile.TemporaryDirectory() as tmp:
+        os.makedirs(os.path.join(tmp, 'src'))
+        open(os.path.join(tmp, 'src/a.py'), 'w').write('done already\n')
+        run_cli(tmp, '--baseline')
+        ledger(tmp, 'A\tREQ-1\ttrue\tsrc/a.py\trm -f src/a.py\n')
+        out = run_cli(tmp)
+        assert 'unchanged since baseline' in out.stdout, out.stdout
+
+
 def test_deliverable_without_baseline_exits_before_any_check_runs():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
@@ -239,20 +310,6 @@ def test_deliverable_without_baseline_exits_before_any_check_runs():
         assert out.returncode == 2, out.stdout
         assert 'DARK' in out.stderr and 'baseline' in out.stderr, out.stderr
         assert not os.path.exists(os.path.join(tmp, 'ran.marker')), 'no check may run first'
-
-
-def test_baseline_records_content_id_of_every_deliverable_including_unwritten_ones():
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'src'))
-        open(os.path.join(tmp, 'src/a.txt'), 'w').write('v1\n')
-        ledger(tmp, 'A\tx\ttrue\tsrc/a.txt\n'
-                    'B\ty\ttrue\tsrc/not-written-yet.txt\n')
-        assert run_cli(tmp, '--baseline').returncode == 0
-        data = json.load(open(os.path.join(tmp, goalrun.BASELINE)))
-        assert set(data['files']) == {'src/a.txt', 'src/not-written-yet.txt'}
-        assert data['files']['src/not-written-yet.txt'] is None
-        assert data['files']['src/a.txt'] == goalrun.content_id('src/a.txt', cwd=tmp)
-        assert isinstance(data['taken'], int)
 
 
 def test_baseline_rejects_an_argument():
@@ -276,77 +333,8 @@ def test_passing_check_with_missing_deliverable_fails_that_row():
         assert 'does not exist' in lines[0]
 
 
-def test_content_that_differs_from_baseline_is_shipped():
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'src'))
-        path = os.path.join(tmp, 'src/a.txt')
-        open(path, 'w').write('v1\n')
-        baseline = {'a': goalrun.content_id('src/a.txt', cwd=tmp)}
-        assert goalrun.not_shipped('src/a.txt', {'src/a.txt': baseline['a']}, cwd=tmp) == \
-            'unchanged since baseline'
-        open(path, 'w').write('v2\n')
-        assert goalrun.not_shipped('src/a.txt', {'src/a.txt': baseline['a']}, cwd=tmp) == ''
-        assert goalrun.not_shipped('./src/a.txt', {'src/a.txt': baseline['a']}, cwd=tmp) == '', \
-            'normpath'
-
-
-def test_touching_alone_does_not_ship_it():
-    """A `touch` changes mtime, not content — content is all shipping is measured by now."""
-    with tempfile.TemporaryDirectory() as tmp:
-        path = os.path.join(tmp, 'old.txt')
-        open(path, 'w').write('same\n')
-        baseline = {'old.txt': goalrun.content_id('old.txt', cwd=tmp)}
-        os.utime(path, None)
-        assert goalrun.not_shipped('old.txt', baseline, cwd=tmp) == 'unchanged since baseline'
-
-
-def test_baseline_merges_so_re_recording_keeps_a_shipped_rows_evidence():
-    """The row added after the baseline says to run --baseline again. If that rewrote every
-    mark, the rows already shipped would read `unchanged` from then on — evidence erased by
-    following an instruction. Marks already taken stay; --reset is the deliberate fresh start."""
-    with tempfile.TemporaryDirectory() as tmp:
-        os.makedirs(os.path.join(tmp, 'src'))
-        open(os.path.join(tmp, 'src', 'a.py'), 'w').write('v1\n')
-        open(os.path.join(tmp, 'src', 'b.py'), 'w').write('v1\n')
-        ledger(tmp, 'A\tREQ-1 a\ttrue\tsrc/a.py\trm -f src/a.py\n')
-        assert run_cli(tmp, '--baseline').returncode == 0
-        open(os.path.join(tmp, 'src', 'a.py'), 'w').write('v2 — this run\n')
-        assert 'A  PASS' in run_cli(tmp).stdout
-        ledger(tmp, 'A\tREQ-1 a\ttrue\tsrc/a.py\trm -f src/a.py\n'
-                    'B\tREQ-2 b\ttrue\tsrc/b.py\trm -f src/b.py\n')
-        out = run_cli(tmp, '--baseline')
-        assert '1 added, 1 kept' in out.stdout, out.stdout
-        table = run_cli(tmp).stdout
-        assert 'A  PASS' in table, table                 # its mark was not moved
-        assert 'B  FAIL' in table and 'unchanged' in table, table
-        # --reset moves every mark to now: A is unchanged since *this* baseline
-        assert run_cli(tmp, '--baseline', '--reset').returncode == 0
-        assert 'A  FAIL' in run_cli(tmp).stdout
-        assert run_cli(tmp, '--reset').returncode == 2, '--reset without --baseline is misuse'
-
-
-def test_deliverable_missing_from_baseline_json_is_not_shipped():
-    """No key at all — not 'unchanged'. Otherwise a ledger edit naming a year-old file would
-    make that file this run's deliverable for free, without anyone running --baseline again."""
-    with tempfile.TemporaryDirectory() as tmp:
-        open(os.path.join(tmp, 'new.txt'), 'w').write('x\n')
-        why = goalrun.not_shipped('new.txt', {}, cwd=tmp)
-        assert 'not recorded in the baseline' in why, why
-
-
 def test_missing_deliverable_is_not_shipped():
     assert goalrun.not_shipped('ghost.txt', {'ghost.txt': 'deadbeef'}) == 'does not exist'
-
-
-def test_directory_deliverable_ships_when_anything_inside_it_changes():
-    with tempfile.TemporaryDirectory() as tmp:
-        d = os.path.join(tmp, 'out')
-        os.makedirs(d)
-        open(os.path.join(d, 'a.txt'), 'w').write('1\n')
-        baseline = {'out': goalrun.content_id('out', cwd=tmp)}
-        assert goalrun.not_shipped('out', baseline, cwd=tmp) == 'unchanged since baseline'
-        open(os.path.join(d, 'b.txt'), 'w').write('2\n')
-        assert goalrun.not_shipped('out', baseline, cwd=tmp) == ''
 
 
 def test_deliverable_outside_the_repo_is_not_shipped():

@@ -54,11 +54,17 @@ through the two skills that already do this work. **Do not invent this pipeline 
 row.**
 
 1. **Recon** — stack, existing commands (`package.json`, `Makefile`, test runner), specs.
-2. **Requirements — `docs-review`.** A spec or doc set exists → run that skill (Mode A; Mode
-   B for a question with no spec) and write its `REQ-` ids to `.testcases/goalrun/reqs.txt`,
-   one per line — that file is the checklist step 7 gates against. None exists → walk
-   `.agents/skills/docs-review/references/dimensions.md` yourself, implicit requirements
-   included, and say which dimensions do not apply. ⛔ Never read the list off the code: a
+   Then, before touching anything, `python3 "$GOALRUN" --baseline`: it records every file
+   as it is, and a deliverable ships by differing from that record. Taken after the first
+   edit, it reads that edit as pre-existing and the row stays red for the whole run; the
+   only cure is to undo the work by hand, so the script refuses a second one without
+   `--reset`.
+2. **Requirements — `docs-review`.** It turns a spec into `REQ-` ids — atomic, one yes/no
+   each — and writes them to `.testcases/goalrun/reqs.txt`, one per line: the checklist step 6
+   gates against. Documents to audit *against* the spec are optional; a spec with nothing but
+   code beside it still goes through its decomposition, and only the traceability half is
+   skipped. No spec at all → walk `.agents/skills/docs-review/references/dimensions.md`
+   yourself, implicit requirements included, and say which dimensions do not apply. ⛔ Never read the list off the code: a
    ledger derived from the implementation grades the implementation against itself.
 3. **Behaviour — `testcase`.** Every requirement that needs behaviour proven goes through that
    skill: it produces `testcases.md` (`TC-` ids, traced to `REQ-`) and, at its step 7, the
@@ -90,17 +96,19 @@ row.**
    `# verify-ok: <id> — test-first, seen red on <date>`. A row measuring code that already
    existed gets no such waiver: nobody ever watched those tests fail.
 
+   A row over work that was finished before this run began names no `deliverable` — nothing
+   this run produces can differ from the baseline there. What it ships, if anything, is the
+   test written for it.
+
    **If you cannot write the check, you do not yet understand the goal.**
-5. `python3 "$GOALRUN" --baseline` — after the ledger names its deliverables, before any
-   work starts. It records what each deliverable holds now; a row added later gets its mark
-   by running it again, and the marks already taken stay (`--reset` moves them all).
-6. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
+5. **Audit the ledger with `docs-review`, not by re-reading it.** Requirement list = the
    spec, ledger = the document set, and run its step 4 loop as written — round log,
    convergence, an oscillating row frozen `Undecided`. `Missing` = a requirement no row
    measures; `Partial` = a row that checks half of one; `Unspecified` = a row answering to
    nothing. You cannot find the requirement you never thought of — hence a subagent that
-   never sees your reasoning.
-7. **Gate it by exit code, not by reading:**
+   never sees your reasoning. Its report is `docs-review`'s and lives in
+   `.testcases/docs-review/`; `.testcases/goalrun/` holds the four files and nothing else.
+6. **Gate it by exit code, not by reading:**
 
    ```bash
    python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
@@ -119,9 +127,9 @@ row.**
 
    The gate only knows the list you wrote, and only that the id is *mentioned* by a row. A
    requirement missing from `reqs.txt`, or named by a row that does not measure it, is
-   invisible here — step 6 is what finds both.
-8. **Slice phases** — groups of row ids, by dependency.
-9. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
+   invisible here — step 5 is what finds both.
+7. **Slice phases** — groups of row ids, by dependency.
+8. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
    building while it runs: a check racing another compile goes red for reasons that are
    not the code. Two goalruns *in one tree* refuse each other by lock; a build *you* started in another
    shell is yours to wait for. A red you think is contention is not a finding either way —
@@ -130,7 +138,7 @@ row.**
 Show ledger, phases, red rows, and a menu: **run / edit a row / re-slice / skip
 pre-flight**.
 
-Skipping steps 2, 3 or 6 because the goal "is small" is how a ledger ends up measuring the
+Skipping steps 2, 3 or 5 because the goal "is small" is how a ledger ends up measuring the
 work you happened to do. The three skills are one pipeline: **`docs-review` says what is
 required · `testcase` says how it is proven · `goalrun` says whether it holds.**
 
@@ -289,4 +297,5 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "the check greps the symbol, so it covers the clause" | It proves someone typed the word. Delete the body, keep the name: still green. |
 | "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at; past the step 7 threshold it is a bulk pass, and the gate says so. |
 | "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
+| "Four rows, I'll write the breaks myself" | A reviewer steered one run into a break that mirrored its check. Only the sweep caught it. Hand `what` to someone who has not seen `check`. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

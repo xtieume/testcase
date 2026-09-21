@@ -104,12 +104,13 @@ Spawn subagents (`Agent`/`Task`, `general-purpose`) and give each **only**: the 
 
 **Not your pass-1 reasoning** — sharing your analysis makes the reviewer rubber-stamp your blind spots. It must rebuild the coverage map from the requirement and map the cases onto it.
 
-Run **two reviewers per round, in parallel** — one holding both lenses finds the gaps of whichever it started with, then stops:
+Run **two reviewers per round, in parallel**, each carrying the Arithmetic lens as well — one holding both of the other lenses finds the gaps of whichever it started with, then stops:
 
 | Lens | Question |
 | ---- | -------- |
 | Trace | Every requirement statement has a case; every case traces back |
 | Attack | How does it break while the happy path passes? State, permission, concurrency, dependency failure, boundary — and for each case, which wrong implementation it would fail to notice |
+| Arithmetic | Every concrete expected value, recomputed from the input by hand or by a one-line script. A number nobody recomputed is a guess with a decimal point |
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
 

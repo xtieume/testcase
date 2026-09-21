@@ -17,8 +17,10 @@ field may contain a tab.
 
 **Verdict.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes and the row
 names a deliverable, that path must exist and its **content** must differ from what `--baseline`
-recorded — a directory counts if anything under it differs, `touch` counts for nothing, absolute
-paths and `..` never count. Else `FAIL — deliverable not shipped`.
+recorded — a file the baseline never saw is new and counts, a directory counts if anything under
+it was added, removed or changed, `touch` counts for nothing, absolute paths and `..` never
+count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
+name: nothing can differ from a baseline that already contains it.
 
 ## An example
 
@@ -37,7 +39,7 @@ it on every push. `LINT` is the exception that proves the shape: a hygiene rule 
 requirement, so no `REQ-` and no test.
 
 ```bash
-python3 "$GOALRUN" --baseline        # once the ledger names its deliverables, before work starts
+python3 "$GOALRUN" --baseline        # first of all, before the first edit — no ledger needed
 python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
 python3 "$GOALRUN"                   # pre-flight, then per phase with --only
 python3 "$GOALRUN" --verify          # VERIFIED / HOLLOW / STUCK / BREAK FAILED, plus the sweep
@@ -160,8 +162,9 @@ requirements no row measures. It does not catch a fake check or a break that can
 ## Flags and exit codes
 
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
-`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` keeps marks already taken and adds the
-rest; `--baseline --reset` takes them all afresh. `--sign ID --who WHO [--note ...]`. `--requirements
+`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` records the tree once, skipping build
+output (`obj/`, `bin/`, `target/`, `dist/`) and the caches a clone skips; it is refused while
+one exists, and `--baseline --reset` replaces it — which reads every edit so far as pre-existing. `--sign ID --who WHO [--note ...]`. `--requirements
 PATH` is read by `--lint-ledger` only. `--ledger PATH` is for testing the script; the skill uses
 the catalog path.
 
@@ -169,7 +172,7 @@ the catalog path.
 | ---- | ----- |
 | 0 | every row `PASS` (`DONE`), every chosen row `PASS` (`PHASE OK`), every break row `VERIFIED`, lint clean |
 | 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; lint found problems |
-| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, empty requirements file, `--blast` without `--verify`, unknown `--only`/`--verify` id, an argument to `--baseline`, `--reset` without it, deliverable without baseline, `MANUAL` row naming a deliverable, bad `--sign`, `--requirements` without `--lint-ledger`, another goalrun already running checks in this tree |
+| 2 | misuse or broken ledger — no ledger, empty check, duplicate id, empty requirements file, `--blast` without `--verify`, unknown `--only`/`--verify` id, an argument to `--baseline`, a second `--baseline` without `--reset`, `--reset` without `--baseline`, deliverable without baseline, `MANUAL` row naming a deliverable, bad `--sign`, `--requirements` without `--lint-ledger`, another goalrun already running checks in this tree |
 
 `check` and `break` run with the caller's shell and permissions. POSIX only (`sh -c`, process
 groups, `flock`); no version control required. A ledger is an executable file — read every row

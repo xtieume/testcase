@@ -56,8 +56,8 @@ grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
 
 The coverage map stays in the reply; persist only on request, to `.testcases/testcase/coverage-map.md`.
 
-| ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Priority | Automatable |
-| -- | --- | -------- | --------- | ------------- | ----- | --------------- | -------- | ----------- |
+| ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Distinguishes from | Priority | Automatable |
+| -- | --- | -------- | --------- | ------------- | ----- | --------------- | ------------------ | -------- | ----------- |
 
 **ID** — `TC-<area>-<3 digits>`, e.g. `TC-DROPDOWN-001`. IDs are permanent: on re-runs keep IDs for unchanged cases, append new ones, and mark removed cases `[OBSOLETE]` in the ID or Test Case cell (where the script looks) instead of deleting. Never renumber — downstream tools hold these IDs.
 
@@ -74,6 +74,21 @@ The coverage map stays in the reply; persist only on request, to `.testcases/tes
 | **P0** | Data loss/corruption, permission bypass, wrong money/calculation, main flow blocked, security exposure |
 | **P1** | Business rule wrong but workaround exists; secondary flow broken; recoverable unhandled error |
 | **P2** | Rare input, cosmetic, low-impact edge case |
+
+**Distinguishes from** — the wrong implementation this case rules out, named. *Which plausible
+mistake would this input catch that a simpler input would not?* A case that cannot answer it
+does not discriminate, whatever its category says.
+
+This is the column that catches the trap "unhappy path" does not: `2.675` is a tie, a boundary,
+a textbook negative case — and it rounds to `2.68` under half-up **and** half-even, so a suite
+whose only tie is `2.675` stays green when the rounding rule is swapped. `2.665` distinguishes
+them. Same shape as a coefficient fixed at `1.0` in every fixture: the multiplication is
+invisible, so losing it entirely breaks nothing that anyone measures.
+
+Write the mistake, not the reassurance: `half-even`, `coefficient dropped`, `qty ignored for 一式`,
+`off-by-one on the upper bound`. `—` is honest for a case that exists to pin behaviour rather
+than to discriminate (a plain happy path), and a table where most rows say `—` is a table that
+tests one implementation, not one requirement.
 
 **Automatable** — `Y`: an automated test could drive it (deterministic setup, machine-checkable assertion). `N`: needs a person (visual judgement, physical device, unscriptable external system). Decided once here, not re-litigated later: step 7 implements every `Y`.
 
@@ -94,7 +109,7 @@ Run **two reviewers per round, in parallel** — one holding both lenses finds t
 | Lens | Question |
 | ---- | -------- |
 | Trace | Every requirement statement has a case; every case traces back |
-| Attack | How does it break while the happy path passes? State, permission, concurrency, dependency failure, boundary |
+| Attack | How does it break while the happy path passes? State, permission, concurrency, dependency failure, boundary — and for each case, which wrong implementation it would fail to notice |
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
 
@@ -167,7 +182,12 @@ Give the user: the file path (+ CSV if exported), the script's coverage summary,
 
 ## Rules
 
-**1 — Never generate only happy paths.** The script decides, not your read of your own table: >40% `Positive`, or a requirement with no `Negative`/`Boundary`/`Validation`/`Error`/`Permission` case, fails the lint.
+**1 — Never generate only happy paths, and never mistake a category for discrimination.** The
+script decides, not your read of your own table: >40% `Positive`, or a requirement with no
+`Negative`/`Boundary`/`Validation`/`Error`/`Permission` case, fails the lint. But a `Boundary`
+row whose input behaves identically under the wrong implementation tests nothing — that is what
+`Distinguishes from` is for. Pick the input from the space of **mistakes**, not the space of
+inputs.
 
 **2 — Analyze before generating.** Coverage map first, always.
 

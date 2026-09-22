@@ -185,6 +185,13 @@ the reading that feels most wrong — and A and B then pass every case in the ta
 so an implementation drifting between them is invisible. Count the readings, and check that
 some case tells each pair apart.
 
+**A hedge is only as good as the row it was copied from.** Marking a case neutral on an open
+question by pointing at a sibling that already looks neutral spreads the sibling's hidden
+commitment instead of avoiding it — here a race case called itself neutral by citing one whose
+own failure mode only occurs under one answer. Derive the neutrality from the requirement, and
+list every case an open question touches under that question, so two cases cannot quietly
+answer it in opposite directions.
+
 **A row a previous round flagged gets re-derived whole, not just where it was patched.** A
 reviewer stops at the first cause it finds; the fix for that cause routinely introduces the
 second one in the same cell. In this skill's own trial, three rounds in a row found the new

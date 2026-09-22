@@ -25,29 +25,76 @@ function idFromUrl(u) {
 const noDash = (id) => String(id).replace(/-/g, '');
 const safeName = (s) => (s || 'file').replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, '_').slice(0, 120);
 
-// Fetch every block of a page (recursive chunks), run inside the browser.
-// discussion/comment/notion_user come in the same recordMap - keep them.
+// Fetch every block of a page, run inside the browser.
+// loadPageChunk only returns one level deep and then reports an empty cursor,
+// so the children it names are pulled in afterwards until nothing is missing.
+// discussion/comment/notion_user ride along in the same record map.
 async function fetchRecordMap(page, pageId) {
   return page.evaluate(async (pid) => {
     const TABLES = ['block', 'collection', 'collection_view', 'discussion', 'comment', 'notion_user'];
     const merged = Object.fromEntries(TABLES.map(t => [t, {}]));
+    const post = (ep, body) => fetch('/api/v3/' + ep, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+    });
+    const absorb = (rm) => { for (const t of TABLES) Object.assign(merged[t], rm?.[t] || {}); };
+    const unwrap = (w) => w?.value?.value || w?.value || null;
+
     let cursor = { stack: [] };
     let spaceId = null;
     for (let i = 0; i < 40; i++) {
-      const body = JSON.stringify({ pageId: pid, limit: 100, cursor, chunkNumber: i, verticalColumns: false });
-      const post = (ep) => fetch('/api/v3/' + ep, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body
-      });
-      let r = await post('loadCachedPageChunkV2');
-      if (r.status !== 200) r = await post('loadPageChunk');
+      const body = { pageId: pid, limit: 100, cursor, chunkNumber: i, verticalColumns: false };
+      let r = await post('loadCachedPageChunkV2', body);
+      if (r.status !== 200) r = await post('loadPageChunk', body);
       if (r.status !== 200) break;
       const j = await r.json();
-      const rm = j.recordMap || {};
-      for (const t of TABLES) Object.assign(merged[t], rm[t] || {});
+      absorb(j.recordMap);
       spaceId = spaceId || j.spaceId || null;
       if (!j.cursor || !j.cursor.stack || j.cursor.stack.length === 0) break;
       cursor = j.cursor;
     }
+    spaceId = spaceId || unwrap(merged.block[pid])?.space_id || null;
+
+    // loadPageChunk names children without returning them, so walk down from
+    // the root and fetch what is missing. Bounded to this page: a chunk also
+    // carries unrelated blocks, and following those crawls the workspace.
+    const fetchMissing = async (pointers) => {
+      for (let k = 0; k < pointers.length; k += 100) {
+        const r = await post('syncRecordValues', {
+          requests: pointers.slice(k, k + 100).map(p => ({ pointer: { ...p, spaceId }, version: -1 }))
+        });
+        if (r.status === 200) absorb((await r.json()).recordMap);
+      }
+    };
+
+    const mine = new Set([pid]);
+    let frontier = [pid];
+    for (let depth = 0; depth < 30 && frontier.length; depth++) {
+      await fetchMissing(frontier.filter(id => !merged.block[id]).map(id => ({ table: 'block', id })));
+      const next = [];
+      for (const id of frontier) {
+        const b = unwrap(merged.block[id]);
+        if (!b) continue;
+        if (id !== pid && b.type === 'page') continue; // child pages are listed, not inlined
+        for (const c of b.content || []) if (!mine.has(c)) { mine.add(c); next.push(c); }
+      }
+      frontier = next;
+    }
+
+    const threads = [];
+    for (const id of mine) for (const d of unwrap(merged.block[id])?.discussions || []) threads.push(d);
+    await fetchMissing(threads.filter(d => !merged.discussion[d]).map(id => ({ table: 'discussion', id })));
+
+    const msgs = [];
+    for (const d of threads) for (const c of unwrap(merged.discussion[d])?.comments || []) msgs.push(c);
+    await fetchMissing(msgs.filter(c => !merged.comment[c]).map(id => ({ table: 'comment', id })));
+
+    const people = new Set();
+    for (const c of msgs) {
+      const by = unwrap(merged.comment[c])?.created_by_id;
+      if (by && !merged.notion_user[by]) people.add(by);
+    }
+    await fetchMissing([...people].map(id => ({ table: 'notion_user', id })));
+
     return { rm: merged, spaceId };
   }, pageId);
 }
@@ -135,6 +182,8 @@ function rich(arr) {
         case 'e': t = `$${f[1]}$`; break;
       }
     }
+    // notion serves in-page links relative; they only resolve from the app
+    if (link?.startsWith('/')) link = 'https://www.notion.so' + link;
     if (link) t = `[${t}](${ASSETS[link] || link})`;
     return t;
   }).join('');
@@ -472,7 +521,7 @@ if (!process.env.NOTION_SELFTEST) {
   fs.mkdirSync(OUT, { recursive: true });
   log(`URLs: ${URLS.length}`);
 
-  const { chromium } = await import('playwright');
+  const { chromium } = await import('playwright-core');
   const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
   const ctx = browser.contexts()[0];
   const page = await ctx.newPage();

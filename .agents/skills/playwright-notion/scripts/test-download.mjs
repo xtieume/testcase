@@ -33,6 +33,9 @@ assert.match(ctx.comments[0], /#1 — Tamami Sato/);
 assert.match(ctx.comments[0], /ty gia cuoi thang/);
 assert.match(ctx.comments[0], /\?d=d1\)/);
 
+// relative in-page links are made absolute, or they break outside the app
+assert.strictEqual(rich([['see', [['a', '/abc#def']]]]), '[see](https://www.notion.so/abc#def)');
+
 // heading carries a deep link back to the exact block
 assert.match(out, /## Requirements \[↗\]\(https:\/\/notion\.so\/doc#h1\)/);
 

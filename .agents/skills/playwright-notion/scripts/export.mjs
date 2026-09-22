@@ -5,7 +5,7 @@
 // usage: node export.mjs <urls-file> <out-dir> [cdp-port]
 //
 // Read-only: enqueueTask/getTasks only produce a download; nothing in Notion is modified.
-import { chromium } from 'playwright';
+import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';

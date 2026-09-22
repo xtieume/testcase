@@ -141,6 +141,18 @@ Tell each reviewer plainly: **an empty round is a valid result.** Every finding 
 
 A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 8) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
 
+**A cell reviewers reverse on between rounds is settled by the requirement owner, not by
+another round.** Same lens, same requirement, opposite verdicts means the ambiguity is real and
+the loop cannot resolve it — running round five buys a third answer, not agreement. Freeze the
+cell, record both readings and who flipped which way under its question in step 8, and stop
+re-litigating it. Such a cell does not block convergence; it is escalated, not open.
+
+**A case built to be independent of an open question must prove nothing else fires in its
+window.** Reaching past two candidate cutoffs means a span long enough for another rule to run
+inside it — a second annual grant, a scheduled job, a session expiry. State in the
+preconditions what is held still, or the case is assumption-dependent in a way its own note
+denies.
+
 **Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop. Rounds do not stop because a number was reached — if P0/P1 gaps are still appearing at round 4, run round 5, and if you are made to stop while they are, report the loop **unconverged** rather than finished. Stopping early and converging are different outcomes and never share a word.
 
 No subagent tool, or a reviewer that died mid-run (rate limit, crash — quote the error in the
@@ -231,6 +243,13 @@ not two:
   assumption is raised as a question in step 8. Silence is not ambiguity.
 - The requirement genuinely supports two readings that give different values → `TBD —
   requirement clarification needed`, `Automatable: N`, and the question in step 8.
+
+**The line between the last two: both readings need text behind them.** "3 months after the
+next anniversary" is two readings because *next* grammatically points at either anniversary —
+that is a `TBD`. A spec that excludes public holidays and never mentions weekends is not two
+readings; the second one imports a working-day concept from outside. Assert the literal value,
+name the assumption, ask the question. Over-hedging is its own failure: a table where half the
+expected results say `TBD` cannot run, and nobody reads the questions buried behind them.
 
 A bare `TBD` on a case a reading would settle is a weak case, not caution: it ships a row that
 can never run. Guessing and over-hedging fail the same way — neither states what it assumed.

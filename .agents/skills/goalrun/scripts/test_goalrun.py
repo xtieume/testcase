@@ -1214,3 +1214,20 @@ if __name__ == '__main__':
     print()
     print(f'{failures} failure(s)' if failures else 'all green')
     sys.exit(1 if failures else 0)
+
+
+def test_verify_says_what_it_will_cost_before_the_first_break():
+    """The pre-pass times every check; a proof that then goes quiet for rows × checks has no
+    excuse — it prints the count and the estimate first, and names the way out when the
+    sweep cannot fit its budget."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\ta\tgrep -q old old.txt\t—\techo x > old.txt\n'
+                    'B\tb\tgrep -q new new.txt\t—\techo x > new.txt\n')
+        open(os.path.join(tmp, 'new.txt'), 'w').write('new\n')
+        out = run_cli(tmp, '--verify').stdout
+        assert '2 break row(s); a check takes' in out and 'sweep ≈' in out, out
+        assert out.index('break row(s)') < out.index('VERIFIED A'), out
+        tight = run_cli(tmp, '--verify', '--blast', '0').stdout
+        assert 'stop short' in tight and '`--blast SECONDS` raises it' in tight, tight
+        assert 'sweep ≈' not in run_cli(tmp, '--verify', 'A').stdout

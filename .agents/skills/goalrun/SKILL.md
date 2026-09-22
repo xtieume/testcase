@@ -184,6 +184,12 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    off for a `--verify A,B` subset; `--blast` / `--no-blast` force either way, and
    `ledger-design.md` has the budget and the flags.
 
+   The proof costs one check per row and the sweep costs rows × rows of them, so its price is
+   set by how long one check takes — a `pytest -k` is seconds, a `dotnet test` on a solution
+   is not, and the same command in a fresh copy pays its build again. `--verify` prints the
+   estimate after its first pass, before any break is planted; read it. If the sweep will not
+   fit its budget, narrow the checks (one test project, one selector) before raising it.
+
 3. **Tighten each break once the code exists.** A plan-time break is `rm -f <deliverable>`,
    cruder than the requirement: the row prints `VERIFIED` while its clause stays untested.
    Re-point it at the real defect and verify again. **Each** means each — a phase handed to

@@ -663,6 +663,12 @@ def clone_tree(src):
     return dst
 
 
+def _dur(seconds):
+    if seconds < 10:
+        return f'{seconds:.1f}s'
+    return f'{seconds:.0f}s' if seconds < 90 else f'{seconds / 60:.0f} min'
+
+
 def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET):
     """Plant each row's break inside a disposable clone of the tree, prove its check goes red
     there, then throw the clone away. Return True if all did.
@@ -676,15 +682,37 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # have nothing to do with the planted defect. Run in a clone like everything else here, so
     # even a check with side effects (one that litters an artifact) never touches the real tree
     scan = everything if blast else rows
+    already, cost = set(), {}
     pre = clone_tree(cwd or '.')
     try:
-        already = {r.id for r in scan
-                  if not r.check.startswith('MANUAL:') and not run_check(r.check, timeout, pre)[0]}
+        for r in scan:
+            if r.check.startswith('MANUAL:'):
+                continue
+            began = time.monotonic()
+            if not run_check(r.check, timeout, pre)[0]:
+                already.add(r.id)
+            cost.setdefault(r.check, time.monotonic() - began)
     finally:
         shutil.rmtree(pre, ignore_errors=True)
     if already:
         print(f'already red before any break: {", ".join(sorted(already))} — those rows prove '
               f'nothing until they pass, and the sweep ignores them')
+    live = [r for r in rows
+            if r.brk and not r.check.startswith('MANUAL:') and r.id not in already]
+    if live and cost:
+        # the pre-pass just timed every check, so the run can say up front what it is about
+        # to cost instead of going quiet for as long as rows × checks takes
+        own = sum(cost[r.check] for r in live)
+        line = (f'{len(live)} break row(s); a check takes {_dur(min(cost.values()))}–'
+                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)}')
+        if blast:
+            sweep = sum(c for r in live for cmd, c in cost.items() if cmd != r.check)
+            line += f', sweep ≈ {_dur(sweep)}'
+            if budget is not None:
+                line += (f' of a {_dur(budget)} budget' +
+                         (' — it will stop short; `--blast SECONDS` raises it, `--verify A,B` '
+                          'proves a subset without one' if sweep > budget else ''))
+        print(line)
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
     incomplete = []
     for row in rows:

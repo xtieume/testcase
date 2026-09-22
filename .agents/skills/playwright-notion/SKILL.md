@@ -1,6 +1,6 @@
 ---
 name: playwright-notion
-description: Use when downloading or reading Notion pages without an API token — the workspace is company-owned, there is no integration secret, the UI Export button is disabled or missing by permission, and access exists only through a logged-in browser. Also use when a Notion scrape produced wrong markdown (tables repeated, cells duplicated, sidebar text mixed into content) or when a headless browser lands on the Notion login screen.
+description: Use when downloading or reading Notion pages without an API token — the workspace is company-owned, there is no integration secret, the UI Export button is disabled or missing by permission, and access exists only through a logged-in browser. Also use when a Notion scrape produced wrong markdown (tables repeated, cells duplicated, sidebar text mixed into content), when a headless browser lands on the Notion login screen, or when a page's comments and attachments are needed alongside its body because that is where the spec was actually decided.
 ---
 
 # Playwright Notion
@@ -36,13 +36,15 @@ Skipping either one wastes an hour. Both were verified by failure on macOS.
 | Script | Endpoint | Output | Use |
 |---|---|---|---|
 | `scripts/export.mjs` | `enqueueTask` (`exportBlock`) → zip | Notion's own markdown + images downloaded | **Try this first** |
-| `scripts/download.mjs` | `loadPageChunk` + `queryCollection` | markdown built by a local converter | Fallback if export is blocked |
+| `scripts/download.mjs` | `loadCachedPageChunkV2` + `queryCollection` + `getSignedFileUrls` | markdown + `comments.md` + downloaded `assets/` | Fallback if export is blocked, **and whenever comments matter** |
 
 **A disabled Export button does not mean export is blocked.** In many workspaces the button is only hidden client-side by role, while the server still accepts the export task. That was true in the case this skill was built from: the UI offered no Export, yet `enqueueTask` returned `200` and produced a proper zip. So always test `export.mjs` on one page before falling back.
 
-Native export is better where it works: it resolves person mentions to real names (`佐藤珠未/Tamami Sato`, not `@user`), resolves page mentions to titles plus URLs (not `[[page]]`), and downloads embedded images into a folder beside the markdown.
+Native export is better where it works: it is Notion's own renderer, so tables, nested content and formatting come out exactly as the page reads.
 
-Fall back to `download.mjs` only when `export.mjs` reports an `enqueueTask` `401`/`Unauthorized` — that means the workspace really did disable export server-side (an Enterprise setting). `download.mjs` still works there, because it uses nothing more than the read access the browser already has.
+**But export drops every comment.** In most workspaces the decisions — a scope change, the answer to an open question, the final formula — live in comments, not in the body. When the page is a requirement and the comments matter, run `download.mjs` as well and keep both: export for the body, `download.mjs` for `<page>.comments.md`.
+
+Fall back to `download.mjs` when `export.mjs` reports an `enqueueTask` `401`/`Unauthorized` — that means the workspace really did disable export server-side (an Enterprise setting). `download.mjs` still works there, because it uses nothing more than the read access the browser already has.
 
 ## Workflow
 
@@ -90,12 +92,23 @@ node scripts/download.mjs urls.txt ./notion-docs 9222   # fallback
 
 `NOTION_RECURSIVE=1` on `export.mjs` exports each page's subtree as well. Leave it off by default — on a database page it pulls the entire table.
 
+`download.mjs` environment variables:
+
+| Variable | Default | Effect |
+|---|---|---|
+| `NOTION_MAX_MB` | `30` | skip attachments larger than this |
+| `NOTION_MEDIA` | *(off)* | `=1` also downloads video/audio (usually huge) |
+| `NOTION_NO_ASSETS` | *(off)* | `=1` keeps the original URLs and downloads nothing |
+| `NOTION_RAW` | *(off)* | `=1` also dumps `<page>.raw.json` — use it when comments come out `0` but the UI shows some |
+
 **Step 6 — verify.** Count `OK` lines against the URL count and report any `FAIL`/`GAVE UP` line. Never report success from an exit code alone.
 
 ```bash
 grep -c OK /tmp/notion_export.log            # export.mjs
 grep -E "FAIL|GAVE UP" /tmp/notion_export.log
 ```
+
+`download.mjs` logs `N comments  M files` per page. If a page shows `0 comments` while the Notion UI clearly has some, say so — do not let it pass silently. Re-run with `NOTION_RAW=1` and check whether `discussion` in the dump is empty (really none) or populated (a renderer bug).
 
 ## Quick reference
 
@@ -107,6 +120,7 @@ grep -E "FAIL|GAVE UP" /tmp/notion_export.log
 | Native export (preferred) | `node scripts/export.mjs urls.txt ./out 9222` |
 | Converter (fallback) | `node scripts/download.mjs urls.txt ./out 9222` |
 | Check results | `grep -c OK /tmp/notion_export.log` |
+| Self-check the converter | `node scripts/test-download.mjs` |
 
 Logs default to `/tmp/notion_export.log` and `/tmp/notion_dl.log`; override with `NOTION_DL_LOG`.
 
@@ -114,7 +128,25 @@ Logs default to `/tmp/notion_export.log` and `/tmp/notion_dl.log`; override with
 
 **`export.mjs`** — Notion's own export, unpacked: one `.md` per page under a workspace-named folder, plus a sibling folder of downloaded images per page. Properties appear as a plain key/value block at the top, mentions and relations resolved to names and URLs.
 
-**`download.mjs`** — one `.md` per page named by its Notion title (unsafe characters replaced, duplicates suffixed `(2)`), containing title, source URL, a `## Properties` section, headings, nested lists, to-do checkboxes, toggles, quotes, callouts as `> [!NOTE]`, code blocks with language tags, equations as `$$`, dividers, tables with correct columns (inline tables and embedded database views via `queryCollection`), and links/images/files as URLs. Its known limits, worth stating rather than hiding: page mentions render as `[[page]]` and person mentions as `@user`, because the API returns ids there.
+**`download.mjs`** — per page:
+
+```
+<out>/
+  <Page title>.md            # body
+  <Page title>.comments.md   # every comment, numbered #1..#n, anchored <a id="c-n">
+  assets/<Page title>/       # attachments downloaded from that page
+```
+
+The body holds title, source URL, an extraction header (block/file/comment counts), a `## Properties` section, headings, nested lists, to-do checkboxes, toggles, quotes, callouts as `> [!NOTE]`, code blocks with language tags, equations as `$$`, dividers, and tables with correct columns (inline tables and embedded database views via `queryCollection`).
+
+Traceability — the reason to prefer this over a plain scrape:
+
+- a commented block carries `> 💬 n comment → [#a–#b](<page>.comments.md#c-a)`;
+- each heading and toggle carries `[↗](<url>#<blockId>)`, opening that exact block in Notion;
+- each comment thread carries `[↗](<url>?d=<discussionId>)`, opening that exact thread;
+- person mentions resolve to real names and page mentions to titles plus URLs, from the same recordMap.
+
+Attachments are downloaded rather than linked, because Notion's file URLs are signed and expire — a document that only links them is empty within days. Files skipped for size or media type are named in the header; report them rather than letting them vanish.
 
 ## Common mistakes
 
@@ -129,6 +161,8 @@ Logs default to `/tmp/notion_export.log` and `/tmp/notion_dl.log`; override with
 | Reusing one tab for 30+ pages | Renderer crashes; every later page fails | Both scripts recycle the tab every 5 pages and retry 3x |
 | Plain `unzip` on the export zip | `Illegal byte sequence`, Japanese/Vietnamese names destroyed | Decode cp437→utf-8 (`export.mjs` does) |
 | Scraping the sidebar for the URL list | Gets database views, not the wanted rows | Ask the user for explicit URLs |
+| Treating `export.mjs` output as the whole requirement | Every comment is missing — that is where the spec gets decided | Also run `download.mjs` for `comments.md` |
+| Keeping Notion's file URLs instead of the files | Signed URLs expire; the doc is empty a few days later | `download.mjs` saves them under `assets/` |
 | Piping a long run through `tail` | Output buffered, progress invisible | Log to a file, `grep` it |
 
 ## Red flags — stop and re-read this skill
@@ -138,6 +172,7 @@ Logs default to `/tmp/notion_export.log` and `/tmp/notion_dl.log`; override with
 - About to skip `export.mjs` because the UI hides the Export button → test it anyway.
 - About to launch a browser with `open -a ... --args` → flags get dropped.
 - About to report "downloaded all pages" without grepping the log → verify first.
+- About to hand over an export as "the requirement" without its comments → the decisions are in the comments.
 
 ## Warn the user before starting
 

@@ -252,6 +252,23 @@ def test_baseline_records_the_whole_tree_before_any_ledger_exists():
         assert run_cli(tmp, '--reset').returncode == 2, '--reset without --baseline is misuse'
 
 
+def test_a_huge_file_is_marked_by_size_and_mtime_not_hashed():
+    """A 300MB database dump under docs/ is not a deliverable, and reading it is most of the
+    walk. Its mark is size+mtime; a rewrite still registers because the mtime moves."""
+    with tempfile.TemporaryDirectory() as tmp:
+        big = os.path.join(tmp, 'dump.mdb')
+        with open(big, 'wb') as f:
+            f.seek(goalrun.BIG_FILE + 1); f.write(b'x')      # sparse: no real 32MB written
+        mark = goalrun._mark(big)
+        assert mark.startswith('big:'), mark
+        base = {'dump.mdb': mark}
+        assert goalrun.not_shipped('dump.mdb', base, cwd=tmp) == 'unchanged since baseline'
+        os.utime(big, (1, 1))
+        assert goalrun.not_shipped('dump.mdb', base, cwd=tmp) == ''
+        small = os.path.join(tmp, 'a.txt'); open(small, 'w').write('x\n')
+        assert not goalrun._mark(small).startswith('big:')
+
+
 def test_shipping_is_content_against_the_baseline():
     with tempfile.TemporaryDirectory() as tmp:
         os.makedirs(os.path.join(tmp, 'src'))

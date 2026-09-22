@@ -274,7 +274,25 @@ def _tree_hashes(root):
     return out
 
 
-BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases'}
+BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases',
+                              '.codegraph', '.terraform', '.gradle', '.cache', '.pytest_cache',
+                              '.ruff_cache', 'coverage'}
+# a deliverable is never this big; a database dump or a cached asset is, and reading it is
+# most of the walk. Its size and mtime stand in for its content — a change still registers
+BIG_FILE = 32 << 20
+
+
+def _mark(path):
+    """What the baseline records for one path: its digest, or for a file past BIG_FILE its
+    size and mtime — `big:<size>:<mtime_ns>` — since hashing gigabytes to notice a change that
+    also moves the mtime buys nothing."""
+    try:
+        st = os.lstat(path)
+        if not os.path.islink(path) and st.st_size > BIG_FILE:
+            return f'big:{st.st_size}:{st.st_mtime_ns}'
+    except OSError:
+        return 'unreadable'
+    return _digest(path)
 
 
 def take_baseline(cwd=None, path=BASELINE, reset=False):
@@ -299,7 +317,7 @@ def take_baseline(cwd=None, path=BASELINE, reset=False):
         dirs[:] = [d for d in dirs if d not in BASELINE_SKIP]
         for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             p = os.path.join(base, name)
-            files[os.path.normpath(os.path.relpath(p, root))] = _digest(p)
+            files[os.path.normpath(os.path.relpath(p, root))] = _mark(p)
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
@@ -332,7 +350,7 @@ def not_shipped(path, baseline_files, cwd=None):
         then = {k: v for k, v in baseline_files.items()
                 if k == norm or k.startswith(norm + os.sep)}
         return '' if now != then else 'unchanged since baseline'
-    return '' if _digest(full) != baseline_files.get(norm) else 'unchanged since baseline'
+    return '' if _mark(full) != baseline_files.get(norm) else 'unchanged since baseline'
 
 
 def load_signatures(path=SIGNOFF):

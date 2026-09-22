@@ -198,6 +198,14 @@ own failure mode only occurs under one answer. Derive the neutrality from the re
 list every case an open question touches under that question, so two cases cannot quietly
 answer it in opposite directions.
 
+**Verify `Distinguishes from` by running the case's own input through the implementation it
+names.** The column is a claim, not a label, and it is the only part of a case nothing else
+checks — a lint sees a filled cell, a reviewer reading for coverage sees a plausible sentence.
+Two failures here survived ten rounds: a tier case at a value a year below the threshold where
+both operators return the same number, and a balance case where the correct result, the
+double-subtraction and the gross check all reject. Pick the input that makes them diverge; if
+none does, the case is decoration.
+
 **Moving a case's input to fix one property silently breaks another.** A boundary case made
 *reachable* by shifting it onto a state the system produces can stop *discriminating*: two
 cases moved off a tier edge onto the previous anniversary still caught a miscount, but no

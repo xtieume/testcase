@@ -131,6 +131,12 @@ Run **two reviewers per round, in parallel**, each carrying the Arithmetic lens 
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
 
+**Two reviewers naming the same case with different numbers is the most valuable result of the
+round, not a tie to break.** Neither is authoritative — the Arithmetic lens miscounts too.
+Recompute it yourself from the requirement, by hand or by a one-line script, and record which
+reading the number came from. Taking the reviewer you trust more, or the number that matches
+your table, throws away the only signal that the value was never derived in the first place.
+
 Tell each reviewer plainly: **an empty round is a valid result.** Every finding cites the requirement line it violates; a finding it cannot cite does not come back. Do not fill a round to avoid returning nothing.
 
 A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 8) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.

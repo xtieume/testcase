@@ -63,7 +63,7 @@ Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định mộ
 
 | Skill | Làm gì | Kích hoạt |
 | ----- | ------ | --------- |
-| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Sinh test case từ requirement, tự tấn công output của mình để tìm case bị sót, rồi implement các case automatable thành test chạy được | "viết test case cho…" |
+| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Sinh test case từ requirement hoặc từ design Figma, tự tấn công output của mình để tìm case bị sót, rồi implement các case automatable thành test chạy được và viết bug report cho cái fail | "viết test case cho…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Đối chiếu tài liệu với spec: spec yêu cầu gì vs tài liệu thực sự viết gì, mỗi verdict kèm trích dẫn | "review docs theo spec.md" |
 
 ### Thu thập dữ liệu

@@ -1,6 +1,6 @@
 ---
 name: testcase
-description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases. Runs a mandatory independent second-pass review to catch missed coverage before returning.
+description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, Figma designs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Also validates a build against its design and files reproducible bug reports from what fails. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases, to compare a screen against its Figma design, or to write up a bug. Runs a mandatory independent second-pass review to catch missed coverage before returning.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 ---
 
@@ -12,6 +12,19 @@ You are a senior QA engineer. The objective is not case count:
 
 Never stop at the happy paths.
 
+## Quick start
+
+| Ask | What happens |
+| --- | ------------ |
+| "write test cases for <requirement>" | Full workflow: coverage map → cases → adversarial second pass → lint |
+| "review these test cases" | `references/review-mode.md`, then the same second pass over the existing table |
+| "does this screen match the Figma?" | `references/design-validation.md` — discrepancies become `D<n>` rows in the same table |
+| "write up this bug" | `references/bug-report.md` — reproduction, evidence, proposed severity |
+| "implement the automatable ones" | Step 7 only, against an existing table |
+
+Deliverable is always `testcases.md` plus whatever ships as runnable tests. The run is not
+finished until `summarize.py` exits clean (step 6).
+
 ## Files in this skill
 
 Read each **when the workflow says** — not upfront.
@@ -21,6 +34,8 @@ Read each **when the workflow says** — not upfront.
 | `references/coverage-map.md` | Always, at step 2 |
 | `references/i18n-jp.md` | Japanese system, or any input accepts multi-byte text |
 | `references/review-mode.md` | User hands you existing test cases to review |
+| `references/design-validation.md` | The requirement is a Figma link, mockup or screenshot |
+| `references/bug-report.md` | A case fails, or the user asks you to write up a bug |
 | `scripts/summarize.py` | Step 6, to count and lint the table |
 
 ---
@@ -38,6 +53,8 @@ Give every distinct requirement statement an ID — reuse the ticket's/spec's ID
 ### 2. Build a coverage map
 
 Read `references/coverage-map.md` (plus `i18n-jp.md` if Japanese text) and work through the dimensions **before** writing any case. Output is analysis, not cases: which dimensions carry real risk, which don't apply.
+
+Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well — it adds the dimensions a frame hides (empty, overflow, focus, dark mode) and gives each discrepancy a `D<n>` requirement ID, so step 6 checks design coverage the same way it checks everything else.
 
 ### 3. Generate pass-1 test cases
 
@@ -178,6 +195,8 @@ The row's Steps and Expected Result are the test body and its assertion. If the 
 ### 8. Report
 
 Give the user: the file path (+ CSV if exported), the script's coverage summary, the test run result and where the tests live, and a `## Remaining Questions / Assumptions` section for anything that blocked confident design.
+
+A case that failed against the current build is a finding, not a footnote: write it up with `references/bug-report.md`, carrying the case ID and its requirement ID.
 
 ---
 

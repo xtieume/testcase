@@ -18,7 +18,7 @@ and the lint refuses `\&\&` or `\|\|` outright.
 | `what` | The condition in one sentence, carrying its `REQ-` id. Printed in the table; hashed into a `MANUAL` signature. |
 | `check` | The command running the test that implements this requirement's `TC-`, or `MANUAL:<owner>`. Exit 0 means the condition holds. Never empty, never a search over source code. |
 | `deliverable` | Optional path this row must have produced. `—`, `-` or empty means none. Not allowed on a `MANUAL` row — a row belongs to a decider or a file, not both. |
-| `break` | The command that plants the exact defect `check` exists to catch. Read by `--verify`. Waivable only with a reason (below). |
+| `break` | The edit that plants the exact defect `check` exists to catch — `path :: what it says :: what it should say`, or a bare path to delete the file. Made and put back by `--verify`. Waivable only with a reason (below). |
 
 **Verdict.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes and the row
 names a deliverable, that path must exist and its **content** must differ from what `--baseline`
@@ -80,59 +80,65 @@ accepted gap when it is only a line nobody deleted, so the lint reports it.
 
 ## Writing a `break`
 
+A break is an edit goalrun makes and puts back, not a command it runs:
+
+```
+<path> :: <the text it holds now> :: <the text it should hold instead>
+<path>                                       the file itself goes away
+```
+
+The text must appear in the file exactly once — twice, and which one the requirement means is
+written down nowhere. Nothing goes through a shell, so there is no quoting to leak, no
+`sed -i ''` that is BSD on one machine and GNU on the next, and no command that exits 0 having
+done nothing. A break that finds nothing to change is `BREAK FAILED` **before** a check is
+spent on it.
+
 **From `what`, never from `check`.** A check that greps a symbol and a break that renames it
 agree with each other and measure nothing, while printing `VERIFIED`. Hand `what`, the spec
 extract and the source path to a subagent that has not seen the check.
 
 **At the defect the requirement names**, not at the file holding it: remove the rounding, not
-the function. `rm -f src/export.py` reddens any check that opens the file, so it proves the
-check reads something, not that it reads this clause. A break is written once, when the row is,
-and read once, by the Prove pass.
+the function. Deleting `src/export.py` reddens any check that opens the file, so it proves the
+check reads something, not that it reads this clause.
 
-**Portably**: `sed -i ''` is BSD, `sed -i` is GNU; a ledger written on one and run on the other
-reports `BREAK FAILED` on every row. Use `python3 -c` or `sed ... > t && mv t <file>`.
+```tsv
+ROUND	REQ-EXP-002 money rounds half-up	python3 -m unittest -q tests.test_export.TC_EXP_004	src/export.py	src/export.py :: ROUND_HALF_UP :: ROUND_HALF_EVEN
+```
 
-Four shapes that read as proof and are not:
+Three shapes that read as proof and are not:
 
 | Shape | What `--verify` says |
 | ----- | -------------------- |
-| Break weaker than its requirement — `rm -f src/tax.py` for a rounding clause | `VERIFIED`, and the clause stays untested |
-| Break that fires nothing | `BREAK FAILED` — it changed nothing in the copy |
+| Break weaker than its requirement — deleting `src/tax.py` for a rounding clause | `VERIFIED`, and the clause stays untested |
 | Row already red before anything was planted | `ALREADY RED`, kept out of the sweep |
 | Check so broad it reddens on any defect | `BLAST` against rows shipping something else |
 
-`--lint-ledger` tells none of these apart, the same way it cannot tell a real check from `true`.
-Only `--verify` can.
+`--lint-ledger` reads the shape of a break, not its aim: it cannot tell a break weaker than its
+clause from an exact one, the same way it cannot tell a real check from `true`. Only `--verify`
+can.
 
-## What a check costs, and where
+## What a check costs
 
-A copy sits at a different path, so a check that restores or resolves dependencies does that
-work again on every row — pinning it (`--no-restore`, an offline flag) is usually the largest
-saving available. After that, narrow the command: one test project rather than the whole
-solution, one selector rather than the suite. `--verify` times every check on its first pass
-and prints what the proof and the sweep will cost before planting anything; read that line
-before deciding whether to pay for `--blast`.
+A verify costs one check per row, and `--blast` costs one per row per row. Narrow the command
+and both shrink: one test project rather than the whole solution, one selector rather than the
+suite. `--verify` times every check on its first pass and prints what the proof and the sweep
+would cost before planting anything; read that line before deciding whether to pay for
+`--blast`.
 
-## A break runs in a copy
+## What a break may and may not reach
 
-`--verify` prints the ledger table in your tree, then copies the tree once and, per row,
-plants the break in that copy, runs the check there, and puts the copy back. It runs once, at the end, in place of
-the final plain run. What that costs, and what it cannot see:
+`--verify` prints the ledger table, then per row makes the edit, runs the check, and writes the
+file back byte for byte. It runs once, at the end, in place of the final plain run. The bytes
+go to `.testcases/goalrun/undo/` before the check starts, so an interrupted verify restores on
+its way out and a killed one is put back by the next run, which says which rows it repaired.
 
-- **The check runs in the copy**, so a check reaching the original tree by an absolute path
-  tests unmutated code and reads as `HOLLOW` through no fault of its own. Keep checks relative.
-- **Heavy directories are not copied** (`.git`, `node_modules`, `__pycache__`, virtualenvs); a
-  check needing one must build it. Build outputs (`obj/`, `bin/`, `target/`) *are* copied, so a
-  compiling check stays incremental.
-- **Cost** — one copy of the tree, made once and put back between rows (what a break touched
-  is undone from the copy, not copied again), a filesystem clone where the platform has one
-  (APFS `cp -c`, reflinks on Linux) and a plain copy otherwise. On a large working tree that
-  copy is minutes, which is why it is paid once. The copy keeps mtimes, so an incremental
-  build stays incremental; a dependency restore keyed to the absolute path does not, and
-  repeats on every row unless the check pins it.
-- **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
-- **Only the break half runs in a copy.** The table, a plain run and `--only` all run checks
-  in the tree itself, so a check that writes leaves what it wrote — where it already did.
+- **Only a file in the tree.** An absolute path, or one climbing out through `..`, is refused.
+- **Only text.** A binary file has nothing to substitute in; delete it instead, or pick a
+  different defect.
+- **State outside the tree** — databases, services, `$HOME` — is neither changed nor undone by
+  the break, and a check that writes to any of them leaves what it wrote.
+- **A check runs in your tree**, as it does on a plain run, so a check that litters litters
+  where it already did.
 - **A directory deliverable** ships when anything under it changes — a check that writes a
   log into it counts, so keep generated output out of a directory a row names.
 
@@ -184,7 +190,7 @@ requirements no row measures. It does not catch a fake check or a break that can
 `--blast [SECONDS]` adds the sweep; `--no-blast` says out loud that it is not wanted.
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
 `PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` records the tree once, skipping build
-output (`obj/`, `bin/`, `target/`, `dist/`) and the caches a clone skips; it is refused while
+output (`obj/`, `bin/`, `target/`, `dist/`) and the usual caches; it is refused while
 one exists, and `--baseline --reset` replaces it — which reads every edit so far as pre-existing. `--sign ID --who WHO [--note ...]`. `--requirements
 PATH` is read by `--lint-ledger` only. `--ledger PATH` is for testing the script; the skill uses
 the catalog path.

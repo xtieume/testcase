@@ -139,8 +139,8 @@ flowchart TD
 ## 4. Chứng minh chính những cái check
 
 Một row xanh chưa chứng minh được gì cho tới khi check của nó được cho thấy là **có thể đỏ**.
-`--verify` **nhân bản cây**, trồng `break` vào bản sao, và bắt check phải fail ở đó — file của
-bạn chỉ bị đọc, không bị ghi. Nó chạy **một lần**, sau khi row cuối cùng đã xanh: row mà code
+`--verify` **tự sửa** đúng chỗ mà `break` mô tả, bắt check phải fail, rồi ghi trả lại file
+nguyên xi từng byte — không nhân bản gì cả. Nó chạy **một lần**, sau khi row cuối cùng đã xanh: row mà code
 chưa tồn tại thì chỉ ra `ALREADY RED`, còn chi phí là một check mỗi row — chạy theo từng phase
 là trả hai lần. `--blast` thêm phần sweep: chạy mọi row khác dưới cùng cái break đó, để hỏi hai
 row có phân biệt nổi lỗi của nhau không. Nó tốn một check mỗi row mỗi row, nên phải gõ mới có.
@@ -155,17 +155,16 @@ flowchart TD
     RED{"Row đã đỏ sẵn?"}
     AR["ALREADY RED — đỏ thêm lần nữa chẳng chứng minh gì, và nó bị loại khỏi sweep"]
 
-    CLONE["Nhân bản cây ra một chỗ khác"]
-    PLANT["Trồng break của row vào BẢN SAO"]
-    MOVED{"Trong bản sao có gì đổi không?"}
-    BF["BREAK FAILED — break không phá được gì, nên check chưa từng bị thử"]
+    PLANT["Sửa đúng chỗ break mô tả"]
+    MOVED{"Có đúng một chỗ để sửa không?"}
+    BF["BREAK FAILED — không có chỗ nào, hoặc có hai chỗ; không tốn check nào cho nó"]
 
-    CHECK["Chạy check TRONG bản sao"]
+    CHECK["Chạy check"]
     RESULT{"Nó làm gì?"}
     HOLLOW["HOLLOW — vẫn xanh, tức mọi input nó thử đều là input mà lỗi này vô hình"]
     STUCK["STUCK — nó treo, không chứng minh được gì"]
     VERIFIED["VERIFIED — nó đỏ, đúng như phải thế"]
-    DROP["Xoá bản sao"]
+    DROP["Ghi trả lại file, nguyên xi từng byte"]
 
     SWEEP["--blast: chạy mọi row khác dưới cùng cái break này"]
     SIB{"Row nào đỏ theo?"}
@@ -178,8 +177,7 @@ flowchart TD
     LOCK -->|"không"| PRE
     PRE --> RED
     RED -->|"đỏ sẵn"| AR
-    RED -->|"không"| CLONE
-    CLONE --> PLANT
+    RED -->|"không"| PLANT
     PLANT --> MOVED
     MOVED -->|"không"| BF
     MOVED -->|"có"| CHECK

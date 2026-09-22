@@ -32,8 +32,8 @@ no CI runs; whatever it asserts belongs in the repository's own tests (step 3).
 mkdir -p .testcases/goalrun    # add `.testcases/` to your ignore file if the repo has one
 ```
 
-Works in any directory; no version control needed. `--verify` plants each break inside a
-throwaway copy of the tree, never in the tree itself. POSIX only (`sh -c`, process groups,
+Works in any directory; no version control needed. `--verify` makes each break's edit and puts
+the file back byte for byte; nothing is copied. POSIX only (`sh -c`, process groups,
 `flock`) — no Windows.
 
 ## Four modes
@@ -85,9 +85,10 @@ row.**
    pointing at the test step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect the check exists to catch.
 
-   **A `break` is the requirement, negated and made executable** — written from `what`, never
-   from `check`. Hand `what`, the spec extract and the source path to a subagent that is **not
-   shown the check**: what it cannot see, it cannot mirror.
+   **A `break` is the requirement, negated** — one edit, written as `path :: the text it holds
+   :: the text it should hold instead` (or a bare path to delete the file), and written from
+   `what`, never from `check`. Hand `what`, the spec extract and the source path to a subagent
+   that is **not shown the check**: what it cannot see, it cannot mirror.
 
    A test written first, from the TC, before the code existed, has been seen red once already —
    the same evidence a break manufactures later — so that row may waive its break:
@@ -158,10 +159,11 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    python3 "$GOALRUN" --verify
    ```
 
-   It prints the ledger table first — the ordinary run, in your tree — then copies the tree
-   once and, per row, plants the `break` in that copy, runs the check there, and puts the copy
-   back. The mutation never reaches your files. A row that did not pass in the table is `ALREADY RED`:
-   it proves nothing by going red again, so no break is planted for it.
+   It prints the ledger table first — the ordinary run — then, per row, makes the edit the
+   `break` describes, runs the check, and writes the file back byte for byte. A row that did
+   not pass in the table is `ALREADY RED`: it proves nothing by going red again, so no break is
+   planted for it. Interrupted, it restores on the way out; killed outright, the next run puts
+   the file back and says which rows it repaired.
 
    Every verdict says what it means; two need a decision from you.
 

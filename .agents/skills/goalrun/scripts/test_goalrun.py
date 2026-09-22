@@ -120,7 +120,7 @@ def test_a_second_run_refuses_to_race_the_first_and_names_the_holder():
     to wait or to kill it."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tslow\tsleep 3\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tslow\tsleep 3\t—	old.txt\n')
         first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
@@ -138,12 +138,12 @@ def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
     so whatever the dead run left in the file is just bytes."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tslow\tsleep 30\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tslow\tsleep 30\t—	old.txt\n')
         first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         _wait_for(os.path.join(tmp, goalrun.LOCK))
         first.kill(); first.wait()
-        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tfast\ttrue\t—	old.txt\n')
         assert run_cli(tmp, '--only', 'A').returncode == 0
         for leftover in ('', 'not-a-pid\n', 'pid 999999 since 00:00:00\n'):
             open(os.path.join(tmp, goalrun.LOCK), 'w').write(leftover)
@@ -155,7 +155,7 @@ def test_an_unwritable_lock_directory_is_a_refusal_not_a_hang():
         return                                # root writes through 0555
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tfast\ttrue\t—	old.txt\n')
         held = os.path.join(tmp, os.path.dirname(goalrun.LOCK))
         os.chmod(held, 0o555)
         try:
@@ -450,7 +450,7 @@ def test_full_baseline_run_verify_flow_needs_no_git_anywhere():
         assert not os.path.isdir(os.path.join(tmp, '.git'))
         open(os.path.join(tmp, 'src.py'), 'w').write('def f(): return 1\n')
         ledger(tmp, 'BUILD\tfunction still there\tgrep -q "def f" src.py\t—\t'
-                    'sed -i.bak "s/def f/def g/" src.py\n'
+                    'src.py :: def f :: def g\n'
                     'SHIP\tartifact written\ttrue\tout.txt\t—\n')
         assert run_cli(tmp, '--baseline').returncode == 0
         open(os.path.join(tmp, 'out.txt'), 'w').write('built\n')
@@ -594,7 +594,7 @@ def test_a_row_whose_own_check_hangs_under_the_break_is_not_verified():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
         # passes at once while the file is there, hangs once the break removes it
-        ledger(tmp, 'A\thangs\ttest -f old.txt || sleep 30\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\thangs\ttest -f old.txt || sleep 30\t—	old.txt\n')
         out = run_cli(tmp, '--verify', '--timeout', '1')
         assert out.returncode == 1, out.stdout
         assert 'STUCK A' in out.stdout and 'VERIFIED' not in out.stdout, out.stdout
@@ -639,23 +639,23 @@ def test_modes_are_mutually_exclusive():
 def test_verify_never_touches_the_real_tree_for_a_deleting_break():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\trm -f old.txt\n'
+        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—	old.txt\n'
                     'B\tno break\ttrue\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 0, out
         assert 'VERIFIED A' in out.stdout and 'skip B — no break column' in out.stdout, out.stdout
         assert open(os.path.join(tmp, 'old.txt')).read() == 'old\n', \
-            'the break must have deleted the file in a clone, not the real tree'
+            'the break deleted the file and it was not put back'
 
 
-def test_verify_never_touches_the_real_tree_for_a_creating_break():
+def test_a_break_may_not_reach_outside_the_tree():
+    """An edit is made in your working tree, so the one thing it must never name is a path
+    that leaves it."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tno junk file\ttest ! -f junk.txt\t—\ttouch junk.txt\n')
+        ledger(tmp, 'A\tx\ttrue\t—\t../outside.txt :: a :: b\n')
         out = run_cli(tmp, '--verify')
-        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
-        assert not os.path.exists(os.path.join(tmp, 'junk.txt')), \
-            'the break created a file in the real tree, not only the clone'
+        assert out.returncode == 1 and 'outside the tree' in out.stdout, out.stdout
 
 
 def test_verify_needs_no_clean_tree_uncommitted_work_is_safe_by_construction():
@@ -663,7 +663,7 @@ def test_verify_needs_no_clean_tree_uncommitted_work_is_safe_by_construction():
         make_tree(tmp)
         open(os.path.join(tmp, 'old.txt'), 'a').write('uncommitted work in progress\n')
         before = open(os.path.join(tmp, 'old.txt')).read()
-        ledger(tmp, 'A\tgreps for old\tgrep -q old old.txt\t—\techo new > old.txt\n')
+        ledger(tmp, 'A\tgreps for old\tgrep -q old old.txt\t—	old.txt :: old :: new\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
         assert open(os.path.join(tmp, 'old.txt')).read() == before, \
@@ -673,8 +673,8 @@ def test_verify_needs_no_clean_tree_uncommitted_work_is_safe_by_construction():
 def test_verify_flags_a_hollow_check():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tfake\ttrue\t—\techo new > old.txt\n'
-                    'B\treal\tgrep -q old old.txt\t—\techo x > old.txt\n')
+        ledger(tmp, 'A\tfake\ttrue\t—	old.txt :: old :: new\n'
+                    'B\treal\tgrep -q old old.txt\t—	old.txt :: old :: x\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 1, out
         assert 'HOLLOW A' in out.stdout and 'VERIFIED B' in out.stdout, out.stdout
@@ -689,7 +689,7 @@ def test_break_editing_an_unrelated_file_is_still_hollow_in_the_clone():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
         open(os.path.join(tmp, 'unrelated.txt'), 'w').write('untouched\n')
-        ledger(tmp, 'A\talways passes\ttrue\t—\techo mutated > unrelated.txt\n')
+        ledger(tmp, 'A\talways passes\ttrue\t—	unrelated.txt :: untouched :: mutated\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 1 and 'HOLLOW A' in out.stdout, out.stdout
         assert open(os.path.join(tmp, 'unrelated.txt')).read() == 'untouched\n'
@@ -703,7 +703,7 @@ def test_verify_clones_the_ledger_directory_too():
         chk = os.path.join(tmp, goalrun.GOAL_DIR, 'chk.sh')
         os.makedirs(os.path.dirname(chk), exist_ok=True)
         open(chk, 'w').write('grep -q old old.txt\n')
-        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\told is old\tsh .testcases/goalrun/chk.sh\t—	old.txt\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
         assert open(chk).read() == 'grep -q old old.txt\n', 'the real check script was touched'
@@ -720,17 +720,23 @@ def test_verify_reports_a_break_that_itself_fails():
         assert os.path.exists(os.path.join(tmp, 'old.txt')), 'real tree untouched'
 
 
-def test_break_that_changes_nothing_in_the_clone_is_break_failed():
-    """A break that exits 0 but never actually touches the clone — e.g. because it names an
-    absolute path back to the original tree — must not read as VERIFIED against unmutated
-    code. `true` is exactly that: a break which always exits 0 and changes nothing."""
+def test_a_break_that_finds_nothing_to_change_is_break_failed_before_the_check_runs():
+    """A break naming text the file does not hold plants no defect, and a check that passes
+    afterwards has been run against untouched code. Because the script makes the edit itself,
+    it knows that before spending a check on it — and a second occurrence is the same problem:
+    which of the two the requirement means is not written down anywhere."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\ttrue\n')
+        open(os.path.join(tmp, 'twice.txt'), 'w').write('old\nold\n')
+        ledger(tmp, 'A\told is old\tgrep -q old old.txt\t—\told.txt :: ancient :: new\n'
+                    'B\ttwice\tgrep -q old twice.txt\t—\ttwice.txt :: old :: new\n'
+                    'C\tgone\ttrue\t—\tno/such.txt :: a :: b\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 1, out.stdout
-        assert 'BREAK FAILED A' in out.stdout, out.stdout
-        assert 'changed nothing in the clone' in out.stdout, out.stdout
+        assert "does not contain 'ancient'" in out.stdout, out.stdout
+        assert "contains 'old' 2 times" in out.stdout, out.stdout
+        assert 'no/such.txt is not a file here' in out.stdout, out.stdout
+        assert out.stdout.count('BREAK FAILED') == 3, out.stdout
 
 
 # ---- --lint-ledger ----------------------------------------------------------------
@@ -833,7 +839,7 @@ def test_blast_separates_shared_deliverables_from_crossed_ones():
         open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
         open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
         # SIB ships a.txt like A does; WIDE greps both files, so it reddens on A's break too
-        ledger(tmp, 'A\tx\ttest -f a.txt\ta.txt\trm -f a.txt\n'
+        ledger(tmp, 'A\tx\ttest -f a.txt\ta.txt	a.txt\n'
                     'SIB\ty\tgrep -q a a.txt\ta.txt\t—\n'
                     'WIDE\tz\tcat a.txt b.txt\tb.txt\t—\n')
         out = run_cli(tmp, '--verify', 'A', '--blast')
@@ -842,7 +848,7 @@ def test_blast_separates_shared_deliverables_from_crossed_ones():
         assert out.returncode == 1, out.stdout
         # a row waived from needing a break is undiscriminating on purpose: not its fault
         ledger(tmp, '# verify-ok: WIDE — reads every file; it reddens on any defect\n'
-                    'A\tx\ttest -f a.txt\ta.txt\trm -f a.txt\n'
+                    'A\tx\ttest -f a.txt\ta.txt	a.txt\n'
                     'WIDE\tz\tcat a.txt b.txt\tb.txt\t—\n')
         quiet = run_cli(tmp, '--verify', 'A', '--blast')
         assert 'BLAST' not in quiet.stdout and quiet.returncode == 0, quiet.stdout
@@ -904,7 +910,7 @@ def test_lint_refuses_a_ledger_that_waives_most_of_the_list():
 def test_lint_prints_the_coverage_ratio():
     with tempfile.TemporaryDirectory() as tmp:
         ledger(tmp, '# no-row-ok: REQ-2 — ships in the other repo\n'
-                    'A\tREQ-1 holds\ttrue\t—\trm -f old.txt\n')
+                    'A\tREQ-1 holds\ttrue\t—	old.txt\n')
         open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\n')
         out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
         assert 'coverage: 2 requirement(s) · 1 carried by rows · 1 waived (50%)' in out.stdout, \
@@ -946,8 +952,8 @@ def test_the_budget_is_spent_on_sweeping_not_on_the_rows_own_checks():
         make_tree(tmp)
         # slow breaks, fast checks: the sweep itself needs almost no time. Both ship the same
         # file, so under the other's break they are expected `shared` collateral, not BLAST
-        ledger(tmp, 'A\tx\ttest -f old.txt\told.txt\tsleep 2; rm -f old.txt\n'
-                    'B\ty\ttest -f old.txt\told.txt\tsleep 2; rm -f old.txt\n')
+        ledger(tmp, 'A\tx\ttest -f old.txt\told.txt	old.txt\n'
+                    'B\ty\ttest -f old.txt\told.txt	old.txt\n')
         out = run_cli(tmp, '--verify', '--blast', '3')
         assert 'SWEEP STOPPED' not in out.stdout, out.stdout
         assert out.returncode == 0, out.stdout
@@ -956,7 +962,7 @@ def test_the_budget_is_spent_on_sweeping_not_on_the_rows_own_checks():
 def test_sweep_stopped_names_the_rows_it_could_not_finish():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—	old.txt\n'
                     'B\ty\tsleep 4; test -f old.txt\t—\t—\n')
         here = os.getcwd()
         os.chdir(tmp)
@@ -978,8 +984,8 @@ def test_a_row_already_red_is_not_verified_and_is_kept_out_of_the_sweep():
     nothing, and letting it into the sweep makes every other row report BLAST."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'GOOD\tx\ttest -f old.txt\t—\trm -f old.txt\n'
-                    'UNBUILT\ty\ttest -f src/cli.py\t—\trm -f src/cli.py\n')
+        ledger(tmp, 'GOOD\tx\ttest -f old.txt\t—	old.txt\n'
+                    'UNBUILT\ty\ttest -f src/cli.py\t—	src/cli.py\n')
         out = run_cli(tmp, '--verify')
         assert 'UNBUILT  FAIL' in out.stdout, 'the table --verify prints is the run\'s own'
         assert 'ALREADY RED UNBUILT' in out.stdout, out.stdout
@@ -994,7 +1000,7 @@ def test_a_check_that_litters_litters_where_a_run_would():
     isolated, and that is the half that matters: the mutation never reaches the tree."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tx\ttouch junk.junk && test -f old.txt\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tx\ttouch junk.junk && test -f old.txt\t—	old.txt\n')
         out = run_cli(tmp, '--verify')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout + out.stderr
         assert os.path.exists(os.path.join(tmp, 'old.txt')), 'the break escaped the clone'
@@ -1043,8 +1049,8 @@ def test_requirements_file_rejects_two_ids_on_one_line():
 def test_blast_takes_a_budget_in_seconds():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
-                    'B\ty\tsleep 4; test -f old.txt\t—\trm -f old.txt\n')
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—	old.txt\n'
+                    'B\ty\tsleep 4; test -f old.txt\t—	old.txt\n')
         tight = run_cli(tmp, '--verify', '--blast', '1')
         assert 'SWEEP STOPPED' in tight.stdout and tight.returncode == 1, tight.stdout
         assert run_cli(tmp, '--blast', '30').returncode == 2, 'still needs --verify'
@@ -1084,8 +1090,8 @@ def test_blast_zero_is_a_zero_second_budget_not_an_unlimited_one():
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
         open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
-        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt\trm -f a.txt\n'
-                    'B\ty\tcat a.txt b.txt\tb.txt\trm -f b.txt\n')
+        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt	a.txt\n'
+                    'B\ty\tcat a.txt b.txt\tb.txt	b.txt\n')
         zero = run_cli(tmp, '--verify', '--blast', '0')
         assert 'SWEEP STOPPED' in zero.stdout and zero.returncode == 1, zero.stdout
         # ...while bare --blast still means no bound at all, and finds what the sweep is for
@@ -1100,8 +1106,8 @@ def test_the_sweep_is_asked_for_and_says_its_price_when_it_is_not():
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
         open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
-        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt\trm -f a.txt\n'
-                    'B\ty\tcat a.txt b.txt\tb.txt\trm -f b.txt\n')
+        ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt	a.txt\n'
+                    'B\ty\tcat a.txt b.txt\tb.txt	b.txt\n')
         quiet = run_cli(tmp, '--verify')
         assert 'BLAST' not in quiet.stdout and quiet.returncode == 0, quiet.stdout
         assert 'sweep skipped' in quiet.stdout and '`--blast` sweeps for them' in quiet.stdout
@@ -1116,7 +1122,7 @@ def test_the_sweep_is_asked_for_and_says_its_price_when_it_is_not():
 
 def test_verify_says_the_selection_ran_nothing():
     with tempfile.TemporaryDirectory() as tmp:
-        ledger(tmp, 'A\tx\ttrue\nB\ty\ttrue\t\trm -f old.txt\n')
+        ledger(tmp, 'A\tx\ttrue\nB\ty\ttrue\t	old.txt\n')
         out = run_cli(tmp, '--verify', 'A')
         assert out.returncode == 1 and 'no row in this selection' in out.stdout, out.stdout
 
@@ -1225,7 +1231,7 @@ def test_verify_says_what_it_will_cost_before_the_first_break():
     sweep cannot fit its budget."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\ta\tgrep -q old old.txt\t—\techo x > old.txt\n'
+        ledger(tmp, 'A\ta\tgrep -q old old.txt\t—	old.txt :: old :: x\n'
                     'B\tb\tgrep -q new new.txt\t—\techo x > new.txt\n')
         open(os.path.join(tmp, 'new.txt'), 'w').write('new\n')
         out = run_cli(tmp, '--verify').stdout
@@ -1236,65 +1242,58 @@ def test_verify_says_what_it_will_cost_before_the_first_break():
         assert 'sweep ≈' not in run_cli(tmp, '--verify', 'A').stdout
 
 
-def test_the_tree_is_copied_once_and_put_back_between_rows():
-    """Copying a working tree costs minutes on a large one, and paying that per row was most
-    of a long verify. One copy serves every row: what a break did is undone from the tree
-    itself before the next row plants anything, so each row still meets an unmutated clone."""
-    with tempfile.TemporaryDirectory() as tmp:
-        make_tree(tmp)
-        open(os.path.join(tmp, 'keep.txt'), 'w').write('keep\n')
-        # A deletes a file B needs; if the clone were not put back, B would be ALREADY-RED
-        # collateral of A's break rather than verified on its own
-        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
-                    'B\ty\ttest -f keep.txt\t—\trm -f keep.txt\n'
-                    'C\tz\ttest -f old.txt\t—\tmv old.txt gone.txt\n')
-        out = run_cli(tmp, '--verify')
-        assert out.returncode == 0, out.stdout + out.stderr
-        for rid in ('A', 'B', 'C'):
-            assert f'VERIFIED {rid}' in out.stdout, out.stdout
-        assert 'did not go back' not in out.stdout, out.stdout
-        assert open(os.path.join(tmp, 'keep.txt')).read() == 'keep\n', 'a break escaped'
-        assert os.path.exists(os.path.join(tmp, 'old.txt')), 'a break escaped'
-
-        # in process, where the copies can be counted: three rows, one copy
-        copies = []
-        real = goalrun.clone_tree
-        goalrun.clone_tree = lambda src: copies.append(src) or real(src)
-        here = os.getcwd()
-        os.chdir(tmp)
-        try:
-            rows = goalrun.load(os.path.join(tmp, goalrun.GOAL_DIR, 'ledger.tsv'))
-            with contextlib.redirect_stdout(io.StringIO()):
-                assert goalrun.verify(rows, '', 60) is True
-        finally:
-            os.chdir(here)
-            goalrun.clone_tree = real
-        assert len(copies) == 1, f'the tree was copied {len(copies)} times for 3 rows'
-
-
-def test_a_clone_left_behind_by_a_killed_run_is_not_left_forever():
-    """rmtree runs in a finally, which a SIGKILL never reaches — and what it would have
-    deleted is a copy of the whole tree. Anything older than a long verify is nobody's."""
-    old = tempfile.mkdtemp(prefix=goalrun.CLONE_PREFIX)
-    fresh = tempfile.mkdtemp(prefix=goalrun.CLONE_PREFIX)
-    try:
-        long_ago = time.time() - 7 * 3600
-        os.utime(old, (long_ago, long_ago))
-        goalrun.drop_stale_clones()
-        assert not os.path.exists(old), 'a clone from a killed run was kept'
-        assert os.path.exists(fresh), 'a clone a running verify is using was deleted'
-    finally:
-        shutil.rmtree(old, ignore_errors=True)
-        shutil.rmtree(fresh, ignore_errors=True)
-
-
 def test_a_done_that_has_not_been_verified_says_so():
     """DONE is allowed without --verify; being quiet about it is not. Every break row in a
     plain run is a check nothing has yet shown able to fail."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—	old.txt\n'
                     'B\ty\ttest -f old.txt\t—\t—\n')
         out = run_cli(tmp)
         assert out.returncode == 0 and 'DONE — all 2 check(s) pass' in out.stdout, out.stdout
         assert '0 of 1 break row(s) proven — run --verify' in out.stdout, out.stdout
+
+
+def test_every_row_meets_an_unbroken_tree_and_leaves_one_behind():
+    """A break is put back before the next row plants anything: row B must not inherit A's
+    defect, and when the last row is done the tree is byte for byte what it was."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        open(os.path.join(tmp, 'keep.txt'), 'w').write('keep\n')
+        was = {f: open(os.path.join(tmp, f), 'rb').read() for f in ('old.txt', 'keep.txt')}
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—\told.txt\n'
+                    'B\ty\tgrep -q keep keep.txt\t—\tkeep.txt :: keep :: gone\n'
+                    'C\tz\ttest -f old.txt\t—\told.txt\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0, out.stdout + out.stderr
+        for rid in ('A', 'B', 'C'):
+            assert f'VERIFIED {rid}' in out.stdout, out.stdout
+        for f, before in was.items():
+            assert open(os.path.join(tmp, f), 'rb').read() == before, f'{f} was left changed'
+        assert not os.listdir(os.path.join(tmp, goalrun.GOAL_DIR, 'undo')) \
+            if os.path.isdir(os.path.join(tmp, goalrun.GOAL_DIR, 'undo')) else True
+
+
+def test_a_verify_killed_mid_break_is_put_back_by_the_next_one():
+    """The restore runs in a finally, which SIGKILL never reaches — so the bytes go to disk
+    before the check starts, and the next run puts them back before reading anything."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tx\tgrep -q old old.txt\t—\told.txt :: old :: new\n')
+        undo = os.path.join(tmp, goalrun.GOAL_DIR, 'undo')
+        os.makedirs(undo, exist_ok=True)
+        open(os.path.join(undo, 'A'), 'wb').write(b'old\n')
+        open(os.path.join(undo, 'A.path'), 'w').write('old.txt')
+        open(os.path.join(tmp, 'old.txt'), 'w').write('new\n')       # as a killed run left it
+        out = run_cli(tmp, '--verify')
+        assert 'put back what a killed verify left planted: A (old.txt)' in out.stdout, out.stdout
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
+        assert open(os.path.join(tmp, 'old.txt')).read() == 'old\n', 'left planted twice over'
+
+
+def test_lint_names_a_break_that_is_still_a_shell_command():
+    rows = [goalrun.Row('A', 'x', 'pytest -q', '', "sed -i '' 's/a/b/' f.py"),
+            goalrun.Row('B', 'y', 'pytest -q', '', 'f.py :: a :: b')]
+    problems = ' '.join(goalrun.lint(rows))
+    assert 'breaks that are not an edit: A' in problems, problems
+    assert ' B ' not in problems, problems

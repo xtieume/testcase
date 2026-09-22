@@ -138,9 +138,9 @@ flowchart TD
 
 ## 4. Proving the checks themselves
 
-A green row proves nothing until its check has been shown able to go red. `--verify` copies the
-tree, plants the row's `break` in the copy, and demands the check fail there — your own files
-are read, never written. It runs once, after the last row is green: a row whose code does not
+A green row proves nothing until its check has been shown able to go red. `--verify`
+makes the edit the row's `break` describes, demands the check fail under it, and writes the
+file back byte for byte. It runs once, after the last row is green: a row whose code does not
 exist yet only reads `ALREADY RED`, and the pass costs a check per row, so running it per phase
 pays that bill twice. `--blast` adds a sweep — every other row under the same break — which
 asks whether two rows can tell one defect from another; it costs a check per row per row, so it
@@ -156,17 +156,16 @@ flowchart TD
     RED{"Row already red?"}
     AR["ALREADY RED — it proves nothing by going red again, and stays out of the sweep"]
 
-    CLONE["Copy the tree aside"]
-    PLANT["Plant the row's break in the copy"]
-    MOVED{"Did anything in the copy change?"}
-    BF["BREAK FAILED — the break fired nothing, so the check was never tested"]
+    PLANT["Make the edit the row's break describes"]
+    MOVED{"Was there exactly one place to change?"}
+    BF["BREAK FAILED — nothing to change, or two places; no check is spent on it"]
 
-    CHECK["Run the check inside the copy"]
+    CHECK["Run the check"]
     RESULT{"What did it do?"}
     HOLLOW["HOLLOW — it passed, so every input it tries is one this defect is invisible in"]
     STUCK["STUCK — it hung, which proves nothing either way"]
     VERIFIED["VERIFIED — it went red, as it must"]
-    DROP["Delete the copy"]
+    DROP["Write the file back, byte for byte"]
 
     SWEEP["--blast: run every other row under this same break"]
     SIB{"Which rows went red?"}
@@ -179,8 +178,7 @@ flowchart TD
     LOCK -->|"no"| PRE
     PRE --> RED
     RED -->|"yes"| AR
-    RED -->|"no"| CLONE
-    CLONE --> PLANT
+    RED -->|"no"| PLANT
     PLANT --> MOVED
     MOVED -->|"no"| BF
     MOVED -->|"yes"| CHECK

@@ -29,10 +29,8 @@ Modes (mutually exclusive):
                        this record, or was not in it
   --sign ID --who W   a human signs a MANUAL row; W must be the row's owner
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
-  --verify [A,B]      for each row: clone the tree into a disposable temp directory, plant
-                       the row's `break` inside the clone, run the row's `check` there too,
-                       and demand red — then throw the clone away. The working tree is only
-                       ever read
+  --verify [A,B]      for each row: make the edit its `break` describes, run the row's
+                       `check`, demand red, and put the file back byte for byte
   --lint-ledger       problems with the ledger itself; with --requirements FILE it also
                        names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
@@ -54,12 +52,8 @@ LOCK = os.path.join('.testcases', 'goalrun.lock')
 NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
 
-# heavy or regenerable directories a clone skips outright — `.git` carries the whole history
-# nothing in a check needs, and the rest are caches any build regenerates on its own. Build
-# outputs like obj/, bin/, target/ are deliberately NOT here: a check that compiles needs
-# them to stay incremental, so cloning them (not skipping them) is the point of the CoW copy
-CLONE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache'}
-CLONE_PREFIX = 'goalrun-clone-'
+BREAK_SEP = '::'
+UNDO_DIR = os.path.join(GOAL_DIR, 'undo')   # bytes a break replaced, until it is put back
 # a check that invokes one of these is a test; the zero-tests gate and the lint's
 # searches-text rule both key off it, so a lint that echoes "0 tests failed" is not a runner
 # that matched nothing, and a grep piped after a runner is still a test
@@ -253,21 +247,6 @@ def _digest(path):
         return 'unreadable'
 
 
-def _tree_stat(root):
-    """(mtime_ns, size) per path — whether anything moved, not what it now holds. Reading every
-    byte of a clone twice per row costs minutes on a build tree; a stat walk costs nothing."""
-    out = {}
-    for base, dirs, files in os.walk(root):
-        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            path = os.path.join(base, name)
-            try:
-                st = os.lstat(path)
-                out[os.path.relpath(path, root)] = (st.st_mtime_ns, st.st_size)
-            except OSError:
-                out[os.path.relpath(path, root)] = None
-    return out
-
-
 def _tree_hashes(root):
     out = {}
     for base, dirs, files in os.walk(root):
@@ -279,9 +258,9 @@ def _tree_hashes(root):
     return out
 
 
-BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases',
-                              '.codegraph', '.terraform', '.gradle', '.cache', '.pytest_cache',
-                              '.ruff_cache', 'coverage'}
+BASELINE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache',
+                 'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases', '.codegraph',
+                 '.terraform', '.gradle', '.cache', '.pytest_cache', '.ruff_cache', 'coverage'}
 # a deliverable is never this big; a database dump or a cached asset is, and reading it is
 # most of the walk. Its size and mtime stand in for its content — a change still registers
 BIG_FILE = 32 << 20
@@ -480,11 +459,28 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     # `\&\&` in a TSV cell is shell escaping that leaked from the heredoc or printf that wrote
     # the row: `sh -c` turns it into a literal `&` argument, the first command runs alone and
     # exits 0, and the runner after it never runs. Nothing legitimate spells && that way
-    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check + ' ' + r.brk)]
+    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check)]
     if leaked:
         problems.append(f'rows {", ".join(leaked)} contain `\\&\\&` or `\\|\\|` — escaping that '
                         f'leaked into the ledger when it was written; under `sh -c` the command '
                         f'before it runs alone and exits 0, and the check never runs')
+    # a break is an edit, and the ledger says which one. A shell command here is the older
+    # spelling, and it is not read: it would leave the tree changed with nothing to reverse it
+    misshapen = []
+    for r in rows:
+        if not r.brk:
+            continue
+        try:
+            path, old_text, _ = parse_break(r.brk)
+        except Misuse as e:
+            misshapen.append(f'{r.id} ({e})')
+            continue
+        if old_text is not None and not old_text:
+            misshapen.append(f'{r.id} (nothing to find in {path})')
+    if misshapen:
+        problems.append(f'breaks that are not an edit: {", ".join(misshapen)} — a break reads '
+                        f'`path {BREAK_SEP} what it says now {BREAK_SEP} what it should say '
+                        f'instead`, or a bare path to delete the file')
     # the contract is `check` runs the test implementing this requirement's TC. A search over
     # text is the shape that slips past `--verify` too: pair it with a break that edits the
     # same string and the two agree with each other while measuring nothing
@@ -544,7 +540,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
 
 def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
     """Other rows whose check also goes red under this row's planted break, run inside the
-    same clone the break was planted in.
+    tree the break was planted in.
 
     Returns (same-deliverable siblings, crossed rows, rows that hung, checks run, rows the
     sweep had no time left for).
@@ -605,7 +601,6 @@ def hold_lock(path=LOCK):
     dies, so a crashed run cannot wedge the next one and there is no stale entry to detect, to
     race over, or to fail to delete. The pid written inside is only there to name the holder."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-    drop_stale_clones()
     try:
         # `a+`, never `w`: `w` truncates before the lock is taken, wiping the pid of whoever
         # is holding it. The truncate below happens after the lock is ours
@@ -638,87 +633,102 @@ def drop_lock(fd):
         pass
 
 
-def _prune_skip(root):
-    """Remove CLONE_SKIP directories from an already-made clone — needed unconditionally so
-    the plain-copy fallback doesn't pay to copy them first, and harmless when `cp` already
-    pruned nothing (they just aren't there to remove)."""
-    for base, dirs, files in os.walk(root, topdown=True):
-        for d in list(dirs):
-            if d in CLONE_SKIP:
-                shutil.rmtree(os.path.join(base, d), ignore_errors=True)
-                dirs.remove(d)
+def parse_break(text):
+    """`path :: text it has :: text it should have instead` -> (path, old, new), or a bare
+    `path` -> (path, None, None), meaning the file itself goes away.
+
+    A break is an edit goalrun makes, not a command it runs: what the script wrote, the script
+    can write back, so the proof needs no copy of your tree to mutate. It also removes a class
+    of ledger bug — no shell quoting, no `sed -i ''` that is BSD on one machine and GNU on the
+    next, and no command that exits 0 having done nothing."""
+    parts = [f.strip() for f in text.split(BREAK_SEP)]
+    if len(parts) == 1:
+        return parts[0], None, None
+    if len(parts) != 3 or not parts[0]:
+        raise Misuse(f'break {text!r} is not `path {BREAK_SEP} old {BREAK_SEP} new` '
+                     f'(or a bare path, to delete the file)')
+    return parts[0], parts[1], parts[2]
 
 
-def _restore_one(src, dst, rel):
-    """Put one path in the clone back to what the source holds — or, when the source has no
-    such path, take it away."""
-    target, origin = os.path.join(dst, rel), os.path.join(src, rel)
-    if os.path.lexists(target):
-        (shutil.rmtree if os.path.isdir(target) and not os.path.islink(target)
-         else os.remove)(target)
-    if not os.path.lexists(origin):
-        return
-    os.makedirs(os.path.dirname(target) or '.', exist_ok=True)
-    if os.path.islink(origin):
-        os.symlink(os.readlink(origin), target)
-    else:
-        shutil.copy2(origin, target)
-
-
-def restore_clone(src, dst, before):
-    """Undo whatever the last row did to the clone, so the next row starts from the tree
-    again. Return True when the clone matches `before` afterwards.
-
-    Copying the tree per row costs minutes on a large one — the measured cost of a 20GB
-    working tree is minutes per copy, times one copy per row. What a row actually touches is
-    a handful of paths, and the stat walk that already proves a break fired names them, so the
-    clone is made once and put back between rows. A restore that does not land is reported
-    rather than papered over: the caller clones again instead of running the next row against
-    a tree in an unknown state."""
-    now = _tree_stat(dst)
-    for rel in sorted(set(now) - set(before), reverse=True):     # deepest first
-        _restore_one(src, dst, rel)
-    for rel in sorted(set(before) - set(now)) + [r for r in before if before[r] != now.get(r, ())]:
-        _restore_one(src, dst, rel)
-    return _tree_stat(dst) == before
-
-
-def drop_stale_clones(older_than=6 * 3600):
-    """A clone is deleted by the run that made it — unless that run was killed outright, and
-    a tree's worth of copy is left behind. Anything older than a long verify is nobody's."""
-    root = tempfile.gettempdir()
-    now = time.time()
+def plant(brk, cwd=None):
+    """Make the edit. Return (undo, why-not): `undo` is what restore() needs, or None with a
+    reason the break could not fire — which is a finding about the break, and is known before
+    the check ever runs."""
+    path, old, new = parse_break(brk)
+    full = os.path.join(cwd or '.', path)
+    if os.path.isabs(path) or os.pardir in path.split(os.sep):
+        return None, f'{path} is outside the tree; a break edits the work, not the machine'
+    if not os.path.isfile(full):
+        return None, f'{path} is not a file here'
+    with open(full, 'rb') as fh:
+        was = fh.read()
+    if old is None:
+        os.remove(full)
+        return (full, was), None
     try:
-        names = os.listdir(root)
-    except OSError:
-        return
-    for name in names:
-        path = os.path.join(root, name)
-        if not name.startswith(CLONE_PREFIX):
-            continue
+        text = was.decode('utf-8')
+    except UnicodeDecodeError:
+        return None, f'{path} is not text, so there is nothing to substitute in it'
+    seen = text.count(old)
+    if seen == 0:
+        return None, f'{path} does not contain {old!r}, so the break changes nothing'
+    if seen > 1:
+        return None, (f'{path} contains {old!r} {seen} times — a break names one place, so '
+                      f'that the defect it plants is the one the requirement describes')
+    with open(full, 'wb') as fh:
+        fh.write(text.replace(old, new).encode('utf-8'))
+    return (full, was), None
+
+
+def restore(undo):
+    """Put back exactly the bytes that were there."""
+    full, was = undo
+    os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+    with open(full, 'wb') as fh:
+        fh.write(was)
+
+
+def keep_undo(row_id, undo, cwd=None):
+    """Write the original bytes where the next run will find them. A verify killed outright
+    never reaches its own restore, and a file left broken is worse than a slow proof."""
+    d = os.path.join(cwd or '.', UNDO_DIR)
+    os.makedirs(d, exist_ok=True)
+    full, was = undo
+    with open(os.path.join(d, row_id), 'wb') as fh:
+        fh.write(was)
+    with open(os.path.join(d, row_id + '.path'), 'w', encoding='utf-8') as fh:
+        fh.write(os.path.relpath(full, cwd or '.'))
+
+
+def drop_undo(row_id, cwd=None):
+    for suffix in ('', '.path'):
         try:
-            if now - os.stat(path).st_mtime > older_than:
-                shutil.rmtree(path, ignore_errors=True)
+            os.remove(os.path.join(cwd or '.', UNDO_DIR, row_id + suffix))
         except OSError:
             pass
 
 
-def clone_tree(src):
-    """Copy the tree into a disposable directory so `--verify` can plant a break without ever
-    writing to the caller's own working tree. Tries `cp -c` (APFS copy-on-write, macOS), then
-    `cp --reflink=auto` (Linux CoW filesystems), then falls back to a plain recursive copy —
-    whichever the filesystem actually supports. The caller deletes the result when done."""
-    dst = tempfile.mkdtemp(prefix=CLONE_PREFIX)
-    for cmd in (['cp', '-c', '-R', src, dst], ['cp', '-R', '--reflink=auto', src, dst]):
-        shutil.rmtree(dst, ignore_errors=True)    # `cp -R src emptydst` fills dst; an
-        if subprocess.run(cmd, capture_output=True).returncode == 0:  # existing one nests
-            break
-    else:
-        shutil.rmtree(dst, ignore_errors=True)
-        shutil.copytree(src, dst, symlinks=True,
-                        ignore=lambda _d, names: [n for n in names if n in CLONE_SKIP])
-    _prune_skip(dst)        # `cp` has no exclude list; the CoW copy of a skip dir is cheap
-    return dst
+def undo_a_killed_run(cwd=None):
+    """Restore anything a killed verify left planted, before this run reads a broken file and
+    calls it a finding. Returns the rows it put back."""
+    d = os.path.join(cwd or '.', UNDO_DIR)
+    put_back = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if name.endswith('.path'):
+            continue
+        try:
+            with open(os.path.join(d, name + '.path'), encoding='utf-8') as fh:
+                rel = fh.read().strip()
+            with open(os.path.join(d, name), 'rb') as fh:
+                was = fh.read()
+        except OSError:
+            continue
+        restore((os.path.join(cwd or '.', rel), was))
+        drop_undo(name, cwd)
+        put_back.append(f'{name} ({rel})')
+    if put_back:
+        print(f'put back what a killed verify left planted: {", ".join(put_back)}')
+    return put_back
 
 
 def _dur(seconds):
@@ -729,12 +739,13 @@ def _dur(seconds):
 
 def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
            signatures=None, baseline_files=None):
-    """Run the ledger, then plant each row's break inside a disposable clone of the tree and
-    prove its check goes red there. Return True if every row passed and every break was
-    caught.
+    """Run the ledger, then plant each row's break, prove its check goes red under it, and
+    put the file back. Return True if every row passed and every break was caught.
 
-    The break half only ever writes to a clone; the table half is the ordinary run, in the
-    tree, which is the same work a run does anyway — so the proof is one command, not two."""
+    The table is the ordinary run — the same work a run does anyway, so the proof is one
+    command, not two. A break is an edit this script makes and reverses byte for byte, so
+    nothing is copied and nothing stays planted: interrupted, the restore still runs; killed
+    outright, the next run puts it back before reading anything."""
     everything = rows                       # --blast scans the whole ledger, not the selection
     if ids:
         rows = select(rows, ids)
@@ -754,7 +765,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         # to cost instead of going quiet for as long as rows × checks takes
         own = sum(cost[r.check] for r in live)
         line = (f'{len(live)} break row(s); a check takes {_dur(min(cost.values()))}–'
-                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)} plus one copy of the tree')
+                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)}')
         if blast:
             sweep = sum(c for r in live for cmd, c in cost.items() if cmd != r.check)
             line += f', sweep ≈ {_dur(sweep)}'
@@ -764,7 +775,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                           'proves a subset without one' if sweep > budget else ''))
         print(line)
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
-    incomplete, clone, before = [], None, {}
+    incomplete = []
     for row in rows:
         if not row.brk:
             print(f'skip {row.id} — no break column')
@@ -777,35 +788,19 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
                   f'the break proves nothing; fix the row, then verify it')
             continue
-        if clone is None:
-            began = time.monotonic()
-            clone = clone_tree(cwd or '.')
-            took = time.monotonic() - began
-            if took > 20:
-                print(f'copied the tree in {_dur(took)} — once, and put back between rows')
+        undo, why = plant(row.brk, cwd)
+        if not undo:
+            all_ok, ran = False, ran + 1
+            print(f'BREAK FAILED {row.id} — {why}')
+            continue
+        keep_undo(row.id, undo, cwd)
         try:
-            before = _tree_stat(clone)
-            planted, why, _ = run_check(row.brk, timeout, clone)
-            after = _tree_stat(clone)
-            if not planted:
-                all_ok, ran = False, ran + 1
-                print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
-                continue
-            if before == after:
-                # the break exited 0 but nothing in the clone moved — the common cause is a
-                # break or check written against an absolute path to the original tree, which
-                # would otherwise silently test the unmutated code and read as VERIFIED
-                all_ok, ran = False, ran + 1
-                print(f'BREAK FAILED {row.id} — the break ran but changed nothing in the '
-                      f'clone; does it (or the check) use an absolute path to the original '
-                      f'tree instead of a relative one?')
-                continue
-            ok, note, hung = run_check(row.check, timeout, clone)
+            ok, note, hung = run_check(row.check, timeout, cwd)
             if blast:
                 began = time.monotonic()
                 left = None if budget is None else max(0.0, budget - spent)
                 same, crossed, stuck, swept, unswept = blast_radius(
-                    row, everything, timeout, set(waived) | already, left, cwd=clone)
+                    row, everything, timeout, set(waived) | already, left, cwd=cwd)
                 spent, sweeps = spent + time.monotonic() - began, sweeps + swept
                 if unswept:
                     incomplete.append(row.id)
@@ -835,13 +830,8 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
                       f'the same file do')
         finally:
-            if clone and not restore_clone(cwd or '.', clone, before):
-                print(f'the clone did not go back to what it was after {row.id}; copying the '
-                      f'tree again rather than verifying the next row against it')
-                shutil.rmtree(clone, ignore_errors=True)
-                clone = None
-    if clone:
-        shutil.rmtree(clone, ignore_errors=True)
+            restore(undo)
+            drop_undo(row.id, cwd)
     if already:
         all_ok = False
     if not ran:
@@ -1004,6 +994,7 @@ def run(a):
 
 def _run_checks(a, rows, baseline):
     if a.verify is not None:
+        undo_a_killed_run()
         # the sweep costs a check per row per row, which on a slow check is most of the run,
         # so it is asked for rather than assumed; bare --blast means no budget, --blast N sets
         # one, N=0 sweeps nothing rather than everything, and --no-blast (-1) is explicit

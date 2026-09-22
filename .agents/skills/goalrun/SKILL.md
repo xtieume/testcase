@@ -188,12 +188,21 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    set by how long one check takes — a `pytest -k` is seconds, a `dotnet test` on a solution
    is not, and the same command in a fresh copy pays its build again. `--verify` prints the
    estimate after its first pass, before any break is planted; read it. If the sweep will not
-   fit its budget, narrow the checks (one test project, one selector) before raising it.
+   fit its budget, narrow the checks before raising it: one test project rather than the whole
+   solution, one selector rather than the suite. And a copy sits at a different path, so a
+   check that restores or resolves dependencies repeats that on every row — pinning it
+   (`--no-restore`, an offline flag) is usually the largest single saving.
 
-3. **Tighten each break once the code exists.** A plan-time break is `rm -f <deliverable>`,
-   cruder than the requirement: the row prints `VERIFIED` while its clause stays untested.
-   Re-point it at the real defect and verify again. **Each** means each — a phase handed to
-   you already green is where an untightened break hides, because nobody called the loan in.
+3. **Once, at the end.** This is the only `--verify` the run needs, and it runs after the last
+   row is green — verifying a row whose code does not exist yet reads `ALREADY RED` and proves
+   nothing, so an earlier pass buys a wait, not a fact. During the phases, `--only` is the
+   whole loop, and a table shown before this pass says `unverified` against every `break` row.
+
+   Verify again only for what this pass found, and only for the rows it named: `BREAK FAILED`
+   → the break missed its target, fix it and `--verify <ID>`; `HOLLOW` → back into `testcase`
+   for the case that discriminates, then `--verify <ID>`. Any row, check or break edited
+   afterwards → `--verify` again, the whole ledger, because a rewritten clause can invalidate
+   a sibling row's check.
 4. **Unsigned `MANUAL` rows** — ask the user row by row, then `python3 "$GOALRUN" --sign UX
    --who tuananh --note "viewed 3 surfaces"`. ⛔ Never run `--sign` except to record an
    answer the user actually gave.
@@ -225,9 +234,9 @@ NOT DONE — 1 failing (DARK), 1 waiting on tuananh (UX)
 ```
 
 Failing needs you; waiting needs a person. An unverified `PASS` is a claim you cannot back:
-`--verify` every `break` row before the first table you show, and write `unverified` after any
-row without one. Re-pointing a row at a check that measures something else is the forbidden
-edit — green rows too, not only the red ones where the temptation lives. Narrowing to the same
+Write `unverified` after every `break` row in a table shown before the Prove pass, and never
+call a run done on one. Re-pointing a row at a check that measures something else is the
+forbidden edit — green rows too, not only the red ones where the temptation lives. Narrowing to the same
 requirement, measured more precisely, is the allowed direction: `--verify` it and say which
 requirement it still traces to.
 
@@ -236,8 +245,8 @@ requirement it still traces to.
 It happens, and "the row is wrong" is sometimes true. The route is backwards through the
 pipeline, never sideways through the ledger: amend the spec → re-run `docs-review` over the
 changed part → rewrite `reqs.txt` → drop or rewrite the row → `--lint-ledger --requirements` →
-`--verify` the whole ledger, not just the rewritten rows, because a split clause can invalidate
-a sibling row's check.
+and, once the Prove pass has run, `--verify` the whole ledger again rather than the rewritten
+rows alone, because a split clause can invalidate a sibling row's check.
 
 **A change that arrived only in conversation has no artifact, so you write one.** The decision
 goes into the spec verbatim — the decider's words, the date, the forum — and that quote is the
@@ -262,8 +271,9 @@ alone. Neither is arguing, and neither is `--sign`.
 4. **Unsteered reviews only.**
 5. **Report what a check says, not what you hope.** Blocked is red.
 6. **Green without a deliverable is red** — by script.
-7. **A check that has never gone red is untested.** Give every row a `break` and `--verify`
-   it; a row without one fails `--lint-ledger` unless the ledger waives it with a reason.
+7. **A check that has never gone red is untested.** Give every row a `break`; the Prove pass
+   is where it goes red. A row without one fails `--lint-ledger` unless the ledger waives it
+   with a reason.
    A break is written from the requirement by someone who has not seen the check; written from
    the check it only proves the two agree.
 8. **Three reds on one row is a handoff.**
@@ -296,12 +306,13 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "The goal is one sentence, decomposition is overkill" | A one-sentence goal is where the implicit requirements hide. Walk `dimensions.md`. |
 | "The ledger looks complete to me" | So does every ledger, from inside. Rule 10 — audit it with `docs-review`. |
 | "I'll write the check inline, faster than running `testcase`" | An inline check tests what you remembered. `testcase`'s second pass is what finds the case you did not. |
-| "The code does not exist yet, so I'll guess the break" | A substitution matching nothing prints `VERIFIED` for a row it never tested. Break the deliverable instead. |
 | "No break column for this one, the check is obviously real" | Obvious is what `HOLLOW` rows looked like too. Write the break or waive it in the ledger, with a reason. |
 | "`--verify` exited 0, so the ledger is proven" | Three ways it still lies: no row ran (`NOTHING VERIFIED`), two rows measure each other's defects (`BLAST`), or a break plants something cruder than the requirement. |
 | "The break fires, so the row is verified" | It fires against *something*. Deleting the function reddens a rounding check without testing rounding. |
 | "the check greps the symbol, so it covers the clause" | It proves someone typed the word. Delete the body, keep the name: still green. |
 | "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at; past the step 7 threshold it is a bulk pass, and the gate says so. |
+| "I'll verify this phase now, while it's fresh" | The rows after it move the code under its feet, and the pass costs a check per row plus a sweep of rows × rows — you would pay it again at the end. |
+| "The final verify is expensive, I'll run it on the rows I touched" | A row you did not touch can be the one a rewritten clause broke. A subset verify is for the rows the last pass named, not the rows you remember editing. |
 | "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
 | "Four rows, I'll write the breaks myself" | A reviewer steered one run into a break that mirrored its check. Only the sweep caught it. Hand `what` to someone who has not seen `check`. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

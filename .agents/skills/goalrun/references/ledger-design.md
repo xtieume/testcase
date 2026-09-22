@@ -84,10 +84,10 @@ accepted gap when it is only a line nobody deleted, so the lint reports it.
 agree with each other and measure nothing, while printing `VERIFIED`. Hand `what`, the spec
 extract and the source path to a subagent that has not seen the check.
 
-**Before the code exists**, break the deliverable (`rm -f src/export.py`) rather than guessing a
-symbol inside it: a substitution matching nothing fires nothing and prints `VERIFIED` untested.
-That is a plan-time loan — once the code exists, re-point the break at the defect the
-requirement names (remove the rounding, not the function) and verify again.
+**At the defect the requirement names**, not at the file holding it: remove the rounding, not
+the function. `rm -f src/export.py` reddens any check that opens the file, so it proves the
+check reads something, not that it reads this clause. A break is written once, when the row is,
+and read once, by the Prove pass.
 
 **Portably**: `sed -i ''` is BSD, `sed -i` is GNU; a ledger written on one and run on the other
 reports `BREAK FAILED` on every row. Use `python3 -c` or `sed ... > t && mv t <file>`.
@@ -107,7 +107,8 @@ Only `--verify` can.
 ## A break runs in a copy
 
 `--verify` copies the tree, plants the break in the copy, runs the check there, and deletes the
-copy; your files are read, never written. What that costs, and what it cannot see:
+copy; your files are read, never written. It runs once, after the last row is green. What that
+costs, and what it cannot see:
 
 - **The check runs in the copy**, so a check reaching the original tree by an absolute path
   tests unmutated code and reads as `HOLLOW` through no fault of its own. Keep checks relative.
@@ -115,7 +116,9 @@ copy; your files are read, never written. What that costs, and what it cannot se
   check needing one must build it. Build outputs (`obj/`, `bin/`, `target/`) *are* copied, so a
   compiling check stays incremental.
 - **Cost** — one copy per break row, a filesystem clone where the platform has one (APFS
-  `cp -c`, reflinks on Linux), a plain copy otherwise.
+  `cp -c`, reflinks on Linux), a plain copy otherwise. The copy keeps mtimes, so an
+  incremental build stays incremental; a dependency restore keyed to the absolute path does
+  not, and repeats on every row unless the check pins it.
 - **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
 - **Only `--verify` runs in a copy.** A plain run and `--only` run checks in the tree itself,
   so a check that writes leaves what it wrote.

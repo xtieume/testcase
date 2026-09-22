@@ -140,7 +140,9 @@ flowchart TD
 
 Một row xanh chưa chứng minh được gì cho tới khi check của nó được cho thấy là **có thể đỏ**.
 `--verify` **nhân bản cây**, trồng `break` vào bản sao, và bắt check phải fail ở đó — file của
-bạn chỉ bị đọc, không bị ghi. Sau đó sweep hỏi xem có row nào khác cũng đỏ vì đúng lỗi đó
+bạn chỉ bị đọc, không bị ghi. Nó chạy **một lần**, sau khi row cuối cùng đã xanh: row mà code
+chưa tồn tại thì chỉ ra `ALREADY RED`, còn chi phí là một check mỗi row cộng một sweep
+rows × rows — chạy theo từng phase là trả hai lần. Sau đó sweep hỏi xem có row nào khác cũng đỏ vì đúng lỗi đó
 không — nếu có thì cả hai đều không phân biệt nổi lỗi này với lỗi của chính mình.
 
 ```mermaid

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, json, os, shutil, signal, subprocess, sys, tempfile, time
+import io, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -99,6 +99,70 @@ def test_empty_ledger_is_misuse_not_done():
         ledger(tmp, '# header only\n')
         out = run_cli(tmp)
         assert out.returncode == 2 and 'DONE' not in out.stdout, out.stdout
+
+
+# ---- the run lock -----------------------------------------------------------------
+
+def _script():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+
+
+def _wait_for(path, seconds=20):
+    deadline = time.time() + seconds
+    while not os.path.exists(path) and time.time() < deadline:
+        time.sleep(0.02)
+    assert os.path.exists(path), f'{path} never appeared'
+
+
+def test_a_second_run_refuses_to_race_the_first_and_names_the_holder():
+    """Two runs building one tree produce reds that belong to neither. The refusal names the
+    holder and when it started, so a user facing a forty-minute --verify can decide whether
+    to wait or to kill it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tslow\tsleep 3\t—\trm -f old.txt\n')
+        first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            _wait_for(os.path.join(tmp, goalrun.LOCK))
+            out = run_cli(tmp, '--only', 'A')
+            assert out.returncode == 2 and 'another goalrun' in out.stderr, out
+            assert re.search(r'pid \d+ since \d\d:\d\d:\d\d', out.stderr), out.stderr
+        finally:
+            first.wait()
+        assert run_cli(tmp, '--only', 'A').returncode == 0, 'lock not released at exit'
+
+
+def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
+    """SIGKILL: no atexit, no finally, no drop_lock. The kernel drops an flock with its holder,
+    so whatever the dead run left in the file is just bytes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tslow\tsleep 30\t—\trm -f old.txt\n')
+        first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _wait_for(os.path.join(tmp, goalrun.LOCK))
+        first.kill(); first.wait()
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        assert run_cli(tmp, '--only', 'A').returncode == 0
+        for leftover in ('', 'not-a-pid\n', 'pid 999999 since 00:00:00\n'):
+            open(os.path.join(tmp, goalrun.LOCK), 'w').write(leftover)
+            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {leftover!r}'
+
+
+def test_an_unwritable_lock_directory_is_a_refusal_not_a_hang():
+    if os.geteuid() == 0:
+        return                                # root writes through 0555
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        held = os.path.join(tmp, os.path.dirname(goalrun.LOCK))
+        os.chmod(held, 0o555)
+        try:
+            out = run_cli(tmp, '--only', 'A', timeout=30)
+        finally:
+            os.chmod(held, 0o755)
+        assert out.returncode == 2 and 'run lock' in out.stderr, out
 
 
 # ---- running checks ---------------------------------------------------------------

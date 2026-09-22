@@ -615,10 +615,11 @@ def hold_lock(path=LOCK):
         who = fd.read().strip() or 'unknown pid'
         fd.close()
         raise Misuse(f'another goalrun is running checks here ({who}) — a check racing another '
-                     f'build goes red for reasons that are not the code; wait for it to finish')
+                     f'build goes red for reasons that are not the code. Wait for it, or if it '
+                     f'is dead, kill the pid: the lock releases with it')
     fd.seek(0)
     fd.truncate()
-    fd.write(f'pid {os.getpid()}\n')
+    fd.write(f'pid {os.getpid()} since {datetime.datetime.now():%H:%M:%S}\n')
     fd.flush()
     return fd
 
@@ -789,6 +790,9 @@ def select(rows, ids):
 
 def main():
     signal.signal(signal.SIGTERM, signal.default_int_handler)  # so SIGTERM kills the check too
+    # a --verify pushed to the background writes to a file, and a block-buffered file shows
+    # nothing until exit — forty minutes of an empty log reads as a dead run, and gets restarted
+    sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--ledger', default=LEDGER)
     ap.add_argument('--timeout', type=int, default=1800, help='seconds per check')

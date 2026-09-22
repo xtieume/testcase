@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#skills)
+[![Skills](https://img.shields.io/badge/skills-5-8957e5)](#skills)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -71,6 +71,12 @@ Four diagrams of that pipeline, and of how `goalrun` decides a row and proves a 
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
 | 📥 [`playwright-notion`](.agents/skills/playwright-notion/SKILL.md) | Notion → markdown through a logged-in browser, when API token and Export are both unavailable | "download these Notion pages" |
+
+### Authoring
+
+| Skill | Does | Trigger |
+| ----- | ---- | ------- |
+| ✍️ [`normalize`](.agents/skills/normalize/SKILL.md) | Rewrites a rambling everyday prompt into a compact engineering prompt — same requirements, imperative form, explicit escalation and done criteria | "rewrite this prompt for /goalrun" |
 
 ## House rules
 

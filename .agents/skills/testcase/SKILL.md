@@ -167,6 +167,18 @@ discriminating. List the questions a case depends on before trusting its inequal
 skill shipped the example above as settled and a later round found the second question inside
 it.
 
+**Do not invent a field to make a case discriminate.** When the balance moves identically
+whether or not the bug exists, the tempting fix is to assert on an audit row, a timestamp, a
+counter — and if the requirement never names one, the case now fails a correct implementation
+for a reason unrelated to the rule under test. Nothing lints an invented schema: the row reads
+well, traces to a requirement and names a wrong implementation. Assert what the requirement
+defines; where that genuinely cannot separate the two behaviours, say so and ask what the
+system records, rather than deciding it.
+
+**A `TBD` expected result is never `Automatable: Y`.** There is nothing to assert yet, and a
+runnable test written against it hard-codes one reading of an open question into the suite —
+the guess rule 5 exists to prevent, arriving through the metadata instead of the cell.
+
 **An open question with three readings needs two cuts, not one.** A question recorded as
 "A, B or C" is usually answered with a single case separating C from the rest, because that is
 the reading that feels most wrong — and A and B then pass every case in the table identically,

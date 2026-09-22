@@ -48,6 +48,20 @@ List every document in scope before reading closely:
 Say what you could **not** access (missing file, external link, image-only PDF). An unread
 document is a hole in the audit; hiding it makes the report worse than useless.
 
+**Then check the set against the tree, before reading anything closely.** Take five to ten
+terms only this spec would use — field names, screen ids, domain nouns — and search the **whole
+tree** for them, not the documents you picked:
+
+```bash
+grep -rl -e '<term-1>' -e '<term-2>' -e '<screen-id>' . --include='*.md' --include='*.html' | sort
+```
+
+Every file that matches and is not in the inventory is added, or listed under the inventory as
+excluded with the reason. Record the terms there too (`Searched the tree for: …`); the lint
+refuses an inventory without that line. A set nobody checked this way is what the review loop
+then rediscovers one requirement per round, for as many rounds as you let it — and no reviewer
+says "your set is wrong" unless it was handed that question.
+
 **Check for a previous report** (`.testcases/docs-review/*.md`, or the file the user names) in
 the same step. If one exists, load its `REQ-` and `DOC-` IDs — they are permanent, and this is
 the only moment you can preserve them.
@@ -74,7 +88,9 @@ a document.
 | Req ID | Requirement (atomic) | Dimension | Source (spec section) |
 
 `Req ID` format `REQ-<area>-<3 digits>`. Keep IDs from a previous run, append new ones at the
-end, mark removed ones `[OBSOLETE]` rather than deleting. Never renumber.
+end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
+the traceability table included, where such a row carries no verdict and the lint lets it
+stand. Never renumber.
 
 ### 3. Map documents onto the checklist
 
@@ -97,8 +113,10 @@ For every requirement, search the documents and record what you actually found.
 
 **Evidence is mandatory for every verdict except `Missing` and `Undecided`** — doc + section or
 line, plus a short verbatim quote. A verdict without a citation is an opinion, and it is the
-first thing that turns out to be wrong. `Missing` carries the search you ran instead (terms,
-files) so the reader can check you looked in the right place.
+first thing that turns out to be wrong — and it names a **line or section** (`D1:12`,
+`D3 §2.4`), never a file: a file that contains the word is where to look, not what it says.
+`Missing` carries the search instead, in a shape the lint can read: `searched: <term>,
+<variant>, … in <Doc IDs>` — at least two spellings, and the documents they were searched in.
 
 **Before writing `Missing`, expand the search terms.** Search the spec's wording *and* every
 synonym, abbreviation, and field name the documents themselves use — a spec saying "second
@@ -112,7 +130,10 @@ Never paraphrase a document into agreement with the spec. Quote it and let the g
 find what the docs invent. Within the areas the spec covers — and only those — read for claims
 with no spec backing (a value, a step, a role, a limit) and give each its own row, ID
 `DOC-<area>-<3 digits>`, verdict `Unspecified`, evidence the document quote. A claim about a
-feature the spec never touches is outside the audit, not `Unspecified`. Such a claim may be real
+feature the spec never touches is outside the audit, not `Unspecified`. Nor is a spec-backed fact
+restated in another vocabulary — an API page returning `409` where the spec says "cannot renew"
+states the same rule; only what it adds beyond the rule (the code, a timing, a channel) is a
+claim of its own. Such a claim may be real
 behavior the spec forgot or a doc that drifted; deciding is the spec owner's call, so every
 `DOC-` row also lands in `## Open Questions`.
 
@@ -124,6 +145,8 @@ you have run.
 1. Spawn a subagent (`Agent` / `Task`, `general-purpose`) and give it **only**:
    * the spec text
    * the document paths
+   * the list of every file path in the tree (`find . -type f | sort` — names only, never
+     contents)
    * the report **with the `## Round findings` section removed**
    * the path to `references/dimensions.md`
 
@@ -134,6 +157,8 @@ you have run.
    analysis is what makes a reviewer rubber-stamp your blind spots.
 
 2. Instruct it to return only:
+   0. Files in the tree whose path or name suggests they belong to the set and are not in the
+      inventory — this comes first, because every other finding is void if the set is wrong
    1. Spec requirements missing from the checklist entirely
    2. Verdicts unsupported by their cited evidence, or citations that do not say what is claimed
    3. `Missing` verdicts that are wrong — the content exists elsewhere in the doc set
@@ -166,20 +191,36 @@ you have run.
    A **material** finding adds a row, changes a verdict, or rejects a citation. Wording and
    formatting nits never justify another round.
 
+   A changed verdict is a new claim and carries a new citation — `Covered` on a line, never on a
+   file that happens to contain the word. A round that changes more than five verdicts is
+   itself unreviewed, so it is never the last round: the lint refuses a log that ends on one.
+
 5. Decide by what the round returned:
 
    * **No material findings** → converged. Stop, and say which round converged.
-   * **Material findings** → run another round. This holds at round 3, 4, and 5 — a round still
-     changing verdicts proves more remain.
+   * **`New rows` ≥ `Verdict changes`, two rounds running** → the loop is not refining an
+     audit, it is discovering the checklist one requirement per round — the set from step 1 or
+     the decomposition from step 2 is wrong, and another round cannot fix an input. Stop the
+     loop. Redo step 1's tree search and step 2, log the round as `rebuilt` with what changed
+     in the set, and start the loop again at round 1. What a reviewer already validated — a
+     citation corrected, a row split — stays; the rebuild is the decomposition, not the merges.
+   * **Material findings** (verdicts changing, citations rejected, the odd new row) → run
+     another round. This holds at round 3, 4, and 5 — a round still changing verdicts proves
+     more remain.
    * **A verdict that has flipped twice on the same evidence** → stop spending rounds on it.
      Freeze it `Undecided` and put both readings in `## Open Questions`. An oscillating row is
      an ambiguous spec, not an unfinished audit. A flip driven by a **new citation** is not
      oscillation — the evidence improved, so the loop continues; freezing there would write a
      verdict the report's own citations refute.
-   * **Round 5 still returning material findings** → stop, and report it as a finding of its own:
-     `Loop did not converge in 5 rounds`, plus what kept changing. That means the spec is
-     ambiguous or the checklist is not atomic — not that the audit is done. Never let the ceiling
-     read like a clean exit.
+   * **Round 5 still returning material findings** → read *which* column is moving before
+     deciding anything. `New rows` → the set or the decomposition (above). `Verdict changes` →
+     the spec is ambiguous or a row is not atomic: freeze the oscillating rows `Undecided`, put
+     both readings in `## Open Questions`. `Citations rejected` alone, with verdicts standing →
+     nothing about the documents is in doubt; the citations were transcribed wrong (a rule
+     number written as a line number is the usual one) — fix every citation against the file in
+     one pass, run the lint, and one confirming round decides it. Whatever the reason, the
+     report's first line names it; a loop that ran out of patience never reads like a clean
+     exit.
 
    A deadline is not a stop condition. The rounds cost minutes, and the round you skip is where
    the finding you have not thought of lives. If the user explicitly orders you to stop early,
@@ -288,6 +329,8 @@ then the code is the spec, and a mismatch is `Stale`, never a coverage verdict.
 | "The round found nothing, so I should dig up something to report" | An empty round over a fully-read set is convergence. A finding you cannot cite is worse than no finding — it is the row the reader acts on and then has to retract. |
 | "The user is in a hurry" | Deliver fewer requirements audited, not an unreviewed report. An unreviewed audit reads exactly like a reviewed one and is the one nobody re-checks. |
 | "Round 3 came back with real findings, but three rounds is the limit" | There is no round limit, only convergence. Material findings at round 3 mean round 4 exists. |
+| "Every round adds rows, so the reviewers are doing their job" | Rows should have come from the spec at step 2. A loop that keeps finding requirements is auditing the wrong set, one round per requirement. Rebuild the set. |
+| "The file mentions the term, so the requirement is Covered" | A word in a file is where to look, not what it says. Cite the line, or the verdict is a grep. |
 | "The round found something, so I have to keep going forever" | Only material findings extend the loop — new row, changed verdict, rejected citation. Nits do not, and an oscillating row gets frozen `Undecided`. |
 | "Let me check the code to see whether this is actually implemented" | Wrong oracle. The question is whether the *document* states it, and code cannot answer that in either direction — it neither covers a requirement nor creates one. |
 | "The docs cover every requirement, so the audit is done" | That is one direction. What the docs claim beyond the spec is the other, and it never appears in a requirement-keyed table. |
@@ -304,6 +347,9 @@ then the code is the spec, and a mismatch is `Stale`, never a coverage verdict.
 - About to report a converged loop with no `## Round log` showing the counts
 - About to present a 5-round non-convergence as a finished audit
 - About to write `Missing` from a grep of the spec's own wording only
+- About to run round 3 with `New rows` still the largest column in the log
+- About to flip a verdict on a file name, without a line to quote
+- About to start the loop on a set the tree was never searched for
 - About to report a large set audited without an index pass or a coverage declaration
 - About to report without the reverse sweep — only spec → docs was checked
 - About to write a finding you cannot cite, to keep a round from looking empty

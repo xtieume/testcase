@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, json, os, shutil, signal, subprocess, sys, tempfile, time
+import io, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -99,6 +99,70 @@ def test_empty_ledger_is_misuse_not_done():
         ledger(tmp, '# header only\n')
         out = run_cli(tmp)
         assert out.returncode == 2 and 'DONE' not in out.stdout, out.stdout
+
+
+# ---- the run lock -----------------------------------------------------------------
+
+def _script():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'goalrun.py')
+
+
+def _wait_for(path, seconds=20):
+    deadline = time.time() + seconds
+    while not os.path.exists(path) and time.time() < deadline:
+        time.sleep(0.02)
+    assert os.path.exists(path), f'{path} never appeared'
+
+
+def test_a_second_run_refuses_to_race_the_first_and_names_the_holder():
+    """Two runs building one tree produce reds that belong to neither. The refusal names the
+    holder and when it started, so a user facing a forty-minute --verify can decide whether
+    to wait or to kill it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tslow\tsleep 3\t—\trm -f old.txt\n')
+        first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            _wait_for(os.path.join(tmp, goalrun.LOCK))
+            out = run_cli(tmp, '--only', 'A')
+            assert out.returncode == 2 and 'another goalrun' in out.stderr, out
+            assert re.search(r'pid \d+ since \d\d:\d\d:\d\d', out.stderr), out.stderr
+        finally:
+            first.wait()
+        assert run_cli(tmp, '--only', 'A').returncode == 0, 'lock not released at exit'
+
+
+def test_a_killed_run_leaves_no_lock_to_wedge_the_next():
+    """SIGKILL: no atexit, no finally, no drop_lock. The kernel drops an flock with its holder,
+    so whatever the dead run left in the file is just bytes."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tslow\tsleep 30\t—\trm -f old.txt\n')
+        first = subprocess.Popen([sys.executable, _script()], cwd=tmp,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        _wait_for(os.path.join(tmp, goalrun.LOCK))
+        first.kill(); first.wait()
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        assert run_cli(tmp, '--only', 'A').returncode == 0
+        for leftover in ('', 'not-a-pid\n', 'pid 999999 since 00:00:00\n'):
+            open(os.path.join(tmp, goalrun.LOCK), 'w').write(leftover)
+            assert run_cli(tmp, '--only', 'A').returncode == 0, f'wedged by {leftover!r}'
+
+
+def test_an_unwritable_lock_directory_is_a_refusal_not_a_hang():
+    if os.geteuid() == 0:
+        return                                # root writes through 0555
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tfast\ttrue\t—\trm -f old.txt\n')
+        held = os.path.join(tmp, os.path.dirname(goalrun.LOCK))
+        os.chmod(held, 0o555)
+        try:
+            out = run_cli(tmp, '--only', 'A', timeout=30)
+        finally:
+            os.chmod(held, 0o755)
+        assert out.returncode == 2 and 'run lock' in out.stderr, out
 
 
 # ---- running checks ---------------------------------------------------------------
@@ -211,6 +275,27 @@ def test_a_runner_that_ran_tests_may_say_zero_failed_or_skipped():
             assert ok, (text, note)
 
 
+def test_a_runner_that_prints_nothing_is_not_a_pass():
+    """`cd dir \\&\\& dotnet test ...` — the escape leaked into the ledger, `sh -c` ran `cd` with two
+    stray arguments and exited 0, dotnet never ran, and eight rows read DONE. A runner that ran
+    anything says so; silence is the command never reaching it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script = fake_runner(tmp, '')                       # named pytest, prints nothing
+        ok, note, _ = goalrun.run_check(f'sh {script}')
+        assert not ok and 'printed nothing' in note, note
+        # the shape that caused it, end to end: exit 0, no output, no test
+        ok, note, _ = goalrun.run_check(f'cd {tmp} \\&\\& pytest -q')
+        assert not ok, note
+
+
+def test_lint_names_a_row_with_escaped_and_and():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'cd src \\&\\& dotnet test --filter X', '', 'rm -f x'),
+            goalrun.Row('B', 'REQ-2 y', "grep -E 'a\\|b' f.txt | pytest -q", '', 'rm -f x')]
+    problems = goalrun.lint(rows)
+    assert any('rows A contain' in p for p in problems), problems
+    assert not any('B' in p and 'contain' in p for p in problems), 'a single \\| is grep alternation'
+
+
 def test_zero_tests_gate_does_not_false_positive_on_a_normal_pass():
     with tempfile.TemporaryDirectory() as tmp:
         for text in ('42 tests, 0 failures', '15 passing (300ms)', 'Ran 10 tests OK',
@@ -250,6 +335,23 @@ def test_baseline_records_the_whole_tree_before_any_ledger_exists():
         assert again.returncode == 2 and 'already exists' in again.stderr, again
         assert run_cli(tmp, '--baseline', '--reset').returncode == 0
         assert run_cli(tmp, '--reset').returncode == 2, '--reset without --baseline is misuse'
+
+
+def test_a_huge_file_is_marked_by_size_and_mtime_not_hashed():
+    """A 300MB database dump under docs/ is not a deliverable, and reading it is most of the
+    walk. Its mark is size+mtime; a rewrite still registers because the mtime moves."""
+    with tempfile.TemporaryDirectory() as tmp:
+        big = os.path.join(tmp, 'dump.mdb')
+        with open(big, 'wb') as f:
+            f.seek(goalrun.BIG_FILE + 1); f.write(b'x')      # sparse: no real 32MB written
+        mark = goalrun._mark(big)
+        assert mark.startswith('big:'), mark
+        base = {'dump.mdb': mark}
+        assert goalrun.not_shipped('dump.mdb', base, cwd=tmp) == 'unchanged since baseline'
+        os.utime(big, (1, 1))
+        assert goalrun.not_shipped('dump.mdb', base, cwd=tmp) == ''
+        small = os.path.join(tmp, 'a.txt'); open(small, 'w').write('x\n')
+        assert not goalrun._mark(small).startswith('big:')
 
 
 def test_shipping_is_content_against_the_baseline():

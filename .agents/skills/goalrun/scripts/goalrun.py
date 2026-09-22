@@ -225,6 +225,12 @@ def run_check(cmd, timeout=1800, cwd=None):
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
     if code == 0 and RUNNER_RE.search(cmd):
+        # a runner that ran anything says so. Silence with exit 0 means the command never
+        # reached it — one ledger carried `cd dir \&\& dotnet test ...`, and `sh -c` ran the
+        # `cd` with two stray arguments, exit 0, and never called dotnet
+        if not text.strip():
+            return False, ('the test runner printed nothing — the command never reached it; '
+                           'a stray backslash before && or || in the ledger is the usual cause'), False
         marker = _zero_tests_matched(text)
         if marker:
             return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
@@ -274,7 +280,25 @@ def _tree_hashes(root):
     return out
 
 
-BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases'}
+BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases',
+                              '.codegraph', '.terraform', '.gradle', '.cache', '.pytest_cache',
+                              '.ruff_cache', 'coverage'}
+# a deliverable is never this big; a database dump or a cached asset is, and reading it is
+# most of the walk. Its size and mtime stand in for its content — a change still registers
+BIG_FILE = 32 << 20
+
+
+def _mark(path):
+    """What the baseline records for one path: its digest, or for a file past BIG_FILE its
+    size and mtime — `big:<size>:<mtime_ns>` — since hashing gigabytes to notice a change that
+    also moves the mtime buys nothing."""
+    try:
+        st = os.lstat(path)
+        if not os.path.islink(path) and st.st_size > BIG_FILE:
+            return f'big:{st.st_size}:{st.st_mtime_ns}'
+    except OSError:
+        return 'unreadable'
+    return _digest(path)
 
 
 def take_baseline(cwd=None, path=BASELINE, reset=False):
@@ -299,7 +323,7 @@ def take_baseline(cwd=None, path=BASELINE, reset=False):
         dirs[:] = [d for d in dirs if d not in BASELINE_SKIP]
         for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             p = os.path.join(base, name)
-            files[os.path.normpath(os.path.relpath(p, root))] = _digest(p)
+            files[os.path.normpath(os.path.relpath(p, root))] = _mark(p)
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
@@ -332,7 +356,7 @@ def not_shipped(path, baseline_files, cwd=None):
         then = {k: v for k, v in baseline_files.items()
                 if k == norm or k.startswith(norm + os.sep)}
         return '' if now != then else 'unchanged since baseline'
-    return '' if _digest(full) != baseline_files.get(norm) else 'unchanged since baseline'
+    return '' if _mark(full) != baseline_files.get(norm) else 'unchanged since baseline'
 
 
 def load_signatures(path=SIGNOFF):
@@ -450,6 +474,14 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
                         f'check can fail; add one, or waive it in the ledger with '
                         f'`# verify-ok: <id> — <reason>` — legitimate when this is test-first '
                         f'and its red phase was already witnessed by hand')
+    # `\&\&` in a TSV cell is shell escaping that leaked from the heredoc or printf that wrote
+    # the row: `sh -c` turns it into a literal `&` argument, the first command runs alone and
+    # exits 0, and the runner after it never runs. Nothing legitimate spells && that way
+    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check + ' ' + r.brk)]
+    if leaked:
+        problems.append(f'rows {", ".join(leaked)} contain `\\&\\&` or `\\|\\|` — escaping that '
+                        f'leaked into the ledger when it was written; under `sh -c` the command '
+                        f'before it runs alone and exits 0, and the check never runs')
     # the contract is `check` runs the test implementing this requirement's TC. A search over
     # text is the shape that slips past `--verify` too: pair it with a break that edits the
     # same string and the two agree with each other while measuring nothing
@@ -583,10 +615,11 @@ def hold_lock(path=LOCK):
         who = fd.read().strip() or 'unknown pid'
         fd.close()
         raise Misuse(f'another goalrun is running checks here ({who}) — a check racing another '
-                     f'build goes red for reasons that are not the code; wait for it to finish')
+                     f'build goes red for reasons that are not the code. Wait for it, or if it '
+                     f'is dead, kill the pid: the lock releases with it')
     fd.seek(0)
     fd.truncate()
-    fd.write(f'pid {os.getpid()}\n')
+    fd.write(f'pid {os.getpid()} since {datetime.datetime.now():%H:%M:%S}\n')
     fd.flush()
     return fd
 
@@ -757,6 +790,9 @@ def select(rows, ids):
 
 def main():
     signal.signal(signal.SIGTERM, signal.default_int_handler)  # so SIGTERM kills the check too
+    # a --verify pushed to the background writes to a file, and a block-buffered file shows
+    # nothing until exit — forty minutes of an empty log reads as a dead run, and gets restarted
+    sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--ledger', default=LEDGER)
     ap.add_argument('--timeout', type=int, default=1800, help='seconds per check')

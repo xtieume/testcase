@@ -7,6 +7,11 @@ Read at Plan step 5, when the rows are being written.
 Tab-separated, UTF-8 (BOM tolerated), `#` and blank lines skipped, extra columns ignored. No
 field may contain a tab.
 
+Write it with a file tool, never through `printf`/`echo` in a shell: single quotes turn `&&`
+into `\&\&`, and under `sh -c` that runs the first command alone, exit 0, runner never called.
+Read the check column back before the first run — `cut -f3 .testcases/goalrun/ledger.tsv` —
+and the lint refuses `\&\&` or `\|\|` outright.
+
 | Column | For |
 | ------ | --- |
 | `id` | Short, stable, unique, uppercase. Names the row in `--only`, `--sign`, `--verify`. |

@@ -14,8 +14,9 @@ Add these to the checklist built in `dimensions.md`:
 
 Search every spelling variant of the term first. A requirement documented as `工種コード`
 will not be found by grepping `工種コード` alone if the document writes `工種 コード`,
-`コウシュコード`, or `work type code`. List the variants you searched in the Note column —
-that list is what makes a `Missing` verdict checkable.
+`コウシュコード`, or `work type code`. Write the variants into the evidence cell in the shape the
+lint reads — `searched: 工種コード, 工種 コード, コウシュコード in D1, D4` — that list is what
+makes a `Missing` verdict checkable, and a single spelling fails the lint on purpose.
 
 ## Quotes
 

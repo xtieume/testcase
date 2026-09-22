@@ -159,6 +159,14 @@ and 20 is what the bug produces — the case runs today, catches what it was wri
 commits to nothing. Reach for this before `TBD`: the third branch of rule 5 is for a value with
 no such invariant, not for every value touched by an open question.
 
+**The invariant must hold across every open question the case touches, not the one you had in
+mind.** That same balance is invariant across the expiry reading and not across the grant
+reading: if a grant replaces rather than adds, the later grant overwrites the total to 16
+whether expiry ran or not, 16 sits inside the accepted range, and the case quietly stops
+discriminating. List the questions a case depends on before trusting its inequality — this
+skill shipped the example above as settled and a later round found the second question inside
+it.
+
 **A row a previous round flagged gets re-derived whole, not just where it was patched.** A
 reviewer stops at the first cause it finds; the fix for that cause routinely introduces the
 second one in the same cell. In this skill's own trial, three rounds in a row found the new

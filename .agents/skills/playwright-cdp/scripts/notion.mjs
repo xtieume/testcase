@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls } from './doc.mjs';
 
 // usage: node download.mjs <urls-file> <out-dir> [cdp-port]
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -23,7 +24,6 @@ function idFromUrl(u) {
   return m ? dashId(m[1]) : null;
 }
 const noDash = (id) => String(id).replace(/-/g, '');
-const safeName = (s) => (s || 'file').replace(/[/\\?%*:|"<>]/g, '_').replace(/\s+/g, '_').slice(0, 120);
 
 // Fetch every block of a page, run inside the browser.
 // loadPageChunk only returns one level deep and then reports an empty cursor,
@@ -133,14 +133,14 @@ const unwrap = (w) => w?.value?.value || w?.value || null;
 let RM = null;          // record map, so rich() can resolve users and page mentions
 let BASE = '';          // page url without hash, for [↗] deep links
 let ASSETS = {};        // original file url -> local relative path
-let COMMENTS = [];      // markdown chunks for <page>.comments.md
+let BOOK = null;        // shared comment numbering, see doc.mjs
 let COMMENT_SEEN = new Set();
-let CNUM = 0;
 
 function setPageContext(rm, baseUrl, assets = {}) {
   RM = rm; BASE = baseUrl; ASSETS = assets;
-  COMMENTS = []; COMMENT_SEEN = new Set(); CNUM = 0;
-  return { comments: COMMENTS };
+  COMMENT_SEEN = new Set();
+  BOOK = commentBook();
+  return BOOK;
 }
 
 const userName = (id) => {
@@ -153,7 +153,6 @@ const pageMention = (id) => {
   const t = p ? rich(p.properties?.title) : '';
   return `[${t || 'page'}](https://www.notion.so/${noDash(id)})`;
 };
-const stamp = (t) => (t ? new Date(t).toISOString().replace('T', ' ').slice(0, 16) : '');
 
 // Notion rich text array -> markdown inline
 function rich(arr) {
@@ -191,32 +190,31 @@ function rich(arr) {
 
 const propText = (v) => Array.isArray(v) ? rich(v) : (v == null ? '' : String(v));
 
-// Number every comment thread hanging off a block, stash the markdown for
-// comments.md, and return the inline reference line for the body document.
+// Hand each comment thread on a block to the shared book, which numbers it and
+// returns the reference line the body carries.
 function commentRef(b, anchorText) {
-  const nums = [];
+  const refs = [];
   for (const did of b.discussions || []) {
     const d = unwrap(RM.discussion?.[did]);
-    if (!d || !(d.comments || []).length) continue;
-    const items = [];
-    for (const cid of d.comments) {
+    if (!d) continue;
+    const items = (d.comments || []).map((cid) => {
       const c = unwrap(RM.comment?.[cid]);
-      if (!c || COMMENT_SEEN.has(cid)) continue;
+      if (!c || COMMENT_SEEN.has(cid)) return null;
       COMMENT_SEEN.add(cid);
-      const n = ++CNUM;
-      nums.push(n);
-      const who = userName(c.created_by_id || c.created_by?.id);
-      items.push(`### <a id="c-${n}"></a>#${n} — ${who} · ${stamp(c.created_time)}\n\n${rich(c.text) || '_(empty)_'}`);
-    }
-    if (!items.length) continue;
-    COMMENTS.push([
-      `## On: ${anchorText || '(page)'}${d.resolved ? ' · _resolved_' : ''} · [↗](${BASE}?d=${noDash(did)})`,
-      '', items.join('\n\n'), ''
-    ].join('\n'));
+      return {
+        who: userName(c.created_by_id || c.created_by?.id),
+        when: stamp(c.created_time),
+        body: rich(c.text)
+      };
+    });
+    const ref = BOOK.thread({
+      on: anchorText, items,
+      note: d.resolved ? 'resolved' : '',
+      link: `${BASE}?d=${noDash(did)}`
+    });
+    if (ref) refs.push(ref);
   }
-  if (!nums.length) return '';
-  const label = nums.length === 1 ? `#${nums[0]}` : `#${nums[0]}–#${nums[nums.length - 1]}`;
-  return `💬 ${nums.length} comment → [${label}](COMMENTS_FILE#c-${nums[0]})`;
+  return refs.join(' · ');
 }
 
 function renderBlocks(ids, rm, depth, collections, seen) {
@@ -382,36 +380,14 @@ async function downloadAssets(page, rm, dir) {
   const map = {};
   const skipped = [];
   let saved = 0;
-  fs.mkdirSync(dir, { recursive: true });
-
   for (let i = 0; i < refs.length; i++) {
     const { source } = refs[i];
     const url = signed[i] || (/^https?:/.test(source) ? source : null);
     if (!url) continue;
-    const rawName = decodeURIComponent((source.split('?')[0].split('/').pop() || 'file').replace(/^.*:/, ''));
-    if (!WITH_MEDIA && /\.(mov|mp4|m4v|avi|webm|mkv|mp3|wav|m4a)$/i.test(rawName)) {
-      skipped.push(`${rawName} (media, set NOTION_MEDIA=1)`);
-      continue;
-    }
-    try {
-      const resp = await page.context().request.get(url, { timeout: 180000 });
-      if (!resp.ok()) throw new Error('HTTP ' + resp.status());
-      const buf = await resp.body();
-      if (buf.length > MAX_MB * 1024 * 1024) {
-        skipped.push(`${rawName} (${(buf.length / 1048576).toFixed(1)}MB > NOTION_MAX_MB)`);
-        continue;
-      }
-      let name = safeName(rawName);
-      if (!path.extname(name)) name += '.bin';
-      let file = path.join(dir, name);
-      let n = 2;
-      while (fs.existsSync(file) && fs.statSync(file).size !== buf.length) file = path.join(dir, `${n++}_${name}`);
-      fs.writeFileSync(file, buf);
-      map[source] = path.relative(OUT, file).split(path.sep).join('/');
-      saved++;
-    } catch (e) {
-      skipped.push(`${rawName} (${e.message})`);
-    }
+    const r = await saveAsset(page.context().request, url, dir, { maxMb: MAX_MB, media: WITH_MEDIA });
+    if (r.skipped) { skipped.push(r.skipped); continue; }
+    map[source] = path.relative(OUT, r.file).split(path.sep).join('/');
+    saved++;
   }
   return { map, saved, skipped };
 }
@@ -427,15 +403,10 @@ async function downloadPage(page, url, idx, total) {
   const root = unwrap(rm.block[pid]);
   if (!root) { log(`[${idx}/${total}] FAIL no root block: ${url}`); return; }
 
-  RM = rm;
-  BASE = url.split('#')[0];
-  ASSETS = {};
-  COMMENTS = [];
-  COMMENT_SEEN = new Set();
-  CNUM = 0;
+  setPageContext(rm, url.split('#')[0]);
 
   const title = rich(root.properties?.title) || pid;
-  const safe = title.replace(/[/\\?%*:|"<>]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 120) || pid;
+  const safe = docName(title, pid);
 
   // Resolve any embedded collection views into markdown tables
   const collections = {};
@@ -474,49 +445,29 @@ async function downloadPage(page, url, idx, total) {
   const pageRef = commentRef(root, title);
   const body = renderBlocks(root.content, rm, 0, collections, new Set([pid]));
 
-  // name is only known now, so comment references are patched in at the end
-  const commentsName = `${safe}.comments.md`;
-  const fix = (s) => s.split('COMMENTS_FILE').join(encodeURI(commentsName));
+  const { file } = writeDoc({
+    out: OUT, name: safe, title, source: url, book: BOOK,
+    meta: [
+      `Extracted: ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC · ${Object.keys(rm.block).length} blocks · ${assets.saved} files`,
+      ...(assets.skipped.length ? [`⚠️ not downloaded: ${assets.skipped.join(', ')}`] : [])
+    ],
+    body: [
+      ...(pageRef ? [`> ${pageRef}`, ''] : []),
+      ...(propLines.length ? ['## Properties', '', ...propLines, ''] : []),
+      body
+    ].join('\n')
+  });
 
-  const md = [
-    `# ${title}`,
-    '',
-    `> Source: ${url}`,
-    `> Extracted: ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC · ${Object.keys(rm.block).length} blocks · ${assets.saved} files`,
-    ...(CNUM ? [`> 💬 ${CNUM} comments in [${commentsName}](${encodeURI(commentsName)}) — every commented block below links into it.`] : []),
-    ...(assets.skipped.length ? [`> ⚠️ not downloaded: ${assets.skipped.join(', ')}`] : []),
-    '',
-    ...(pageRef ? [`> ${pageRef}`, ''] : []),
-    ...(propLines.length ? ['## Properties', '', ...propLines, ''] : []),
-    body
-  ].join('\n');
-
-  let file = path.join(OUT, `${safe}.md`);
-  let n = 2;
-  while (fs.existsSync(file)) { file = path.join(OUT, `${safe} (${n++}).md`); }
-  fs.writeFileSync(file, fix(md), 'utf8');
-
-  if (CNUM) {
-    const cmd = [
-      `# Comments — ${title}`,
-      '',
-      `> Source: ${url}`,
-      `> ${CNUM} comments · body: [${safe}.md](${encodeURI(safe + '.md')})`,
-      '',
-      ...COMMENTS
-    ].join('\n');
-    fs.writeFileSync(path.join(OUT, commentsName), fix(cmd), 'utf8');
-  }
   if (WITH_RAW) fs.writeFileSync(path.join(OUT, `${safe}.raw.json`), JSON.stringify(rm), 'utf8');
 
-  log(`[${idx}/${total}] OK  ${Math.round(md.length/1024)}KB  ${CNUM} comments  ${assets.saved} files  ${file}`);
+  log(`[${idx}/${total}] OK  ${BOOK.count} comments  ${assets.saved} files  ${file}`);
 }
 
 export { rich, renderBlocks, commentRef, setPageContext };
 
 // skipped when imported by the self-check
 if (!process.env.NOTION_SELFTEST) {
-  const URLS = fs.readFileSync(URLS_FILE, 'utf8').split('\n').map(s => s.trim()).filter(Boolean);
+  const URLS = readUrls(URLS_FILE);
   fs.writeFileSync(LOG, '');
   fs.mkdirSync(OUT, { recursive: true });
   log(`URLs: ${URLS.length}`);

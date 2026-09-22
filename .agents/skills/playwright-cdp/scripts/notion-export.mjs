@@ -8,6 +8,7 @@
 import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
+import { readUrls } from './doc.mjs';
 import { execFileSync } from 'child_process';
 
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -19,7 +20,7 @@ const RECURSIVE = process.env.NOTION_RECURSIVE === '1';
 
 const log = (m) => { fs.appendFileSync(LOG, m + '\n'); console.log(m); };
 
-const URLS = fs.readFileSync(URLS_FILE, 'utf8').split('\n').map(s => s.trim()).filter(Boolean);
+const URLS = readUrls(URLS_FILE);
 
 function dashId(hex) {
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20,32)}`;

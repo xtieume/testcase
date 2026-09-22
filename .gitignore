@@ -1,7 +1,7 @@
 .code-review-graph/
 .DS_Store
 
-# playwright-notion skill: local deps + downloaded docs
-.agents/skills/playwright-notion/scripts/node_modules/
-.agents/skills/playwright-notion/scripts/package-lock.json
+# playwright-cdp skill: local deps + downloaded docs
+.agents/skills/playwright-cdp/scripts/node_modules/
+.agents/skills/playwright-cdp/scripts/package-lock.json
 __pycache__/

@@ -1093,20 +1093,23 @@ def test_blast_zero_is_a_zero_second_budget_not_an_unlimited_one():
         assert 'BLAST' in bare.stdout and 'SWEEP STOPPED' not in bare.stdout, bare.stdout
 
 
-def test_a_whole_ledger_verify_blasts_by_default():
-    """Knowing whether rows tell defects apart requires the sweep, so the proof run does it."""
+def test_the_sweep_is_asked_for_and_says_its_price_when_it_is_not():
+    """The sweep costs a check per row per row, which on a slow check is most of the run, so
+    it is opt-in — and a skipped sweep names the blind spot and what closing it would cost,
+    rather than passing over it in silence."""
     with tempfile.TemporaryDirectory() as tmp:
         open(os.path.join(tmp, 'a.txt'), 'w').write('a\n')
         open(os.path.join(tmp, 'b.txt'), 'w').write('b\n')
         ledger(tmp, 'A\tx\tcat a.txt b.txt\ta.txt\trm -f a.txt\n'
                     'B\ty\tcat a.txt b.txt\tb.txt\trm -f b.txt\n')
-        whole = run_cli(tmp, '--verify')
-        assert 'BLAST' in whole.stdout and whole.returncode == 1, whole.stdout
-        subset = run_cli(tmp, '--verify', 'A')
-        assert 'BLAST' not in subset.stdout and subset.returncode == 0, subset.stdout
+        quiet = run_cli(tmp, '--verify')
+        assert 'BLAST' not in quiet.stdout and quiet.returncode == 0, quiet.stdout
+        assert 'sweep skipped' in quiet.stdout and '`--blast` sweeps for them' in quiet.stdout
+        asked = run_cli(tmp, '--verify', '--blast')
+        assert 'BLAST' in asked.stdout and asked.returncode == 1, asked.stdout
         off = run_cli(tmp, '--verify', '--no-blast')
         assert 'BLAST' not in off.stdout and off.returncode == 0, off.stdout
-        assert 'sweep skipped' in off.stdout, 'the docs promise --no-blast names the blind spot'
+        assert 'BLAST' in run_cli(tmp, '--verify', 'A', '--blast').stdout, 'asked for on a subset too'
         assert run_cli(tmp, '--no-blast').returncode == 2
         assert run_cli(tmp, '--blast').returncode == 2
 

@@ -54,11 +54,9 @@ through the two skills that already do this work. **Do not invent this pipeline 
 row.**
 
 1. **Recon** — stack, existing commands (`package.json`, `Makefile`, test runner), specs.
-   Then, before touching anything, `python3 "$GOALRUN" --baseline`: it records every file
-   as it is, and a deliverable ships by differing from that record. Taken after the first
-   edit, it reads that edit as pre-existing and the row stays red for the whole run; the
-   only cure is to undo the work by hand, so the script refuses a second one without
-   `--reset`.
+   Then, **before touching anything**, `python3 "$GOALRUN" --baseline`: a deliverable ships by
+   differing from that record, so an edit made first is recorded as pre-existing and its row
+   can never go green.
 2. **Requirements — `docs-review`.** It turns a spec into `REQ-` ids — atomic, one yes/no
    each — and writes them to `.testcases/goalrun/reqs.txt`, one per line: the checklist step 6
    gates against. Documents to audit *against* the spec are optional; a spec with nothing but
@@ -114,26 +112,21 @@ row.**
    python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
    ```
 
-   It fails on a requirement no row measures and on a row with no `break`. A gap you accept
-   is a line in the ledger carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
-   repo` — never silence. A waiver excuses a gap someone looked at; **more than one, past 30%
-   of the list, is a bulk pass wearing per-id clothes**, and the gate fails on that too — one
-   waiver on a short list is the exception it leaves you. Varying the
-   wording does not make it smaller — either the rows exist, or `reqs.txt` is wider than what
-   this run is about and gets cut down to the part it measures. The lint prints the ratio —
-   `coverage: 629 requirement(s) · 17 carried by rows · 612 waived (97%)` — and that line goes
-   into the table verbatim, because `DONE` over a mostly-waived list is a claim about 17 rows,
-   not 629 requirements.
+   A gap you accept is a line carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
+   repo` — never silence. **A waiver excuses a gap someone looked at; a page of them is a bulk
+   pass wearing per-id clothes**, and the gate fails on that too. Rewording does not shrink it:
+   either the rows exist, or `reqs.txt` is wider than this run and gets cut down to the part it
+   measures. The coverage line the lint prints goes into the table verbatim — `DONE` over a
+   mostly-waived list is a claim about the rows, not about the list.
 
-   The gate only knows the list you wrote, and only that the id is *mentioned* by a row. A
-   requirement missing from `reqs.txt`, or named by a row that does not measure it, is
-   invisible here — step 5 is what finds both.
+   The gate only knows the list you wrote, and only that a row *mentions* the id. A requirement
+   missing from `reqs.txt`, or named by a row that does not measure it, is invisible here —
+   step 5 is what finds both.
 7. **Slice phases** — groups of row ids, by dependency.
 8. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
-   building while it runs: a check racing another compile goes red for reasons that are
-   not the code. Two goalruns *in one tree* refuse each other by lock; a build *you* started in another
-   shell is yours to wait for. A red you think is contention is not a finding either way —
-   name the build, wait, and re-run that row with `--only`; the re-run is the evidence.
+   building while it runs; a check racing another compile goes red for reasons that are not
+   the code. A red you blame on contention is not a finding either way — wait, re-run that row
+   with `--only`, and the re-run is the evidence.
 
 Show ledger, phases, red rows, and a menu: **run / edit a row / re-slice / skip
 pre-flight**.
@@ -163,35 +156,17 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
 2. **`python3 "$GOALRUN" --verify`** — it copies the tree, plants the break in the copy, runs
    the check there, and deletes the copy. Your files are read, never written.
 
-   It runs every check once on the tree first: a row already red proves nothing by going red
-   again (`ALREADY RED`), and it is kept out of the sweep, since a row that is red for its own
-   reasons would otherwise make every other row report `BLAST`. An honest row for work nobody
-   has started is exactly this case. Then, per row, it plants the `break` and demands the check
-   go red. `HOLLOW` = the check did not move under the defect this
-   break planted — it tests nothing, or nothing about *this* clause. `STUCK` = its check hung
-   under the break instead of failing, which proves nothing either way. `BREAK FAILED` = the
-   break command itself failed, or changed nothing in the copy. `NOTHING VERIFIED` = no row ran
-   a break at all — every one was skipped, `MANUAL`, or already red; that run proved nothing
-   and exits 1.
+   Every verdict it prints says what it means; two need a decision from you.
 
-   **`HOLLOW` is a finding about the cases, not about the row.** It says every input the check
-   tries is an input this defect is invisible in — so the route is backwards into `testcase`,
-   whose `Distinguishes from` column exists for exactly this, not forwards into the ledger.
-   Fix the check by adding the case that discriminates; never re-point the row.
+   **`HOLLOW` is a finding about the cases, not about the row.** Every input the check tries is
+   one this defect is invisible in — so the route is backwards into `testcase`, whose
+   `Distinguishes from` column exists for exactly this, not forwards into the ledger. Add the
+   case that discriminates; never re-point the row.
 
-   A whole-ledger `--verify` also sweeps every other row under each planted break, to find
-   rows whose checks cannot tell one defect from another (`BLAST`). It is on for the proof and
-   off for a `--verify A,B` subset; `--blast` / `--no-blast` force either way, and
-   `ledger-design.md` has the budget and the flags.
-
-   The proof costs one check per row and the sweep costs rows × rows of them, so its price is
-   set by how long one check takes — a `pytest -k` is seconds, a `dotnet test` on a solution
-   is not, and the same command in a fresh copy pays its build again. `--verify` prints the
-   estimate after its first pass, before any break is planted; read it. If the sweep will not
-   fit its budget, narrow the checks before raising it: one test project rather than the whole
-   solution, one selector rather than the suite. And a copy sits at a different path, so a
-   check that restores or resolves dependencies repeats that on every row — pinning it
-   (`--no-restore`, an offline flag) is usually the largest single saving.
+   **`BLAST` is a finding about breadth.** Two rows whose checks cannot tell one defect from
+   another are one measurement written twice. Narrow the check that is too wide — usually one
+   running the whole suite instead of its own test. Finding it costs a check per row per row,
+   so it runs on request (`--blast`); `ledger-design.md` has what it costs and when to pay.
 
 3. **Once, at the end.** This is the only `--verify` the run needs, and it runs after the last
    row is green — verifying a row whose code does not exist yet reads `ALREADY RED` and proves
@@ -210,8 +185,8 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    `references/pressure-test.md` and update the record.
 
 `DONE` only when every row is `PASS`. Anything short: the table, `NOT DONE`. A `--verify`
-that ends `BLAST`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` or `SWEEP
-STOPPED` has not proven the ledger, whatever the rows said a minute earlier.
+that ends `HOLLOW`, `BLAST`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` or
+`SWEEP STOPPED` has not proven the ledger, whatever the rows said a minute earlier.
 
 ## Report the ledger, not a narrative
 

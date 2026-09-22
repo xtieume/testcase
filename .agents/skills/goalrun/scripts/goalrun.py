@@ -53,7 +53,6 @@ BASELINE = os.path.join(GOAL_DIR, 'baseline.json')
 LOCK = os.path.join('.testcases', 'goalrun.lock')
 NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
-NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0` is 0 seconds
 
 # heavy or regenerable directories a clone skips outright — `.git` carries the whole history
 # nothing in a check needs, and the rest are caches any build regenerates on its own. Build
@@ -787,9 +786,13 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         print(f'NOTHING VERIFIED — {where} ran a break; --verify proved nothing')
         return False
     if not blast and not ids:
-        # the docs promise --no-blast names the blind spot; silence here would be the same
-        # failure mode the rest of the script refuses
-        print('sweep skipped (--no-blast) — rows are not proven against each other\'s defects')
+        # a blind spot the run does not name is one nobody closes, so it prints its own price
+        # alongside it: the cost of sweeping is knowable from the pre-pass, and deciding
+        # whether to pay is the caller's
+        would = f'about {_dur(sum(c for r in rows for cmd, c in cost.items() if cmd != r.check))}' \
+                if cost else 'a check per row per row'
+        print(f'sweep skipped — rows are not proven against each other\'s defects; `--blast` '
+              f'sweeps for them, {would}')
     if blast and incomplete:
         # not 'spent the budget': a budget under a check's runtime buys no sweep at all,
         # and 0 check(s) in 0s having spent 1s reads as a bug in the accounting
@@ -797,8 +800,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
               f'check(s) ran in {spent:.1f}s and the sweeps for {", ".join(incomplete)} '
               f'are incomplete, '
               f'so those rows are unproven against the rest. Rerun with `--blast SECONDS` for '
-              f'a bigger budget, `--blast` for none at all, or `--no-blast` to accept the '
-              f'proof without the sweep')
+              f'a bigger budget, or accept the proof without the sweep')
         all_ok = False
     elif blast:
         print(f'swept {sweeps} sibling check(s) across {ran} break(s) in {spent:.0f}s')
@@ -847,17 +849,16 @@ def main():
                                              '--no-blast skips the sweep')
         return n
 
-    blast.add_argument('--blast', dest='blast', nargs='?', const=NO_BUDGET, type=_seconds,
+    blast.add_argument('--blast', dest='blast', nargs='?', const=SWEEP_BUDGET, type=_seconds,
                        default=None,
                        metavar='SECONDS',
                        help='with --verify: also run every other row under each planted break, '
-                            'to find rows whose checks cannot tell one defect from another. On '
-                            f'by default for a whole-ledger --verify with a {SWEEP_BUDGET}s '
-                            'budget, off for a subset; SECONDS sets a different budget (0 '
-                            'sweeps nothing), bare --blast removes it')
+                            'to find rows whose checks cannot tell one defect from another. Off '
+                            f'unless asked; bare --blast sweeps under a {SWEEP_BUDGET}s budget, '
+                            'SECONDS sets another (0 sweeps nothing)')
     blast.add_argument('--no-blast', dest='blast', action='store_const', const=-1,
-                       help='skip that sweep; the proof is then blind to rows measuring each '
-                            "other's defects")
+                       help='say explicitly that the sweep is not wanted; the default already '
+                            'skips it')
     a = ap.parse_args()
     try:
         return run(a)
@@ -939,14 +940,11 @@ def run(a):
 
 def _run_checks(a, rows, baseline):
     if a.verify is not None:
-        # the condition for wanting the sweep is only knowable by running it, so the whole-ledger
-        # proof runs it unless told not to; a subset run is iterative work, not the proof
-        # bare --blast means no budget; --blast N sets one, and N=0 sweeps nothing rather
-        # than everything; --no-blast (-1) skips the
-        # sweep; left alone, the whole-ledger proof sweeps under the default budget
-        blast = (a.blast != -1) if a.blast is not None else not a.verify
-        budget = (SWEEP_BUDGET if a.blast is None else
-                  None if a.blast == NO_BUDGET else max(0, a.blast))
+        # the sweep costs a check per row per row, which on a slow check is most of the run,
+        # so it is asked for rather than assumed; bare --blast means no budget, --blast N sets
+        # one, N=0 sweeps nothing rather than everything, and --no-blast (-1) is explicit
+        blast = a.blast is not None and a.blast != -1
+        budget = max(0, a.blast or 0)
         return 0 if verify(rows, a.verify, a.timeout, blast=blast,
                            waived=waivers(a.ledger)['verify-ok'], budget=budget) else 1
 

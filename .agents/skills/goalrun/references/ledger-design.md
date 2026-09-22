@@ -104,6 +104,15 @@ Four shapes that read as proof and are not:
 `--lint-ledger` tells none of these apart, the same way it cannot tell a real check from `true`.
 Only `--verify` can.
 
+## What a check costs, and where
+
+A copy sits at a different path, so a check that restores or resolves dependencies does that
+work again on every row — pinning it (`--no-restore`, an offline flag) is usually the largest
+saving available. After that, narrow the command: one test project rather than the whole
+solution, one selector rather than the suite. `--verify` times every check on its first pass
+and prints what the proof and the sweep will cost before planting anything; read that line
+before deciding whether to pay for `--blast`.
+
 ## A break runs in a copy
 
 `--verify` copies the tree, plants the break in the copy, runs the check there, and deletes the
@@ -127,19 +136,18 @@ costs, and what it cannot see:
 
 ## The sweep
 
-A whole-ledger `--verify` also runs every other row under each planted break: `shared` for rows
-delivering the same file (expected), `BLAST` (exit 1) for a row shipping something else, whose
-check therefore cannot tell this defect from its own.
+`--verify --blast` runs every other row under each planted break: `shared` for rows delivering
+the same file (expected), `BLAST` (exit 1) for a row shipping something else, whose check
+therefore cannot tell this defect from its own.
 
-It costs rows × rows. Measured on a 12-row ledger of 0.25s checks: 4.4s without, 42.8s with —
-though rows running the identical command share one result, so the ledger that most needs the
-sweep is cheapest on it (7.9s). The first pass times every check and `--verify` prints what the
-proof and the sweep will cost before planting anything. A default sweep runs against a
-15-minute budget of sweeping time and prints `SWEEP STOPPED` (exit 1) over it, naming the rows
-it could not finish. `--blast
-SECONDS` sets another budget, bare `--blast` removes it, `--no-blast` skips the sweep and says
-what is unproven. It discriminates only once checks are narrow: while every row runs the whole
-suite, everything reddens everything.
+It costs a check per row per row, so its price is the price of one check. On a 12-row ledger of
+0.25s checks, 4.4s becomes 42.8s — though rows running the identical command share one result,
+so the ledger that most needs the sweep is cheapest on it (7.9s). On a check that builds a
+solution, the same arithmetic is most of the run, which is why it is asked for rather than
+assumed: a `--verify` without it says so, and says what it would cost. `--blast` sweeps under a
+15-minute budget and prints `SWEEP STOPPED` (exit 1) over it, naming the rows it could not
+finish; `--blast SECONDS` sets another. It discriminates only once checks are narrow: while
+every row runs the whole suite, everything reddens everything.
 
 ## Turning a vague sentence into a check
 
@@ -171,6 +179,7 @@ requirements no row measures. It does not catch a fake check or a break that can
 
 ## Flags and exit codes
 
+`--blast [SECONDS]` adds the sweep; `--no-blast` says out loud that it is not wanted.
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
 `PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` records the tree once, skipping build
 output (`obj/`, `bin/`, `target/`, `dist/`) and the caches a clone skips; it is refused while

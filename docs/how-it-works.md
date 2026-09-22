@@ -141,9 +141,10 @@ flowchart TD
 A green row proves nothing until its check has been shown able to go red. `--verify` copies the
 tree, plants the row's `break` in the copy, and demands the check fail there — your own files
 are read, never written. It runs once, after the last row is green: a row whose code does not
-exist yet only reads `ALREADY RED`, and the pass costs a check per row plus a sweep of
-rows × rows, so running it per phase pays that bill twice. The sweep then asks whether any other row failed for the same defect,
-which would mean neither can tell one defect from another.
+exist yet only reads `ALREADY RED`, and the pass costs a check per row, so running it per phase
+pays that bill twice. `--blast` adds a sweep — every other row under the same break — which
+asks whether two rows can tell one defect from another; it costs a check per row per row, so it
+is asked for rather than assumed.
 
 ```mermaid
 flowchart TD
@@ -167,7 +168,7 @@ flowchart TD
     VERIFIED["VERIFIED — it went red, as it must"]
     DROP["Delete the copy"]
 
-    SWEEP["Sweep: run every other row under this same break"]
+    SWEEP["--blast: run every other row under this same break"]
     SIB{"Which rows went red?"}
     SHARED["shared — siblings shipping the same file, expected"]
     BLAST["BLAST — a row shipping something else, so neither row proves what it claims"]

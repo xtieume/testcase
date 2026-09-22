@@ -141,9 +141,9 @@ flowchart TD
 Một row xanh chưa chứng minh được gì cho tới khi check của nó được cho thấy là **có thể đỏ**.
 `--verify` **nhân bản cây**, trồng `break` vào bản sao, và bắt check phải fail ở đó — file của
 bạn chỉ bị đọc, không bị ghi. Nó chạy **một lần**, sau khi row cuối cùng đã xanh: row mà code
-chưa tồn tại thì chỉ ra `ALREADY RED`, còn chi phí là một check mỗi row cộng một sweep
-rows × rows — chạy theo từng phase là trả hai lần. Sau đó sweep hỏi xem có row nào khác cũng đỏ vì đúng lỗi đó
-không — nếu có thì cả hai đều không phân biệt nổi lỗi này với lỗi của chính mình.
+chưa tồn tại thì chỉ ra `ALREADY RED`, còn chi phí là một check mỗi row — chạy theo từng phase
+là trả hai lần. `--blast` thêm phần sweep: chạy mọi row khác dưới cùng cái break đó, để hỏi hai
+row có phân biệt nổi lỗi của nhau không. Nó tốn một check mỗi row mỗi row, nên phải gõ mới có.
 
 ```mermaid
 flowchart TD
@@ -167,7 +167,7 @@ flowchart TD
     VERIFIED["VERIFIED — nó đỏ, đúng như phải thế"]
     DROP["Xoá bản sao"]
 
-    SWEEP["Sweep: chạy mọi row khác dưới cùng cái break này"]
+    SWEEP["--blast: chạy mọi row khác dưới cùng cái break này"]
     SIB{"Row nào đỏ theo?"}
     SHARED["shared — anh em cùng ship một file, bình thường"]
     BLAST["BLAST — row ship thứ khác cũng đỏ, nên cả hai đều không chứng minh được điều mình khai"]

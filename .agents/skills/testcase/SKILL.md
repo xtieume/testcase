@@ -258,4 +258,13 @@ can never run. Guessing and over-hedging fail the same way — neither states wh
 
 **7 — The table is not the finish line.** Every `Automatable: Y` case ships as a test that actually runs, in the repo's own framework, carrying its case ID.
 
-**8 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.
+**8 — A boundary case must be reachable by the system's own trigger.** Nudging an input by one
+unit is how a boundary is usually built, and it quietly invents states the system never
+produces: "one day before three years of service" is not an anniversary, so a grant that fires
+*on* the anniversary can never run there — the case tests a code path no trigger reaches, and
+passes or fails for reasons nobody can act on. Move the boundary onto a state the system
+actually reaches (the last anniversary below the threshold) and the same off-by-one is caught,
+this time by a scenario a user can be in. Check every precondition against the rules the other
+cases establish: one that contradicts them describes a state under test that cannot exist.
+
+**9 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

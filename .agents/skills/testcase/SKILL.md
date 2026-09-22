@@ -221,7 +221,19 @@ inputs.
 
 **4 — Risk coverage beats quantity.** 30 cases covering real risks beat 100 repetitive ones.
 
-**5 — Do not invent requirements.** Unknown behavior → `Expected result: TBD — requirement clarification needed`. Do not guess.
+**5 — Do not invent requirements, and do not manufacture ambiguity either.** Three outcomes,
+not two:
+
+- The requirement answers it → the expected value, derived from the text.
+- The requirement is *silent* but one reading follows from the rules it does state → write that
+  value and **name the assumption in the cell**: `4.0 — assumes every calendar day in the range
+  deducts; R3 excludes only the holiday`. The case stays runnable and falsifiable, and the
+  assumption is raised as a question in step 8. Silence is not ambiguity.
+- The requirement genuinely supports two readings that give different values → `TBD —
+  requirement clarification needed`, `Automatable: N`, and the question in step 8.
+
+A bare `TBD` on a case a reading would settle is a weak case, not caution: it ships a row that
+can never run. Guessing and over-hedging fail the same way — neither states what it assumed.
 
 **6 — Distinguish "not applicable" from "not tested".** N/A needs a why: `Permission: N/A — no authentication/authorization.` Never silently omit. Where the lint would fail on it, put the reason in a `coverage-ok` comment so the next run inherits the decision.
 

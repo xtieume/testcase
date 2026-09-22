@@ -15,6 +15,13 @@ ID_RE = re.compile(r"^(REQ|DOC|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
 
 
+def _cells(line):
+    r"""Split a table row on the pipes that are separators. A quote copied from a table in the
+    audited document carries `\|` for its own pipes; splitting on those fragments the quote
+    across cells, and the citation check then compares a fragment to the file."""
+    return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+
+
 def rows(path):
     """Yield (line number, cells) for data rows of tables that have a verdict column.
 
@@ -30,7 +37,7 @@ def rows(path):
             continue
         if set(line) <= set("|- :"):
             continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
+        cells = _cells(line)
         if header is None:
             header = {c.lower() for c in cells}
             continue
@@ -142,6 +149,12 @@ Searched the tree for: first, second, third — nothing outside the set.
     fires(report.replace('| REQ-A-001 | first | Covered | D1:1 | "x" |',
                          '| REQ-A-001 | first | Covered | D1:40 | "x" |'),
           "has 6 lines", "cited line past the end of the file")
+    # a quote copied from a table carries `\|`; it is one cell and is checked as one quote
+    open(os.path.join(work, "t.md"), "w").write("| a | b |\n| - | - |\n| hold expiring | 2 days |\n")
+    problems, _ = run(report.replace("| D1 | a.md | a document |", "| D1 | a.md | a document |\n| D2 | t.md | a table |")
+                      .replace('| REQ-A-001 | first | Covered | D1:1 | "x" |',
+                               '| REQ-A-001 | first | Covered | D2:3 | "hold expiring \\| 2 days" |'))
+    assert problems == [], problems
     # a retired row keeps its id and carries no verdict; the lint lets it stand
     problems, _ = run(report.replace("| REQ-A-003 | third | Undecided | | |",
                                      "| REQ-A-003 [OBSOLETE — split into 004/005] | third | | | |"))
@@ -202,7 +215,7 @@ def lint_round_log(path, text):
             continue
         if not in_log or not line.strip().startswith("|") or set(line.strip()) <= set("|- :"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = _cells(line)
         if header is None:
             header = [c.lower() for c in cells]
             continue
@@ -247,7 +260,7 @@ def inventory(text):
             continue
         if not in_inv or not line.strip().startswith("|") or set(line.strip()) <= set("|- :"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = _cells(line)
         if header is None:
             header = [c.lower() for c in cells]
             continue

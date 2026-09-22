@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Lint a docs-review report: verdict validity, duplicate IDs, missing citations."""
+import os
 import re
 import sys
 from collections import Counter
@@ -40,7 +41,7 @@ def rows(path):
 def selfcheck():
     """Every problem the linter can report, plus the clean case, checked against a report
     written in the exact format SKILL.md prescribes."""
-    import os
+    import shutil
     import tempfile
 
     report = """## Source inventory
@@ -66,7 +67,7 @@ Searched the tree for: first, second, third — nothing outside the set.
 | REQ-A-001 | first | Covered | D1:1 | "x" |
 | REQ-A-002 | second | Missing | searched: x, y in D1 | |
 | REQ-A-003 | third | Undecided | | |
-| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |
+| DOC-A-001 | doc says fourth | Unspecified | D1:6 | "y" |
 
 ## Round findings
 
@@ -77,8 +78,13 @@ Searched the tree for: first, second, third — nothing outside the set.
 | 1 | merged | 0 | 0 | 0 | 0 |
 """
 
+    work = tempfile.mkdtemp()
+    open(os.path.join(work, "a.md"), "w").write("x\n\n\n\n\ny\n")   # "x" at line 1, "y" at line 6
+    here = os.getcwd()
+    os.chdir(work)
+
     def run(text, verdicts=VERDICTS_A):
-        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as f:
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False, dir=work) as f:
             f.write(text)
         try:
             return lint(f.name, verdicts)
@@ -129,10 +135,21 @@ Searched the tree for: first, second, third — nothing outside the set.
     fires(report.replace("| 1 | merged | 0 | 0 | 0 | 0 |",
                          "| 1 | merged | 0 | 15 | 0 | 0 |"),
           "a flip is a new claim", "mass flip as the last round")
+    # the quote is checked against the cited line: a rule number written as a line number
+    fires(report.replace('| REQ-A-001 | first | Covered | D1:1 | "x" |',
+                         '| REQ-A-001 | first | Covered | D1:6 | "x" |'),
+          "the quote is not within two lines", "quote not at the cited line")
+    fires(report.replace('| REQ-A-001 | first | Covered | D1:1 | "x" |',
+                         '| REQ-A-001 | first | Covered | D1:40 | "x" |'),
+          "has 6 lines", "cited line past the end of the file")
+    # a retired row keeps its id and carries no verdict; the lint lets it stand
+    problems, _ = run(report.replace("| REQ-A-003 | third | Undecided | | |",
+                                     "| REQ-A-003 [OBSOLETE — split into 004/005] | third | | | |"))
+    assert problems == [], problems
     fires(report.replace("| REQ-A-003 | third | Undecided | | |",
                          "| REQ-A-001 | third | Undecided | | |"),
           "duplicate ID REQ-A-001", "duplicate ID")
-    fires(report.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |',
+    fires(report.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:6 | "y" |',
                          "| DOC-A-001 | doc says fourth | Unspecified | | |"),
           "with no evidence or quote", "Unspecified without a citation")
     fires(report.replace("## Round findings", "## Nothing"), "no '## Round findings'", "no round findings")
@@ -154,12 +171,14 @@ Searched the tree for: first, second, third — nothing outside the set.
     mode_b = mode_b.replace("| REQ-A-002 | second | Missing | searched: x, y in D1 | |",
                             "| Q-2 | second | Absent | searched: x, y in D1 | |")
     mode_b = mode_b.replace("| REQ-A-003 | third | Undecided | | |",
-                            "| Q-3 | third | Inferred | D1:2 | \"y\" |")
-    mode_b = mode_b.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:2 | "y" |\n', "")
+                            "| Q-3 | third | Inferred | D1:6 | \"y\" |")
+    mode_b = mode_b.replace('| DOC-A-001 | doc says fourth | Unspecified | D1:6 | "y" |\n', "")
     problems, counts = run(mode_b, VERDICTS_B)
     assert problems == [], f"clean mode B report should lint clean, got {problems}"
     assert sum(counts.values()) == 3, counts
 
+    os.chdir(here)
+    shutil.rmtree(work, ignore_errors=True)
     print("selfcheck ok")
 
 
@@ -216,11 +235,65 @@ def lint_round_log(path, text):
     return problems
 
 
+CITE = re.compile(r"\b([A-Za-z][\w.-]*?)\s*:\s*(\d+)(?:\s*[-–]\s*(\d+))?")
+
+
+def inventory(text):
+    """Doc ID -> path, from the source inventory table, so a citation can be opened."""
+    docs, header, in_inv = {}, None, False
+    for line in text.splitlines():
+        if line.startswith("#"):
+            in_inv, header = "inventory" in line.lower(), None
+            continue
+        if not in_inv or not line.strip().startswith("|") or set(line.strip()) <= set("|- :"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if header is None:
+            header = [c.lower() for c in cells]
+            continue
+        row = dict(zip(header, cells))
+        did, dpath = row.get("doc id", ""), row.get("path", row.get("path / url", ""))
+        if did and dpath:
+            docs[did.lower()] = dpath.strip("`")
+    return docs
+
+
+def check_citation(rid, evidence, quote, docs, base):
+    """'' when the quote sits at the cited line (±2), else why not. A line number that is
+    really a rule number, or a quote copied from a different line, passes every format check
+    and costs a review round each — this is the check the reviewer was doing by hand."""
+    m = CITE.search(evidence)
+    if not m or not quote.strip():
+        return ""
+    doc, start, end = m.group(1).lower(), int(m.group(2)), int(m.group(3) or m.group(2))
+    fpath = docs.get(doc) or (doc if os.path.exists(os.path.join(base, doc)) else None)
+    if not fpath:
+        return ""                                           # a section, or a doc not on disk
+    fpath = os.path.join(base, fpath)
+    if not os.path.isfile(fpath):
+        return ""
+    lines = open(fpath, encoding="utf-8", errors="replace").read().splitlines()
+    if start > len(lines):
+        return f"{rid} cites {m.group(0)} but {fpath} has {len(lines)} lines"
+    needle = re.sub(r"\s+", " ", quote.strip().strip('"“”\'`…').strip())[:24].lower()
+    window = " ".join(lines[max(0, start - 3):min(len(lines), end + 2)])
+    if needle and needle not in re.sub(r"\s+", " ", window).lower():
+        return (f"{rid} cites {m.group(0)} but the quote is not within two lines of it — a rule "
+                f"number written as a line number, or a quote from another line?")
+    return ""
+
+
 def lint(path, verdicts=VERDICTS_A):
     problems, seen, counts = [], Counter(), Counter()
+    text_all = open(path, encoding="utf-8").read()
+    docs, base = inventory(text_all), os.getcwd()
 
     for n, cells in rows(path):
         if len(cells) < 3 or not ID_RE.match(cells[0]):
+            continue
+        # a retired row keeps its id and says so; it has no verdict to lint
+        if "[OBSOLETE" in cells[0].upper() or (len(cells) > 1 and "[OBSOLETE" in cells[1].upper()):
+            seen[cells[0].split()[0]] += 1
             continue
         rid, verdict = cells[0], next((c for c in cells if c in verdicts), None)
         seen[rid] += 1
@@ -237,6 +310,12 @@ def lint(path, verdicts=VERDICTS_A):
                 # Covered on "the file contains the word" is a grep, and the line is the proof
                 problems.append(f"{path}:{n}: {rid} is '{verdict}' citing no line or section "
                                 f"(D1:12, D1 §2.3) — a file name is not a citation")
+            else:
+                after = cells[cells.index(verdict) + 1:]
+                why = check_citation(rid, after[0] if after else "",
+                                     after[1] if len(after) > 1 else "", docs, base)
+                if why:
+                    problems.append(f"{path}:{n}: {why}")
         elif verdict != "Undecided":
             m = SEARCHED.search(rest)
             terms = [t for t in re.split(r"[,、，]", m.group(1)) if t.strip()] if m else []

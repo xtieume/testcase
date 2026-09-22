@@ -88,7 +88,9 @@ a document.
 | Req ID | Requirement (atomic) | Dimension | Source (spec section) |
 
 `Req ID` format `REQ-<area>-<3 digits>`. Keep IDs from a previous run, append new ones at the
-end, mark removed ones `[OBSOLETE]` rather than deleting. Never renumber.
+end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
+the traceability table included, where such a row carries no verdict and the lint lets it
+stand. Never renumber.
 
 ### 3. Map documents onto the checklist
 
@@ -128,7 +130,10 @@ Never paraphrase a document into agreement with the spec. Quote it and let the g
 find what the docs invent. Within the areas the spec covers — and only those — read for claims
 with no spec backing (a value, a step, a role, a limit) and give each its own row, ID
 `DOC-<area>-<3 digits>`, verdict `Unspecified`, evidence the document quote. A claim about a
-feature the spec never touches is outside the audit, not `Unspecified`. Such a claim may be real
+feature the spec never touches is outside the audit, not `Unspecified`. Nor is a spec-backed fact
+restated in another vocabulary — an API page returning `409` where the spec says "cannot renew"
+states the same rule; only what it adds beyond the rule (the code, a timing, a channel) is a
+claim of its own. Such a claim may be real
 behavior the spec forgot or a doc that drifted; deciding is the spec owner's call, so every
 `DOC-` row also lands in `## Open Questions`.
 
@@ -197,7 +202,8 @@ you have run.
      audit, it is discovering the checklist one requirement per round — the set from step 1 or
      the decomposition from step 2 is wrong, and another round cannot fix an input. Stop the
      loop. Redo step 1's tree search and step 2, log the round as `rebuilt` with what changed
-     in the set, and start the loop again at round 1.
+     in the set, and start the loop again at round 1. What a reviewer already validated — a
+     citation corrected, a row split — stays; the rebuild is the decomposition, not the merges.
    * **Material findings** (verdicts changing, citations rejected, the odd new row) → run
      another round. This holds at round 3, 4, and 5 — a round still changing verdicts proves
      more remain.
@@ -206,10 +212,15 @@ you have run.
      an ambiguous spec, not an unfinished audit. A flip driven by a **new citation** is not
      oscillation — the evidence improved, so the loop continues; freezing there would write a
      verdict the report's own citations refute.
-   * **Round 5 still returning material findings** → stop, and report it as a finding of its own:
-     `Loop did not converge in 5 rounds`, plus what kept changing. That means the spec is
-     ambiguous or the checklist is not atomic — not that the audit is done. Never let the ceiling
-     read like a clean exit.
+   * **Round 5 still returning material findings** → read *which* column is moving before
+     deciding anything. `New rows` → the set or the decomposition (above). `Verdict changes` →
+     the spec is ambiguous or a row is not atomic: freeze the oscillating rows `Undecided`, put
+     both readings in `## Open Questions`. `Citations rejected` alone, with verdicts standing →
+     nothing about the documents is in doubt; the citations were transcribed wrong (a rule
+     number written as a line number is the usual one) — fix every citation against the file in
+     one pass, run the lint, and one confirming round decides it. Whatever the reason, the
+     report's first line names it; a loop that ran out of patience never reads like a clean
+     exit.
 
    A deadline is not a stop condition. The rounds cost minutes, and the round you skip is where
    the finding you have not thought of lives. If the user explicitly orders you to stop early,

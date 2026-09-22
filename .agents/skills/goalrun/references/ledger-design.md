@@ -130,8 +130,10 @@ check therefore cannot tell this defect from its own.
 
 It costs rows × rows. Measured on a 12-row ledger of 0.25s checks: 4.4s without, 42.8s with —
 though rows running the identical command share one result, so the ledger that most needs the
-sweep is cheapest on it (7.9s). A default sweep runs against a 15-minute budget of sweeping time
-and prints `SWEEP STOPPED` (exit 1) over it, naming the rows it could not finish. `--blast
+sweep is cheapest on it (7.9s). The first pass times every check and `--verify` prints what the
+proof and the sweep will cost before planting anything. A default sweep runs against a
+15-minute budget of sweeping time and prints `SWEEP STOPPED` (exit 1) over it, naming the rows
+it could not finish. `--blast
 SECONDS` sets another budget, bare `--blast` removes it, `--no-blast` skips the sweep and says
 what is unproven. It discriminates only once checks are narrow: while every row runs the whole
 suite, everything reddens everything.

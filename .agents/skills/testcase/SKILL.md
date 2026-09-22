@@ -198,6 +198,14 @@ own failure mode only occurs under one answer. Derive the neutrality from the re
 list every case an open question touches under that question, so two cases cannot quietly
 answer it in opposite directions.
 
+**Moving a case's input to fix one property silently breaks another.** A boundary case made
+*reachable* by shifting it onto a state the system produces can stop *discriminating*: two
+cases moved off a tier edge onto the previous anniversary still caught a miscount, but no
+longer caught the `>` versus `>=` they were written for and still claimed — at a service value
+a full year below the threshold, both operators return the same tier. `Distinguishes from` is
+a claim about the input, so when the input moves, re-derive it: name what the case catches
+now, not what it caught before.
+
 **A row a previous round flagged gets re-derived whole, not just where it was patched.** A
 reviewer stops at the first cause it finds; the fix for that cause routinely introduces the
 second one in the same cell. In this skill's own trial, three rounds in a row found the new

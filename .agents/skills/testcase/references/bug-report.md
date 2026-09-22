@@ -11,6 +11,31 @@ bounced back.
 state from your text alone, it is not a report yet — it is a notification that you saw
 something.
 
+## Fields, in this order
+
+Same order every time — a report that varies in shape cannot be imported into a tracker, and
+a triager who has to hunt for severity reads fewer of them.
+
+| Field | Content |
+| ----- | ------- |
+| Title | `[Area] <what goes wrong> when <condition>` — specific enough to be searched for |
+| Summary | One line for the triager, before the steps |
+| Type | Functional / UI / Performance / Security / Data — this is what routes the report |
+| Severity | S1–S4, proposed, with the criterion it came from |
+| User impact | Who and roughly how many — "all buyers using a coupon", "admins only, ~5 staff". This is what priority is set from; leaving it out is why your S2 sits untriaged |
+| Workaround | The steps a user or support can take today, or `None found` — never blank |
+| Environment | Build/commit, role, and only what else could change the outcome |
+| Steps | Numbered, exact values |
+| Expected | With its source |
+| Actual | Quoted |
+| Frequency | Ratio |
+| Isolation | Clean session, last known-good build, API vs UI |
+| Evidence | |
+| Links | Case ID, requirement ID, related ticket, design link |
+
+`None found` is a real answer for Workaround and Isolation. Blank is not — blank reads as
+"not checked", and the report comes back.
+
 ## Reproduction
 
 Every step names the exact value used, never the class of value.
@@ -38,7 +63,9 @@ rendering matters, data state, feature flags. Everything else is noise.
 ## Evidence
 
 Attach console errors, the failing request/response, and the server log line — a screenshot
-alone shows the symptom and hides the cause. Screenshot the whole viewport, not the crop that
+alone shows the symptom and hides the cause. For anything with motion or timing —
+animation, drag-and-drop, a race, a hang — record the screen instead: a still frame cannot
+show a bug whose evidence is *when* things happened. Screenshot the whole viewport, not the crop that
 already assumes the diagnosis.
 
 ## Isolate before filing
@@ -58,12 +85,12 @@ Spend the two minutes that save the developer twenty:
 Severity is **impact on the user and the data**, decided from the table below — never from how
 annoying it was to hit, how long it took to find, or how bad it looks.
 
-| Level | Criterion |
-| ----- | --------- |
-| S1 | Data loss or corruption, security/permission bypass, money wrong, core flow impossible for everyone |
-| S2 | Major feature broken with no workaround, or wrong data shown as if correct |
-| S3 | Feature degraded, workaround exists and is discoverable |
-| S4 | Cosmetic, or an edge case a real user is unlikely to reach |
+| Level | Criterion | Example |
+| ----- | --------- | ------- |
+| S1 | Data loss or corruption, security/permission bypass, money wrong, core flow impossible for everyone | Checkout charges the wrong amount; a Viewer can delete orders; login broken for all |
+| S2 | Major feature broken with no workaround, or wrong data shown as if correct | Search returns nothing; an order total ignores a refund; export drops the last row |
+| S3 | Feature degraded, workaround exists and is discoverable | A filter option missing but the URL parameter works; slow but usable list |
+| S4 | Cosmetic, or an edge case a real user is unlikely to reach | Label typo; 2px misalignment; tooltip clipped at 320px |
 
 Two rules that override the table:
 

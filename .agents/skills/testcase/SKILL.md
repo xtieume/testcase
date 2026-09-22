@@ -18,8 +18,8 @@ Never stop at the happy paths.
 | --- | ------------ |
 | "write test cases for <requirement>" | Full workflow: coverage map → cases → adversarial second pass → lint |
 | "review these test cases" | `references/review-mode.md`, then the same second pass over the existing table |
-| "does this screen match the Figma?" | `references/design-validation.md` — discrepancies become `D<n>` rows in the same table |
-| "write up this bug" | `references/bug-report.md` — reproduction, evidence, proposed severity |
+| "does this screen match the Figma?" | `references/design-validation.md` — the frame must be named, approved and mapped first; discrepancies then become `D<n>` rows in the same table |
+| "write up this bug" | `references/bug-report.md` — the judgement your tracker's form cannot check |
 | "implement the automatable ones" | Step 7 only, against an existing table |
 
 Deliverable is always `testcases.md` plus whatever ships as runnable tests. The run is not
@@ -54,7 +54,7 @@ Give every distinct requirement statement an ID — reuse the ticket's/spec's ID
 
 Read `references/coverage-map.md` (plus `i18n-jp.md` if Japanese text) and work through the dimensions **before** writing any case. Output is analysis, not cases: which dimensions carry real risk, which don't apply.
 
-Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well — it adds the dimensions a frame hides (empty, overflow, focus, dark mode) and gives each discrepancy a `D<n>` requirement ID, so step 6 checks design coverage the same way it checks everything else.
+Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well. It gates first — a frame is a requirement only when named, versioned, approved and mapped — then adds the dimensions a frame hides (empty, overflow, focus, dark mode) and gives each discrepancy a `D<n>` requirement ID, so step 6 checks design coverage the way it checks everything else.
 
 ### 3. Generate pass-1 test cases
 

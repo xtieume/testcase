@@ -120,3 +120,19 @@ export function readUrls(arg) {
   }
   return arg ? [arg] : [];
 }
+
+// Attaching fails outright when the browser has no page open - closing the last
+// window leaves the process alive with an empty target list - so make one first.
+export async function connectCdp(port) {
+  const base = `http://127.0.0.1:${port}`;
+  try {
+    const targets = await (await fetch(`${base}/json/list`)).json();
+    if (!targets.some((t) => t.type === 'page')) {
+      await fetch(`${base}/json/new?about:blank`, { method: 'PUT' });
+    }
+  } catch {
+    throw new Error(`no browser on ${port}: run scripts/agent-browser.sh`);
+  }
+  const { chromium } = await import('playwright-core');
+  return chromium.connectOverCDP(base);
+}

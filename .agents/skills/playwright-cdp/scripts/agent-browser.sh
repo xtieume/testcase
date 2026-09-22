@@ -49,11 +49,13 @@ FIRST_RUN=0
 [ -d "$PROFILE" ] || { FIRST_RUN=1; HEADED=1; }
 mkdir -p "$PROFILE"
 
-MODE=(--headless=new)
-[ "$HEADED" = 1 ] && MODE=()
+# a plain string, not an array: bash 3.2 (the macOS default) errors on an
+# empty array expansion under `set -u`
+MODE="--headless=new"
+[ "$HEADED" = 1 ] && MODE=""
 
 nohup "$BIN" --remote-debugging-port="$PORT" --user-data-dir="$PROFILE" \
-  "${MODE[@]}" --no-first-run --no-default-browser-check \
+  $MODE --no-first-run --no-default-browser-check \
   >"/tmp/notion-agent-browser.log" 2>&1 &
 disown
 

@@ -1,21 +1,23 @@
 ---
 name: playwright-cdp
-description: Use when pulling a requirement out of Notion, Slack or a GitHub PR/issue into local markdown — body, every comment, and the attachments — because the decisions live in the comments and the attachments expire. Covers the case where there is no API token (company workspace, no integration allowed), the UI Export button is disabled or missing by permission, and access exists only through a logged-in browser. Also use when a scrape produced wrong markdown (tables repeated, cells duplicated, sidebar text in the body), when only the top level of a Notion page came out, or when a headless browser lands on a login screen.
+description: Use when pulling a requirement out of Notion or Slack into local markdown — body, every comment, and the attachments — because the decisions live in the comments and the attachments expire. Covers the case where there is no API token (company workspace, no integration allowed), the UI Export button is disabled or missing by permission, and access exists only through a logged-in browser. Also use when a scrape produced wrong markdown (tables repeated, cells duplicated, sidebar text in the body), when only the top level of a Notion page came out, or when a headless browser lands on a login screen.
 ---
 
 # Playwright CDP
 
 ## Overview
 
-Read Notion pages, Slack threads and GitHub PRs/issues into local markdown, by calling each service's own web API from inside a browser that is already logged in.
+Read Notion pages and Slack threads into local markdown, by calling each service's own web API from inside a browser that is already logged in.
 
-Core principle: **do not scrape the DOM, and do not copy a browser profile.** Attach over the Chrome DevTools Protocol (CDP) to a browser this skill owns, then call the same endpoints the web app itself calls. GitHub needs no browser at all — `gh` already holds the credentials.
+Core principle: **do not scrape the DOM, and do not copy a browser profile.** Attach over the Chrome DevTools Protocol (CDP) to a browser this skill owns, then call the same endpoints the web app itself calls.
+
+For GitHub there is nothing to build: `gh pr view <n> --json body,comments,reviews` and `gh api repos/<repo>/pulls/<n>/comments` already return everything, with credentials `gh` holds. Use those directly.
 
 Read-only. Every endpoint used fetches data or produces a download; nothing is created, edited or deleted.
 
 ## What comes out
 
-The same shape for all three sources, per document:
+The same shape for both sources, per document:
 
 ```
 <out>/
@@ -28,7 +30,7 @@ The reason for that shape, and the thing to preserve in any new extractor:
 
 - **Comments are half the requirement.** Scope changes, the answer to an open question and the final formula are decided in comments, not in the body. Notion's own export drops them entirely.
 - **A commented item in the body carries `> 💬 n comment → [#a–#b](<Name>.comments.md#c-a)`**, so a claim can be walked back to the comment that decided it.
-- **Everything deep-links back**: Notion headings and toggles to the exact block, Slack messages and replies to their permalink, GitHub comments to their anchor.
+- **Everything deep-links back**: Notion headings and toggles to the exact block, Slack messages and replies to their permalink.
 - **Attachments are copied, not linked.** Notion and Slack hand out signed, session-bound URLs that expire — a document that only links them is empty within days. The spec is often in the PDF or the wireframe, not in the text.
 - Files skipped for size or media type are named in the header. Report them; do not let them vanish.
 
@@ -105,14 +107,6 @@ Replies are comments: the body keeps the top-level messages, `comments.md` holds
 
 The web client's token lives only on the `app.slack.com` origin — an `/archives/` link is a stub page that redirects to the desktop app, so the script hops origins by itself. `no localConfig_v2` / `no token for team` means that profile is not signed in to Slack: `agent-browser.sh --headed`, sign in, retry.
 
-### GitHub
-
-```bash
-node scripts/github.mjs https://github.com/<owner>/<repo>/pull/123 ./out
-```
-
-No browser and no CDP port — it shells out to `gh`, so `gh auth login` must have been run. Pulls the description, conversation comments, review verdicts **and review comments left on a line of the diff** (a separate API, and usually where the code-level decisions are), all numbered in time order and grouped by where they were left.
-
 ## Step 4 — verify
 
 Never report success from an exit code. Each script prints its counts per document:
@@ -143,6 +137,7 @@ node scripts/test-doc.mjs        # self-check for the renderers, needs no browse
 | `open -a "Brave Browser" --args --remote-debugging-port=9222` | Flags silently dropped, port never opens | Exec the binary path directly (the scripts do) |
 | Leaving a browser running when launching it with CDP | Profile lock blocks the port, with no error at the port | `agent-browser.sh` uses its own profile and sidesteps this |
 | `waitUntil: 'networkidle'` | 30s timeout — Notion and Slack sync continuously | `domcontentloaded` + a short fixed wait |
+| Attaching while the browser has no tab open | `connectOverCDP` fails with `Browser context management is not supported` | The scripts open a target first; a closed window is not a dead browser |
 | Reusing one tab for 30+ Notion pages | Renderer crashes; every later page fails | `notion.mjs` recycles the tab every 5 pages and retries 3x |
 | Plain `unzip` on the export zip | `Illegal byte sequence`, Japanese/Vietnamese names destroyed | Decode cp437→utf-8 (`notion-export.mjs` does) |
 | Scraping the sidebar for the URL list | Gets database views, not the wanted rows | Ask the user for explicit URLs |

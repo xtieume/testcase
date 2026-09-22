@@ -1,5 +1,5 @@
 import path from 'path';
-import { commentBook, writeDoc, saveAsset, docName, readUrls } from './doc.mjs';
+import { commentBook, writeDoc, saveAsset, docName, readUrls, connectCdp } from './doc.mjs';
 
 // usage: node slack.mjs <url|urls-file> <out-dir> [cdp-port]
 // Accepts a channel link, a message permalink, or a thread link.
@@ -196,8 +196,7 @@ async function extract(page, url, out) {
 }
 
 if (!URLS.length) { console.error('usage: node slack.mjs <url|urls-file> <out-dir> [cdp-port]'); process.exit(1); }
-const { chromium } = await import('playwright-core');
-const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+const browser = await connectCdp(PORT);
 const ctx = browser.contexts()[0];
 for (const url of URLS) {
   const page = await ctx.newPage();

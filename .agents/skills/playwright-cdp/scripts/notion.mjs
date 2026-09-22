@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls } from './doc.mjs';
+import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls, connectCdp } from './doc.mjs';
 
 // usage: node download.mjs <urls-file> <out-dir> [cdp-port]
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -472,8 +472,7 @@ if (!process.env.NOTION_SELFTEST) {
   fs.mkdirSync(OUT, { recursive: true });
   log(`URLs: ${URLS.length}`);
 
-  const { chromium } = await import('playwright-core');
-  const browser = await chromium.connectOverCDP(`http://127.0.0.1:${PORT}`);
+  const browser = await connectCdp(PORT);
   const ctx = browser.contexts()[0];
   const page = await ctx.newPage();
 

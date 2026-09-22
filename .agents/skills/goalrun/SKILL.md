@@ -158,9 +158,9 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    python3 "$GOALRUN" --verify
    ```
 
-   It prints the ledger table first — the ordinary run, in your tree — then, per row, copies
-   the tree, plants the `break` in the copy, runs the check there, and deletes the copy. The
-   mutation never reaches your files. A row that did not pass in the table is `ALREADY RED`:
+   It prints the ledger table first — the ordinary run, in your tree — then copies the tree
+   once and, per row, plants the `break` in that copy, runs the check there, and puts the copy
+   back. The mutation never reaches your files. A row that did not pass in the table is `ALREADY RED`:
    it proves nothing by going red again, so no break is planted for it.
 
    Every verdict says what it means; two need a decision from you.

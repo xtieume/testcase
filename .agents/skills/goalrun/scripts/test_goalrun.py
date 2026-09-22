@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Self-checks for goalrun.py. Plain asserts, stdlib only: python3 test_goalrun.py"""
-import io, json, os, re, shutil, signal, subprocess, sys, tempfile, time
+import contextlib, io, json, os, re, shutil, signal, subprocess, sys, tempfile, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import goalrun
 
@@ -1234,3 +1234,67 @@ def test_verify_says_what_it_will_cost_before_the_first_break():
         tight = run_cli(tmp, '--verify', '--blast', '0').stdout
         assert 'stop short' in tight and '`--blast SECONDS` raises it' in tight, tight
         assert 'sweep ≈' not in run_cli(tmp, '--verify', 'A').stdout
+
+
+def test_the_tree_is_copied_once_and_put_back_between_rows():
+    """Copying a working tree costs minutes on a large one, and paying that per row was most
+    of a long verify. One copy serves every row: what a break did is undone from the tree
+    itself before the next row plants anything, so each row still meets an unmutated clone."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        open(os.path.join(tmp, 'keep.txt'), 'w').write('keep\n')
+        # A deletes a file B needs; if the clone were not put back, B would be ALREADY-RED
+        # collateral of A's break rather than verified on its own
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
+                    'B\ty\ttest -f keep.txt\t—\trm -f keep.txt\n'
+                    'C\tz\ttest -f old.txt\t—\tmv old.txt gone.txt\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0, out.stdout + out.stderr
+        for rid in ('A', 'B', 'C'):
+            assert f'VERIFIED {rid}' in out.stdout, out.stdout
+        assert 'did not go back' not in out.stdout, out.stdout
+        assert open(os.path.join(tmp, 'keep.txt')).read() == 'keep\n', 'a break escaped'
+        assert os.path.exists(os.path.join(tmp, 'old.txt')), 'a break escaped'
+
+        # in process, where the copies can be counted: three rows, one copy
+        copies = []
+        real = goalrun.clone_tree
+        goalrun.clone_tree = lambda src: copies.append(src) or real(src)
+        here = os.getcwd()
+        os.chdir(tmp)
+        try:
+            rows = goalrun.load(os.path.join(tmp, goalrun.GOAL_DIR, 'ledger.tsv'))
+            with contextlib.redirect_stdout(io.StringIO()):
+                assert goalrun.verify(rows, '', 60) is True
+        finally:
+            os.chdir(here)
+            goalrun.clone_tree = real
+        assert len(copies) == 1, f'the tree was copied {len(copies)} times for 3 rows'
+
+
+def test_a_clone_left_behind_by_a_killed_run_is_not_left_forever():
+    """rmtree runs in a finally, which a SIGKILL never reaches — and what it would have
+    deleted is a copy of the whole tree. Anything older than a long verify is nobody's."""
+    old = tempfile.mkdtemp(prefix=goalrun.CLONE_PREFIX)
+    fresh = tempfile.mkdtemp(prefix=goalrun.CLONE_PREFIX)
+    try:
+        long_ago = time.time() - 7 * 3600
+        os.utime(old, (long_ago, long_ago))
+        goalrun.drop_stale_clones()
+        assert not os.path.exists(old), 'a clone from a killed run was kept'
+        assert os.path.exists(fresh), 'a clone a running verify is using was deleted'
+    finally:
+        shutil.rmtree(old, ignore_errors=True)
+        shutil.rmtree(fresh, ignore_errors=True)
+
+
+def test_a_done_that_has_not_been_verified_says_so():
+    """DONE is allowed without --verify; being quiet about it is not. Every break row in a
+    plain run is a check nothing has yet shown able to fail."""
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        ledger(tmp, 'A\tx\ttest -f old.txt\t—\trm -f old.txt\n'
+                    'B\ty\ttest -f old.txt\t—\t—\n')
+        out = run_cli(tmp)
+        assert out.returncode == 0 and 'DONE — all 2 check(s) pass' in out.stdout, out.stdout
+        assert '0 of 1 break row(s) proven — run --verify' in out.stdout, out.stdout

@@ -605,6 +605,7 @@ def hold_lock(path=LOCK):
     dies, so a crashed run cannot wedge the next one and there is no stale entry to detect, to
     race over, or to fail to delete. The pid written inside is only there to name the holder."""
     os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+    drop_stale_clones()
     try:
         # `a+`, never `w`: `w` truncates before the lock is taken, wiping the pid of whoever
         # is holding it. The truncate below happens after the lock is ours
@@ -646,6 +647,60 @@ def _prune_skip(root):
             if d in CLONE_SKIP:
                 shutil.rmtree(os.path.join(base, d), ignore_errors=True)
                 dirs.remove(d)
+
+
+def _restore_one(src, dst, rel):
+    """Put one path in the clone back to what the source holds — or, when the source has no
+    such path, take it away."""
+    target, origin = os.path.join(dst, rel), os.path.join(src, rel)
+    if os.path.lexists(target):
+        (shutil.rmtree if os.path.isdir(target) and not os.path.islink(target)
+         else os.remove)(target)
+    if not os.path.lexists(origin):
+        return
+    os.makedirs(os.path.dirname(target) or '.', exist_ok=True)
+    if os.path.islink(origin):
+        os.symlink(os.readlink(origin), target)
+    else:
+        shutil.copy2(origin, target)
+
+
+def restore_clone(src, dst, before):
+    """Undo whatever the last row did to the clone, so the next row starts from the tree
+    again. Return True when the clone matches `before` afterwards.
+
+    Copying the tree per row costs minutes on a large one — the measured cost of a 20GB
+    working tree is minutes per copy, times one copy per row. What a row actually touches is
+    a handful of paths, and the stat walk that already proves a break fired names them, so the
+    clone is made once and put back between rows. A restore that does not land is reported
+    rather than papered over: the caller clones again instead of running the next row against
+    a tree in an unknown state."""
+    now = _tree_stat(dst)
+    for rel in sorted(set(now) - set(before), reverse=True):     # deepest first
+        _restore_one(src, dst, rel)
+    for rel in sorted(set(before) - set(now)) + [r for r in before if before[r] != now.get(r, ())]:
+        _restore_one(src, dst, rel)
+    return _tree_stat(dst) == before
+
+
+def drop_stale_clones(older_than=6 * 3600):
+    """A clone is deleted by the run that made it — unless that run was killed outright, and
+    a tree's worth of copy is left behind. Anything older than a long verify is nobody's."""
+    root = tempfile.gettempdir()
+    now = time.time()
+    try:
+        names = os.listdir(root)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(root, name)
+        if not name.startswith(CLONE_PREFIX):
+            continue
+        try:
+            if now - os.stat(path).st_mtime > older_than:
+                shutil.rmtree(path, ignore_errors=True)
+        except OSError:
+            pass
 
 
 def clone_tree(src):
@@ -699,7 +754,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         # to cost instead of going quiet for as long as rows × checks takes
         own = sum(cost[r.check] for r in live)
         line = (f'{len(live)} break row(s); a check takes {_dur(min(cost.values()))}–'
-                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)}')
+                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)} plus one copy of the tree')
         if blast:
             sweep = sum(c for r in live for cmd, c in cost.items() if cmd != r.check)
             line += f', sweep ≈ {_dur(sweep)}'
@@ -709,7 +764,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                           'proves a subset without one' if sweep > budget else ''))
         print(line)
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
-    incomplete = []
+    incomplete, clone, before = [], None, {}
     for row in rows:
         if not row.brk:
             print(f'skip {row.id} — no break column')
@@ -722,7 +777,12 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
                   f'the break proves nothing; fix the row, then verify it')
             continue
-        clone = clone_tree(cwd or '.')
+        if clone is None:
+            began = time.monotonic()
+            clone = clone_tree(cwd or '.')
+            took = time.monotonic() - began
+            if took > 20:
+                print(f'copied the tree in {_dur(took)} — once, and put back between rows')
         try:
             before = _tree_stat(clone)
             planted, why, _ = run_check(row.brk, timeout, clone)
@@ -775,7 +835,13 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
                       f'the same file do')
         finally:
-            shutil.rmtree(clone, ignore_errors=True)
+            if clone and not restore_clone(cwd or '.', clone, before):
+                print(f'the clone did not go back to what it was after {row.id}; copying the '
+                      f'tree again rather than verifying the next row against it')
+                shutil.rmtree(clone, ignore_errors=True)
+                clone = None
+    if clone:
+        shutil.rmtree(clone, ignore_errors=True)
     if already:
         all_ok = False
     if not ran:
@@ -970,7 +1036,13 @@ def _run_checks(a, rows, baseline):
         print(f'PHASE NOT OK — {summary(results)} {tail}')
         return 1
     if passed == len(chosen):
-        print(f'DONE — all {passed} check(s) pass')
+        # a run says what it measured, not only that it passed: every break row here is a
+        # check nothing has ever shown able to fail, and a DONE that hides that is the
+        # claim this script exists to refuse
+        unproven = [r.id for r in chosen if r.brk and not r.check.startswith('MANUAL:')]
+        tail = (f', 0 of {len(unproven)} break row(s) proven — run --verify'
+                if unproven else '')
+        print(f'DONE — all {passed} check(s) pass{tail}')
         return 0
     print(f'NOT DONE — {summary(results)}')
     return 1

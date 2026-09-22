@@ -115,8 +115,8 @@ before deciding whether to pay for `--blast`.
 
 ## A break runs in a copy
 
-`--verify` prints the ledger table in your tree, then per row copies the tree, plants the break
-in the copy, runs the check there, and deletes the copy. It runs once, at the end, in place of
+`--verify` prints the ledger table in your tree, then copies the tree once and, per row,
+plants the break in that copy, runs the check there, and puts the copy back. It runs once, at the end, in place of
 the final plain run. What that costs, and what it cannot see:
 
 - **The check runs in the copy**, so a check reaching the original tree by an absolute path
@@ -124,10 +124,12 @@ the final plain run. What that costs, and what it cannot see:
 - **Heavy directories are not copied** (`.git`, `node_modules`, `__pycache__`, virtualenvs); a
   check needing one must build it. Build outputs (`obj/`, `bin/`, `target/`) *are* copied, so a
   compiling check stays incremental.
-- **Cost** — one copy per break row, a filesystem clone where the platform has one (APFS
-  `cp -c`, reflinks on Linux), a plain copy otherwise. The copy keeps mtimes, so an
-  incremental build stays incremental; a dependency restore keyed to the absolute path does
-  not, and repeats on every row unless the check pins it.
+- **Cost** — one copy of the tree, made once and put back between rows (what a break touched
+  is undone from the copy, not copied again), a filesystem clone where the platform has one
+  (APFS `cp -c`, reflinks on Linux) and a plain copy otherwise. On a large working tree that
+  copy is minutes, which is why it is paid once. The copy keeps mtimes, so an incremental
+  build stays incremental; a dependency restore keyed to the absolute path does not, and
+  repeats on every row unless the check pins it.
 - **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
 - **Only the break half runs in a copy.** The table, a plain run and `--only` all run checks
   in the tree itself, so a check that writes leaves what it wrote — where it already did.

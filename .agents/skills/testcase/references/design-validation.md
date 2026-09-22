@@ -37,8 +37,32 @@ With only a screenshot and no access, this pass produces **structural findings o
 missing element, wrong order, wrong state, obviously wrong component — and says in the report
 that values were not verifiable. Never a finding about a number you did not read.
 
-Anything the gate blocks becomes `TBD — <what is needed>` for the designer or PM, per rule 5.
-Do not invent requirements.
+The eight are not equal. Treat them in three tiers, or the gate blocks the common case and
+gets routed around:
+
+- **Blocks** — no exact node, or the frame sits on an Exploration/WIP/Archive page. Nothing
+  below it means anything. Stop and ask.
+- **Downgrades** — no approval, or no version to compare against. The pass runs, every finding
+  is marked `provisional`, and the report says the frame was not confirmed as a decision.
+- **Limits** — no MCP/Dev Mode/spec, or no source access. Structural findings only, values
+  reported as unverifiable.
+
+Anything blocked becomes `TBD — <what is needed>` for the designer or PM, per rule 5. Do not
+invent requirements.
+
+## When the design and the written spec disagree
+
+Both approved and contradicting each other is the normal case, not an edge case. Do not pick
+one.
+
+- The **written spec wins by default** for behaviour, rules, data and permissions; the design
+  wins for presentation. A frame showing a button a Viewer should not have is a design that
+  was not updated, not a new permission rule.
+- Where they collide on the same axis, the pass produces **one `TBD` naming both sources and
+  their dates**, and no `D<n>` finding. Whoever owns the requirement decides; you record which
+  they chose.
+- A design that is newer than the spec is not automatically the newer decision — designs are
+  edited without review. Date is evidence, not authority.
 
 ## What an approved frame is authoritative for
 
@@ -105,6 +129,12 @@ No tool wired up and no DOM access → report accessibility as **not verified**,
 An accessibility finding invented from a screenshot costs a developer a day and costs you the
 next report's credibility.
 
+**Native (React Native, SwiftUI, Compose)** has no DOM and no axe — but it is not exempt. The
+sources are different, not absent: the accessibility tree via Accessibility Inspector (iOS),
+Accessibility Scanner (Android) or the framework's own props (`accessibilityLabel`,
+`accessibilityRole`, `minimumScaleFactor`, touch target from the layout). Read those. Only
+where the platform genuinely exposes nothing does a check report as not verified.
+
 ## Use the real tool where one exists
 
 This pass is judgement, not measurement. Where a tool measures, the tool wins:
@@ -121,15 +151,36 @@ frame was a requirement at all.
 
 ## Writing it up
 
-One row per discrepancy, in the same `testcases.md` table as everything else:
+**Use the step-3 table, all ten columns, unchanged** — `ID | Req | Category | Test Case |
+Preconditions | Steps | Expected Result | Distinguishes from | Priority | Automatable`. A
+five-column "design table" does not parse and `summarize.py` rejects it. `Req` is `D<n>`; keep
+the node link and the requirement ID it maps to next to the `D<n>` list, not in the cell.
 
-| Field | Content |
-| ----- | ------- |
-| Requirement | `D<n>` — the frame's node link and the requirement ID it maps to |
-| Steps | How to reach that screen, with the data state that surfaces it |
-| Expected | The design value **and its source**: node name, token name |
-| Actual | The implemented value, and where it came from (hard-coded, wrong token) |
-| Distinguishes from | The wrong implementation this catches — "hard-coded hex that only shows in dark mode" |
+- **Expected Result** — the design value **and its source**: node name, token name.
+- **Distinguishes from** — the wrong implementation this catches: "hard-coded hex that only
+  shows in dark mode".
+
+**Categorise by what the case exercises, never by "it is visual".** A design finding is not
+automatically `UI`:
+
+| The case exercises | Category |
+| ------------------ | -------- |
+| Longest string, 10-digit number, 2× translation, **zero rows / empty** | `Boundary` |
+| Failed fetch, missing image, timed-out skeleton | `Error` |
+| Field-level message, disabled submit | `Validation` |
+| An element only some roles see | `Permission` |
+| Loading, selected, hover as a transition between the above | `State` |
+| Wrong component, wrong token, wrong order, spacing | `UI` |
+
+This matters for the lint, not just for tidiness. `summarize.py` counts only
+`Negative / Boundary / Validation / Error / Permission` as risk coverage — **`State` and `UI`
+do not count**. A requirement carrying only those fails step 6 as success-path-only, so an
+empty state is filed as `Boundary` (zero is a boundary), not as `State`. Where a `D<n>` genuinely has no risk case — a static label, a
+radius — accept it explicitly:
+
+```text
+<!-- coverage-ok: D4 — decorative divider, no state and no input -->
+```
 
 Severity comes from `bug-report.md`, with one addition: a purely visual difference no user can
 act on wrongly is S4 — unless it breaks a contrast, focus or hit-target rule, which is S2

@@ -54,7 +54,7 @@ Give every distinct requirement statement an ID — reuse the ticket's/spec's ID
 
 Read `references/coverage-map.md` (plus `i18n-jp.md` if Japanese text) and work through the dimensions **before** writing any case. Output is analysis, not cases: which dimensions carry real risk, which don't apply.
 
-Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well. It gates first — a frame is a requirement only when named, versioned, approved and mapped — then adds the dimensions a frame hides (empty, overflow, focus, dark mode) and gives each discrepancy a `D<n>` requirement ID, so step 6 checks design coverage the way it checks everything else.
+Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well. It gates first — a frame is a requirement only when named, versioned, approved and mapped — then adds the dimensions a frame hides (empty, overflow, focus, dark mode). Discrepancies go in **this same table, all ten columns**, with `Req` = `D<n>`; step 6's `--requirements` then reports any `D<n>` nothing traces to. Categorise design cases by what they exercise, not as `UI` wholesale, or every one of them trips the success-path-only lint.
 
 ### 3. Generate pass-1 test cases
 

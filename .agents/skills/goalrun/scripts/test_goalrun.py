@@ -211,6 +211,27 @@ def test_a_runner_that_ran_tests_may_say_zero_failed_or_skipped():
             assert ok, (text, note)
 
 
+def test_a_runner_that_prints_nothing_is_not_a_pass():
+    """`cd dir \\&\\& dotnet test ...` — the escape leaked into the ledger, `sh -c` ran `cd` with two
+    stray arguments and exited 0, dotnet never ran, and eight rows read DONE. A runner that ran
+    anything says so; silence is the command never reaching it."""
+    with tempfile.TemporaryDirectory() as tmp:
+        script = fake_runner(tmp, '')                       # named pytest, prints nothing
+        ok, note, _ = goalrun.run_check(f'sh {script}')
+        assert not ok and 'printed nothing' in note, note
+        # the shape that caused it, end to end: exit 0, no output, no test
+        ok, note, _ = goalrun.run_check(f'cd {tmp} \\&\\& pytest -q')
+        assert not ok, note
+
+
+def test_lint_names_a_row_with_escaped_and_and():
+    rows = [goalrun.Row('A', 'REQ-1 x', 'cd src \\&\\& dotnet test --filter X', '', 'rm -f x'),
+            goalrun.Row('B', 'REQ-2 y', "grep -E 'a\\|b' f.txt | pytest -q", '', 'rm -f x')]
+    problems = goalrun.lint(rows)
+    assert any('rows A contain' in p for p in problems), problems
+    assert not any('B' in p and 'contain' in p for p in problems), 'a single \\| is grep alternation'
+
+
 def test_zero_tests_gate_does_not_false_positive_on_a_normal_pass():
     with tempfile.TemporaryDirectory() as tmp:
         for text in ('42 tests, 0 failures', '15 passing (300ms)', 'Ran 10 tests OK',

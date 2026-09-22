@@ -225,6 +225,12 @@ def run_check(cmd, timeout=1800, cwd=None):
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
     if code == 0 and RUNNER_RE.search(cmd):
+        # a runner that ran anything says so. Silence with exit 0 means the command never
+        # reached it — one ledger carried `cd dir \&\& dotnet test ...`, and `sh -c` ran the
+        # `cd` with two stray arguments, exit 0, and never called dotnet
+        if not text.strip():
+            return False, ('the test runner printed nothing — the command never reached it; '
+                           'a stray backslash before && or || in the ledger is the usual cause'), False
         marker = _zero_tests_matched(text)
         if marker:
             return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
@@ -468,6 +474,14 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
                         f'check can fail; add one, or waive it in the ledger with '
                         f'`# verify-ok: <id> — <reason>` — legitimate when this is test-first '
                         f'and its red phase was already witnessed by hand')
+    # `\&\&` in a TSV cell is shell escaping that leaked from the heredoc or printf that wrote
+    # the row: `sh -c` turns it into a literal `&` argument, the first command runs alone and
+    # exits 0, and the runner after it never runs. Nothing legitimate spells && that way
+    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check + ' ' + r.brk)]
+    if leaked:
+        problems.append(f'rows {", ".join(leaked)} contain `\\&\\&` or `\\|\\|` — escaping that '
+                        f'leaked into the ledger when it was written; under `sh -c` the command '
+                        f'before it runs alone and exits 0, and the check never runs')
     # the contract is `check` runs the test implementing this requirement's TC. A search over
     # text is the shape that slips past `--verify` too: pair it with a break that edits the
     # same string and the two agree with each other while measuring nothing

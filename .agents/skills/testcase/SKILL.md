@@ -185,6 +185,12 @@ the reading that feels most wrong — and A and B then pass every case in the ta
 so an implementation drifting between them is invisible. Count the readings, and check that
 some case tells each pair apart.
 
+**A boundary has two sides, and the outside one is usually missing.** Every case placing a
+holiday inside the requested range tests that it is excluded; none tests that a holiday just
+outside the range changes nothing, so an implementation scanning a window wider than the
+request passes them all. The same asymmetry appears wherever a rule *removes* something:
+build the case that proves it does not remove more.
+
 **A hedge is only as good as the row it was copied from.** Marking a case neutral on an open
 question by pointing at a sibling that already looks neutral spreads the sibling's hidden
 commitment instead of avoiding it — here a race case called itself neutral by citing one whose

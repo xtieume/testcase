@@ -153,6 +153,18 @@ inside it — a second annual grant, a scheduled job, a session expiry. State in
 preconditions what is held still, or the case is assumption-dependent in a way its own note
 denies.
 
+**When an expected value depends on an unresolved question, assert an invariant true under
+every answer.** A balance that is 0 under one reading and 16 under the other is still never 20,
+and 20 is what the bug produces — the case runs today, catches what it was written for, and
+commits to nothing. Reach for this before `TBD`: the third branch of rule 5 is for a value with
+no such invariant, not for every value touched by an open question.
+
+**A row a previous round flagged gets re-derived whole, not just where it was patched.** A
+reviewer stops at the first cause it finds; the fix for that cause routinely introduces the
+second one in the same cell. In this skill's own trial, three rounds in a row found the new
+defect inside the line the previous round's fix had touched. Re-read the whole row — its
+preconditions, its arithmetic, the question it cites — before calling it fixed.
+
 **Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop. Rounds do not stop because a number was reached — if P0/P1 gaps are still appearing at round 4, run round 5, and if you are made to stop while they are, report the loop **unconverged** rather than finished. Stopping early and converging are different outcomes and never share a word.
 
 No subagent tool, or a reviewer that died mid-run (rate limit, crash — quote the error in the
@@ -265,6 +277,10 @@ produces: "one day before three years of service" is not an anniversary, so a gr
 passes or fails for reasons nobody can act on. Move the boundary onto a state the system
 actually reaches (the last anniversary below the threshold) and the same off-by-one is caught,
 this time by a scenario a user can be in. Check every precondition against the rules the other
-cases establish: one that contradicts them describes a state under test that cannot exist.
+cases establish, in both directions: a **date** no trigger reaches, and a **quantity the
+requirement's own rules cannot produce**. "4 days granted at the anniversary" is unreachable
+just as surely as a non-anniversary grant, when the tier table for that service length says
+16 — a precondition's numbers are derived, not free variables. Re-derive each one rather than
+reading past it.
 
 **9 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

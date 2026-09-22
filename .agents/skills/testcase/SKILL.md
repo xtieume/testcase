@@ -167,6 +167,12 @@ discriminating. List the questions a case depends on before trusting its inequal
 skill shipped the example above as settled and a later round found the second question inside
 it.
 
+**An open question with three readings needs two cuts, not one.** A question recorded as
+"A, B or C" is usually answered with a single case separating C from the rest, because that is
+the reading that feels most wrong — and A and B then pass every case in the table identically,
+so an implementation drifting between them is invisible. Count the readings, and check that
+some case tells each pair apart.
+
 **A row a previous round flagged gets re-derived whole, not just where it was patched.** A
 reviewer stops at the first cause it finds; the fix for that cause routinely introduces the
 second one in the same cell. In this skill's own trial, three rounds in a row found the new

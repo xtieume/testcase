@@ -18,7 +18,7 @@ and the lint refuses `\&\&` or `\|\|` outright.
 | `what` | The condition in one sentence, carrying its `REQ-` id. Printed in the table; hashed into a `MANUAL` signature. |
 | `check` | The command running the test that implements this requirement's `TC-`, or `MANUAL:<owner>`. Exit 0 means the condition holds. Never empty, never a search over source code. |
 | `deliverable` | Optional path this row must have produced. `—`, `-` or empty means none. Not allowed on a `MANUAL` row — a row belongs to a decider or a file, not both. |
-| `break` | The command that plants the exact defect `check` exists to catch. Read by `--verify`. Waivable only with a reason (below). |
+| `break` | The edit that plants the exact defect `check` exists to catch — `path :: what it says :: what it should say`, or a bare path to delete the file. Made and put back by `--verify`. Waivable only with a reason (below). |
 
 **Verdict.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes and the row
 names a deliverable, that path must exist and its **content** must differ from what `--baseline`
@@ -80,61 +80,82 @@ accepted gap when it is only a line nobody deleted, so the lint reports it.
 
 ## Writing a `break`
 
+A break is an edit goalrun makes and puts back, not a command it runs:
+
+```
+<path> :: <the text it holds now> :: <the text it should hold instead>
+<path>                                       the file itself goes away
+```
+
+The text must appear in the file exactly once — twice, and which one the requirement means is
+written down nowhere. Nothing goes through a shell, so there is no quoting to leak, no
+`sed -i ''` that is BSD on one machine and GNU on the next, and no command that exits 0 having
+done nothing. A break that finds nothing to change is `BREAK FAILED` **before** a check is
+spent on it.
+
 **From `what`, never from `check`.** A check that greps a symbol and a break that renames it
 agree with each other and measure nothing, while printing `VERIFIED`. Hand `what`, the spec
 extract and the source path to a subagent that has not seen the check.
 
-**Before the code exists**, break the deliverable (`rm -f src/export.py`) rather than guessing a
-symbol inside it: a substitution matching nothing fires nothing and prints `VERIFIED` untested.
-That is a plan-time loan — once the code exists, re-point the break at the defect the
-requirement names (remove the rounding, not the function) and verify again.
+**At the defect the requirement names**, not at the file holding it: remove the rounding, not
+the function. Deleting `src/export.py` reddens any check that opens the file, so it proves the
+check reads something, not that it reads this clause.
 
-**Portably**: `sed -i ''` is BSD, `sed -i` is GNU; a ledger written on one and run on the other
-reports `BREAK FAILED` on every row. Use `python3 -c` or `sed ... > t && mv t <file>`.
+```tsv
+ROUND	REQ-EXP-002 money rounds half-up	python3 -m unittest -q tests.test_export.TC_EXP_004	src/export.py	src/export.py :: ROUND_HALF_UP :: ROUND_HALF_EVEN
+```
 
-Four shapes that read as proof and are not:
+Three shapes that read as proof and are not:
 
 | Shape | What `--verify` says |
 | ----- | -------------------- |
-| Break weaker than its requirement — `rm -f src/tax.py` for a rounding clause | `VERIFIED`, and the clause stays untested |
-| Break that fires nothing | `BREAK FAILED` — it changed nothing in the copy |
+| Break weaker than its requirement — deleting `src/tax.py` for a rounding clause | `VERIFIED`, and the clause stays untested |
 | Row already red before anything was planted | `ALREADY RED`, kept out of the sweep |
 | Check so broad it reddens on any defect | `BLAST` against rows shipping something else |
 
-`--lint-ledger` tells none of these apart, the same way it cannot tell a real check from `true`.
-Only `--verify` can.
+`--lint-ledger` reads the shape of a break, not its aim: it cannot tell a break weaker than its
+clause from an exact one, the same way it cannot tell a real check from `true`. Only `--verify`
+can.
 
-## A break runs in a copy
+## What a check costs
 
-`--verify` copies the tree, plants the break in the copy, runs the check there, and deletes the
-copy; your files are read, never written. What that costs, and what it cannot see:
+A verify costs one check per row, and `--blast` costs one per row per row. Narrow the command
+and both shrink: one test project rather than the whole solution, one selector rather than the
+suite. `--verify` times every check on its first pass and prints what the proof and the sweep
+would cost before planting anything; read that line before deciding whether to pay for
+`--blast`.
 
-- **The check runs in the copy**, so a check reaching the original tree by an absolute path
-  tests unmutated code and reads as `HOLLOW` through no fault of its own. Keep checks relative.
-- **Heavy directories are not copied** (`.git`, `node_modules`, `__pycache__`, virtualenvs); a
-  check needing one must build it. Build outputs (`obj/`, `bin/`, `target/`) *are* copied, so a
-  compiling check stays incremental.
-- **Cost** — one copy per break row, a filesystem clone where the platform has one (APFS
-  `cp -c`, reflinks on Linux), a plain copy otherwise.
-- **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
-- **Only `--verify` runs in a copy.** A plain run and `--only` run checks in the tree itself,
-  so a check that writes leaves what it wrote.
+## What a break may and may not reach
+
+`--verify` prints the ledger table, then per row makes the edit, runs the check, and writes the
+file back byte for byte. It runs once, at the end, in place of the final plain run. The bytes
+go to `.testcases/goalrun/undo/` before the check starts, so an interrupted verify restores on
+its way out and a killed one is put back by the next run, which says which rows it repaired.
+
+- **Only a file in the tree.** An absolute path, or one climbing out through `..`, is refused.
+- **Only text.** A binary file has nothing to substitute in; delete it instead, or pick a
+  different defect.
+- **State outside the tree** — databases, services, `$HOME` — is neither changed nor undone by
+  the break, and a check that writes to any of them leaves what it wrote.
+- **A check runs in your tree**, as it does on a plain run, so a check that litters litters
+  where it already did.
 - **A directory deliverable** ships when anything under it changes — a check that writes a
   log into it counts, so keep generated output out of a directory a row names.
 
 ## The sweep
 
-A whole-ledger `--verify` also runs every other row under each planted break: `shared` for rows
-delivering the same file (expected), `BLAST` (exit 1) for a row shipping something else, whose
-check therefore cannot tell this defect from its own.
+`--verify --blast` runs every other row under each planted break: `shared` for rows delivering
+the same file (expected), `BLAST` (exit 1) for a row shipping something else, whose check
+therefore cannot tell this defect from its own.
 
-It costs rows × rows. Measured on a 12-row ledger of 0.25s checks: 4.4s without, 42.8s with —
-though rows running the identical command share one result, so the ledger that most needs the
-sweep is cheapest on it (7.9s). A default sweep runs against a 15-minute budget of sweeping time
-and prints `SWEEP STOPPED` (exit 1) over it, naming the rows it could not finish. `--blast
-SECONDS` sets another budget, bare `--blast` removes it, `--no-blast` skips the sweep and says
-what is unproven. It discriminates only once checks are narrow: while every row runs the whole
-suite, everything reddens everything.
+It costs a check per row per row, so its price is the price of one check. On a 12-row ledger of
+0.25s checks, 4.4s becomes 42.8s — though rows running the identical command share one result,
+so the ledger that most needs the sweep is cheapest on it (7.9s). On a check that builds a
+solution, the same arithmetic is most of the run, which is why it is asked for rather than
+assumed: a `--verify` without it says so, and says what it would cost. `--blast` sweeps under a
+15-minute budget and prints `SWEEP STOPPED` (exit 1) over it, naming the rows it could not
+finish; `--blast SECONDS` sets another. It discriminates only once checks are narrow: while
+every row runs the whole suite, everything reddens everything.
 
 ## Turning a vague sentence into a check
 
@@ -166,9 +187,10 @@ requirements no row measures. It does not catch a fake check or a break that can
 
 ## Flags and exit codes
 
+`--blast [SECONDS]` adds the sweep; `--no-blast` says out loud that it is not wanted.
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
 `PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` records the tree once, skipping build
-output (`obj/`, `bin/`, `target/`, `dist/`) and the caches a clone skips; it is refused while
+output (`obj/`, `bin/`, `target/`, `dist/`) and the usual caches; it is refused while
 one exists, and `--baseline --reset` replaces it — which reads every edit so far as pre-existing. `--sign ID --who WHO [--note ...]`. `--requirements
 PATH` is read by `--lint-ledger` only. `--ledger PATH` is for testing the script; the skill uses
 the catalog path.

@@ -29,10 +29,8 @@ Modes (mutually exclusive):
                        this record, or was not in it
   --sign ID --who W   a human signs a MANUAL row; W must be the row's owner
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
-  --verify [A,B]      for each row: clone the tree into a disposable temp directory, plant
-                       the row's `break` inside the clone, run the row's `check` there too,
-                       and demand red — then throw the clone away. The working tree is only
-                       ever read
+  --verify [A,B]      for each row: make the edit its `break` describes, run the row's
+                       `check`, demand red, and put the file back byte for byte
   --lint-ledger       problems with the ledger itself; with --requirements FILE it also
                        names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
 
@@ -53,14 +51,9 @@ BASELINE = os.path.join(GOAL_DIR, 'baseline.json')
 LOCK = os.path.join('.testcases', 'goalrun.lock')
 NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
-NO_BUDGET = -2          # bare `--blast`: sweep everything. Not 0 — `--blast 0` is 0 seconds
 
-# heavy or regenerable directories a clone skips outright — `.git` carries the whole history
-# nothing in a check needs, and the rest are caches any build regenerates on its own. Build
-# outputs like obj/, bin/, target/ are deliberately NOT here: a check that compiles needs
-# them to stay incremental, so cloning them (not skipping them) is the point of the CoW copy
-CLONE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache'}
-CLONE_PREFIX = 'goalrun-clone-'
+BREAK_SEP = '::'
+UNDO_DIR = os.path.join(GOAL_DIR, 'undo')   # bytes a break replaced, until it is put back
 # a check that invokes one of these is a test; the zero-tests gate and the lint's
 # searches-text rule both key off it, so a lint that echoes "0 tests failed" is not a runner
 # that matched nothing, and a grep piped after a runner is still a test
@@ -254,21 +247,6 @@ def _digest(path):
         return 'unreadable'
 
 
-def _tree_stat(root):
-    """(mtime_ns, size) per path — whether anything moved, not what it now holds. Reading every
-    byte of a clone twice per row costs minutes on a build tree; a stat walk costs nothing."""
-    out = {}
-    for base, dirs, files in os.walk(root):
-        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            path = os.path.join(base, name)
-            try:
-                st = os.lstat(path)
-                out[os.path.relpath(path, root)] = (st.st_mtime_ns, st.st_size)
-            except OSError:
-                out[os.path.relpath(path, root)] = None
-    return out
-
-
 def _tree_hashes(root):
     out = {}
     for base, dirs, files in os.walk(root):
@@ -280,9 +258,9 @@ def _tree_hashes(root):
     return out
 
 
-BASELINE_SKIP = CLONE_SKIP | {'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases',
-                              '.codegraph', '.terraform', '.gradle', '.cache', '.pytest_cache',
-                              '.ruff_cache', 'coverage'}
+BASELINE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache',
+                 'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases', '.codegraph',
+                 '.terraform', '.gradle', '.cache', '.pytest_cache', '.ruff_cache', 'coverage'}
 # a deliverable is never this big; a database dump or a cached asset is, and reading it is
 # most of the walk. Its size and mtime stand in for its content — a change still registers
 BIG_FILE = 32 << 20
@@ -395,12 +373,16 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
     return 'PASS', note
 
 
-def report(rows, signatures, baseline_files, timeout):
-    """Print the table. Return [(status, row)]."""
+def report(rows, signatures, baseline_files, timeout, cwd=None, times=None):
+    """Print the table. Return [(status, row)]. `times`, if given, collects how long each
+    distinct check took, which is what lets a caller price the work it is about to do."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
-        status, note = decide(row, signatures, baseline_files, timeout)
+        began = time.monotonic()
+        status, note = decide(row, signatures, baseline_files, timeout, cwd)
+        if times is not None and not row.check.startswith('MANUAL:'):
+            times.setdefault(row.check, time.monotonic() - began)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
         results.append((status, row))
     return results
@@ -477,11 +459,28 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     # `\&\&` in a TSV cell is shell escaping that leaked from the heredoc or printf that wrote
     # the row: `sh -c` turns it into a literal `&` argument, the first command runs alone and
     # exits 0, and the runner after it never runs. Nothing legitimate spells && that way
-    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check + ' ' + r.brk)]
+    leaked = [r.id for r in rows if re.search(r'\\&\\&|\\\|\\\|', r.check)]
     if leaked:
         problems.append(f'rows {", ".join(leaked)} contain `\\&\\&` or `\\|\\|` — escaping that '
                         f'leaked into the ledger when it was written; under `sh -c` the command '
                         f'before it runs alone and exits 0, and the check never runs')
+    # a break is an edit, and the ledger says which one. A shell command here is the older
+    # spelling, and it is not read: it would leave the tree changed with nothing to reverse it
+    misshapen = []
+    for r in rows:
+        if not r.brk:
+            continue
+        try:
+            path, old_text, _ = parse_break(r.brk)
+        except Misuse as e:
+            misshapen.append(f'{r.id} ({e})')
+            continue
+        if old_text is not None and not old_text:
+            misshapen.append(f'{r.id} (nothing to find in {path})')
+    if misshapen:
+        problems.append(f'breaks that are not an edit: {", ".join(misshapen)} — a break reads '
+                        f'`path {BREAK_SEP} what it says now {BREAK_SEP} what it should say '
+                        f'instead`, or a bare path to delete the file')
     # the contract is `check` runs the test implementing this requirement's TC. A search over
     # text is the shape that slips past `--verify` too: pair it with a break that edits the
     # same string and the two agree with each other while measuring nothing
@@ -541,7 +540,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
 
 def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
     """Other rows whose check also goes red under this row's planted break, run inside the
-    same clone the break was planted in.
+    tree the break was planted in.
 
     Returns (same-deliverable siblings, crossed rows, rows that hung, checks run, rows the
     sweep had no time left for).
@@ -634,57 +633,147 @@ def drop_lock(fd):
         pass
 
 
-def _prune_skip(root):
-    """Remove CLONE_SKIP directories from an already-made clone — needed unconditionally so
-    the plain-copy fallback doesn't pay to copy them first, and harmless when `cp` already
-    pruned nothing (they just aren't there to remove)."""
-    for base, dirs, files in os.walk(root, topdown=True):
-        for d in list(dirs):
-            if d in CLONE_SKIP:
-                shutil.rmtree(os.path.join(base, d), ignore_errors=True)
-                dirs.remove(d)
+def parse_break(text):
+    """`path :: text it has :: text it should have instead` -> (path, old, new), or a bare
+    `path` -> (path, None, None), meaning the file itself goes away.
+
+    A break is an edit goalrun makes, not a command it runs: what the script wrote, the script
+    can write back, so the proof needs no copy of your tree to mutate. It also removes a class
+    of ledger bug — no shell quoting, no `sed -i ''` that is BSD on one machine and GNU on the
+    next, and no command that exits 0 having done nothing."""
+    parts = [f.strip() for f in text.split(BREAK_SEP)]
+    if len(parts) == 1:
+        return parts[0], None, None
+    if len(parts) != 3 or not parts[0]:
+        raise Misuse(f'break {text!r} is not `path {BREAK_SEP} old {BREAK_SEP} new` '
+                     f'(or a bare path, to delete the file)')
+    return parts[0], parts[1], parts[2]
 
 
-def clone_tree(src):
-    """Copy the tree into a disposable directory so `--verify` can plant a break without ever
-    writing to the caller's own working tree. Tries `cp -c` (APFS copy-on-write, macOS), then
-    `cp --reflink=auto` (Linux CoW filesystems), then falls back to a plain recursive copy —
-    whichever the filesystem actually supports. The caller deletes the result when done."""
-    dst = tempfile.mkdtemp(prefix=CLONE_PREFIX)
-    for cmd in (['cp', '-c', '-R', src, dst], ['cp', '-R', '--reflink=auto', src, dst]):
-        shutil.rmtree(dst, ignore_errors=True)    # `cp -R src emptydst` fills dst; an
-        if subprocess.run(cmd, capture_output=True).returncode == 0:  # existing one nests
-            break
-    else:
-        shutil.rmtree(dst, ignore_errors=True)
-        shutil.copytree(src, dst, symlinks=True,
-                        ignore=lambda _d, names: [n for n in names if n in CLONE_SKIP])
-    _prune_skip(dst)        # `cp` has no exclude list; the CoW copy of a skip dir is cheap
-    return dst
+def plant(brk, cwd=None):
+    """Make the edit. Return (undo, why-not): `undo` is what restore() needs, or None with a
+    reason the break could not fire — which is a finding about the break, and is known before
+    the check ever runs."""
+    path, old, new = parse_break(brk)
+    full = os.path.join(cwd or '.', path)
+    if os.path.isabs(path) or os.pardir in path.split(os.sep):
+        return None, f'{path} is outside the tree; a break edits the work, not the machine'
+    if not os.path.isfile(full):
+        return None, f'{path} is not a file here'
+    with open(full, 'rb') as fh:
+        was = fh.read()
+    if old is None:
+        os.remove(full)
+        return (full, was), None
+    try:
+        text = was.decode('utf-8')
+    except UnicodeDecodeError:
+        return None, f'{path} is not text, so there is nothing to substitute in it'
+    seen = text.count(old)
+    if seen == 0:
+        return None, f'{path} does not contain {old!r}, so the break changes nothing'
+    if seen > 1:
+        return None, (f'{path} contains {old!r} {seen} times — a break names one place, so '
+                      f'that the defect it plants is the one the requirement describes')
+    with open(full, 'wb') as fh:
+        fh.write(text.replace(old, new).encode('utf-8'))
+    return (full, was), None
 
 
-def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET):
-    """Plant each row's break inside a disposable clone of the tree, prove its check goes red
-    there, then throw the clone away. Return True if all did.
+def restore(undo):
+    """Put back exactly the bytes that were there."""
+    full, was = undo
+    os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+    with open(full, 'wb') as fh:
+        fh.write(was)
 
-    The caller's own tree is only ever read."""
+
+def keep_undo(row_id, undo, cwd=None):
+    """Write the original bytes where the next run will find them. A verify killed outright
+    never reaches its own restore, and a file left broken is worse than a slow proof."""
+    d = os.path.join(cwd or '.', UNDO_DIR)
+    os.makedirs(d, exist_ok=True)
+    full, was = undo
+    with open(os.path.join(d, row_id), 'wb') as fh:
+        fh.write(was)
+    with open(os.path.join(d, row_id + '.path'), 'w', encoding='utf-8') as fh:
+        fh.write(os.path.relpath(full, cwd or '.'))
+
+
+def drop_undo(row_id, cwd=None):
+    for suffix in ('', '.path'):
+        try:
+            os.remove(os.path.join(cwd or '.', UNDO_DIR, row_id + suffix))
+        except OSError:
+            pass
+
+
+def undo_a_killed_run(cwd=None):
+    """Restore anything a killed verify left planted, before this run reads a broken file and
+    calls it a finding. Returns the rows it put back."""
+    d = os.path.join(cwd or '.', UNDO_DIR)
+    put_back = []
+    for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+        if name.endswith('.path'):
+            continue
+        try:
+            with open(os.path.join(d, name + '.path'), encoding='utf-8') as fh:
+                rel = fh.read().strip()
+            with open(os.path.join(d, name), 'rb') as fh:
+                was = fh.read()
+        except OSError:
+            continue
+        restore((os.path.join(cwd or '.', rel), was))
+        drop_undo(name, cwd)
+        put_back.append(f'{name} ({rel})')
+    if put_back:
+        print(f'put back what a killed verify left planted: {", ".join(put_back)}')
+    return put_back
+
+
+def _dur(seconds):
+    if seconds < 10:
+        return f'{seconds:.1f}s'
+    return f'{seconds:.0f}s' if seconds < 90 else f'{seconds / 60:.0f} min'
+
+
+def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
+           signatures=None, baseline_files=None):
+    """Run the ledger, then plant each row's break, prove its check goes red under it, and
+    put the file back. Return True if every row passed and every break was caught.
+
+    The table is the ordinary run — the same work a run does anyway, so the proof is one
+    command, not two. A break is an edit this script makes and reverses byte for byte, so
+    nothing is copied and nothing stays planted: interrupted, the restore still runs; killed
+    outright, the next run puts it back before reading anything."""
     everything = rows                       # --blast scans the whole ledger, not the selection
     if ids:
         rows = select(rows, ids)
-    # one pass over a fresh clone first: a row whose check already fails proves nothing when
-    # its break makes it fail again, and it reddens every other row's sweep for reasons that
-    # have nothing to do with the planted defect. Run in a clone like everything else here, so
-    # even a check with side effects (one that litters an artifact) never touches the real tree
+    # the table first, in the tree: a row that does not pass where you work proves nothing by
+    # going red under a break, and it would redden every other row's sweep for reasons that
+    # have nothing to do with the planted defect. This is the run's own table, so the proof
+    # does not re-run every check to learn what the run already printed
     scan = everything if blast else rows
-    pre = clone_tree(cwd or '.')
-    try:
-        already = {r.id for r in scan
-                  if not r.check.startswith('MANUAL:') and not run_check(r.check, timeout, pre)[0]}
-    finally:
-        shutil.rmtree(pre, ignore_errors=True)
-    if already:
-        print(f'already red before any break: {", ".join(sorted(already))} — those rows prove '
-              f'nothing until they pass, and the sweep ignores them')
+    cost = {}
+    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost)
+    already = {r.id for st, r in results if st != 'PASS'}
+    print()
+    live = [r for r in rows
+            if r.brk and not r.check.startswith('MANUAL:') and r.id not in already]
+    if live and cost:
+        # the pre-pass just timed every check, so the run can say up front what it is about
+        # to cost instead of going quiet for as long as rows × checks takes
+        own = sum(cost[r.check] for r in live)
+        line = (f'{len(live)} break row(s); a check takes {_dur(min(cost.values()))}–'
+                f'{_dur(max(cost.values()))}; proof ≈ {_dur(own)}')
+        if blast:
+            sweep = sum(c for r in live for cmd, c in cost.items() if cmd != r.check)
+            line += f', sweep ≈ {_dur(sweep)}'
+            if budget is not None:
+                line += (f' of a {_dur(budget)} budget' +
+                         (' — it will stop short; `--blast SECONDS` raises it, `--verify A,B` '
+                          'proves a subset without one' if sweep > budget else ''))
+        print(line)
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
     incomplete = []
     for row in rows:
@@ -699,30 +788,19 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
                   f'the break proves nothing; fix the row, then verify it')
             continue
-        clone = clone_tree(cwd or '.')
+        undo, why = plant(row.brk, cwd)
+        if not undo:
+            all_ok, ran = False, ran + 1
+            print(f'BREAK FAILED {row.id} — {why}')
+            continue
+        keep_undo(row.id, undo, cwd)
         try:
-            before = _tree_stat(clone)
-            planted, why, _ = run_check(row.brk, timeout, clone)
-            after = _tree_stat(clone)
-            if not planted:
-                all_ok, ran = False, ran + 1
-                print(f'BREAK FAILED {row.id} — the break command itself failed: {why}')
-                continue
-            if before == after:
-                # the break exited 0 but nothing in the clone moved — the common cause is a
-                # break or check written against an absolute path to the original tree, which
-                # would otherwise silently test the unmutated code and read as VERIFIED
-                all_ok, ran = False, ran + 1
-                print(f'BREAK FAILED {row.id} — the break ran but changed nothing in the '
-                      f'clone; does it (or the check) use an absolute path to the original '
-                      f'tree instead of a relative one?')
-                continue
-            ok, note, hung = run_check(row.check, timeout, clone)
+            ok, note, hung = run_check(row.check, timeout, cwd)
             if blast:
                 began = time.monotonic()
                 left = None if budget is None else max(0.0, budget - spent)
                 same, crossed, stuck, swept, unswept = blast_radius(
-                    row, everything, timeout, set(waived) | already, left, cwd=clone)
+                    row, everything, timeout, set(waived) | already, left, cwd=cwd)
                 spent, sweeps = spent + time.monotonic() - began, sweeps + swept
                 if unswept:
                     incomplete.append(row.id)
@@ -752,16 +830,23 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
                       f'the same file do')
         finally:
-            shutil.rmtree(clone, ignore_errors=True)
+            restore(undo)
+            drop_undo(row.id, cwd)
+    if already:
+        all_ok = False
     if not ran:
         # rule 2, turned on the script itself: a run that proved nothing is not a pass
         where = 'no row in this selection' if ids else 'no row'
         print(f'NOTHING VERIFIED — {where} ran a break; --verify proved nothing')
         return False
     if not blast and not ids:
-        # the docs promise --no-blast names the blind spot; silence here would be the same
-        # failure mode the rest of the script refuses
-        print('sweep skipped (--no-blast) — rows are not proven against each other\'s defects')
+        # a blind spot the run does not name is one nobody closes, so it prints its own price
+        # alongside it: the cost of sweeping is knowable from the pre-pass, and deciding
+        # whether to pay is the caller's
+        would = f'about {_dur(sum(c for r in rows for cmd, c in cost.items() if cmd != r.check))}' \
+                if cost else 'a check per row per row'
+        print(f'sweep skipped — rows are not proven against each other\'s defects; `--blast` '
+              f'sweeps for them, {would}')
     if blast and incomplete:
         # not 'spent the budget': a budget under a check's runtime buys no sweep at all,
         # and 0 check(s) in 0s having spent 1s reads as a bug in the accounting
@@ -769,8 +854,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
               f'check(s) ran in {spent:.1f}s and the sweeps for {", ".join(incomplete)} '
               f'are incomplete, '
               f'so those rows are unproven against the rest. Rerun with `--blast SECONDS` for '
-              f'a bigger budget, `--blast` for none at all, or `--no-blast` to accept the '
-              f'proof without the sweep')
+              f'a bigger budget, or accept the proof without the sweep')
         all_ok = False
     elif blast:
         print(f'swept {sweeps} sibling check(s) across {ran} break(s) in {spent:.0f}s')
@@ -819,17 +903,16 @@ def main():
                                              '--no-blast skips the sweep')
         return n
 
-    blast.add_argument('--blast', dest='blast', nargs='?', const=NO_BUDGET, type=_seconds,
+    blast.add_argument('--blast', dest='blast', nargs='?', const=SWEEP_BUDGET, type=_seconds,
                        default=None,
                        metavar='SECONDS',
                        help='with --verify: also run every other row under each planted break, '
-                            'to find rows whose checks cannot tell one defect from another. On '
-                            f'by default for a whole-ledger --verify with a {SWEEP_BUDGET}s '
-                            'budget, off for a subset; SECONDS sets a different budget (0 '
-                            'sweeps nothing), bare --blast removes it')
+                            'to find rows whose checks cannot tell one defect from another. Off '
+                            f'unless asked; bare --blast sweeps under a {SWEEP_BUDGET}s budget, '
+                            'SECONDS sets another (0 sweeps nothing)')
     blast.add_argument('--no-blast', dest='blast', action='store_const', const=-1,
-                       help='skip that sweep; the proof is then blind to rows measuring each '
-                            "other's defects")
+                       help='say explicitly that the sweep is not wanted; the default already '
+                            'skips it')
     a = ap.parse_args()
     try:
         return run(a)
@@ -911,16 +994,19 @@ def run(a):
 
 def _run_checks(a, rows, baseline):
     if a.verify is not None:
-        # the condition for wanting the sweep is only knowable by running it, so the whole-ledger
-        # proof runs it unless told not to; a subset run is iterative work, not the proof
-        # bare --blast means no budget; --blast N sets one, and N=0 sweeps nothing rather
-        # than everything; --no-blast (-1) skips the
-        # sweep; left alone, the whole-ledger proof sweeps under the default budget
-        blast = (a.blast != -1) if a.blast is not None else not a.verify
-        budget = (SWEEP_BUDGET if a.blast is None else
-                  None if a.blast == NO_BUDGET else max(0, a.blast))
-        return 0 if verify(rows, a.verify, a.timeout, blast=blast,
-                           waived=waivers(a.ledger)['verify-ok'], budget=budget) else 1
+        undo_a_killed_run()
+        # the sweep costs a check per row per row, which on a slow check is most of the run,
+        # so it is asked for rather than assumed; bare --blast means no budget, --blast N sets
+        # one, N=0 sweeps nothing rather than everything, and --no-blast (-1) is explicit
+        blast = a.blast is not None and a.blast != -1
+        budget = max(0, a.blast or 0)
+        ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
+                    waived=waivers(a.ledger)['verify-ok'], signatures=load_signatures(),
+                    baseline_files=baseline['files'] if baseline else {})
+        print()
+        print(f'DONE — the ledger passes and every break was caught' if ok else
+              'NOT DONE — the ledger is not proven')
+        return 0 if ok else 1
 
     # `is not None`, not truthiness: `--only ''` names no row, and falling through to the
     # whole ledger turns a phase run into a `DONE` — the one verdict --only may never print
@@ -941,7 +1027,13 @@ def _run_checks(a, rows, baseline):
         print(f'PHASE NOT OK — {summary(results)} {tail}')
         return 1
     if passed == len(chosen):
-        print(f'DONE — all {passed} check(s) pass')
+        # a run says what it measured, not only that it passed: every break row here is a
+        # check nothing has ever shown able to fail, and a DONE that hides that is the
+        # claim this script exists to refuse
+        unproven = [r.id for r in chosen if r.brk and not r.check.startswith('MANUAL:')]
+        tail = (f', 0 of {len(unproven)} break row(s) proven — run --verify'
+                if unproven else '')
+        print(f'DONE — all {passed} check(s) pass{tail}')
         return 0
     print(f'NOT DONE — {summary(results)}')
     return 1

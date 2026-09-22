@@ -32,8 +32,8 @@ no CI runs; whatever it asserts belongs in the repository's own tests (step 3).
 mkdir -p .testcases/goalrun    # add `.testcases/` to your ignore file if the repo has one
 ```
 
-Works in any directory; no version control needed. `--verify` plants each break inside a
-throwaway copy of the tree, never in the tree itself. POSIX only (`sh -c`, process groups,
+Works in any directory; no version control needed. `--verify` makes each break's edit and puts
+the file back byte for byte; nothing is copied. POSIX only (`sh -c`, process groups,
 `flock`) — no Windows.
 
 ## Four modes
@@ -54,11 +54,9 @@ through the two skills that already do this work. **Do not invent this pipeline 
 row.**
 
 1. **Recon** — stack, existing commands (`package.json`, `Makefile`, test runner), specs.
-   Then, before touching anything, `python3 "$GOALRUN" --baseline`: it records every file
-   as it is, and a deliverable ships by differing from that record. Taken after the first
-   edit, it reads that edit as pre-existing and the row stays red for the whole run; the
-   only cure is to undo the work by hand, so the script refuses a second one without
-   `--reset`.
+   Then, **before touching anything**, `python3 "$GOALRUN" --baseline`: a deliverable ships by
+   differing from that record, so an edit made first is recorded as pre-existing and its row
+   can never go green.
 2. **Requirements — `docs-review`.** It turns a spec into `REQ-` ids — atomic, one yes/no
    each — and writes them to `.testcases/goalrun/reqs.txt`, one per line: the checklist step 6
    gates against. Documents to audit *against* the spec are optional; a spec with nothing but
@@ -87,9 +85,10 @@ row.**
    pointing at the test step 3 wrote, `deliverable` naming the file the work ships, `break`
    planting the defect the check exists to catch.
 
-   **A `break` is the requirement, negated and made executable** — written from `what`, never
-   from `check`. Hand `what`, the spec extract and the source path to a subagent that is **not
-   shown the check**: what it cannot see, it cannot mirror.
+   **A `break` is the requirement, negated** — one edit, written as `path :: the text it holds
+   :: the text it should hold instead` (or a bare path to delete the file), and written from
+   `what`, never from `check`. Hand `what`, the spec extract and the source path to a subagent
+   that is **not shown the check**: what it cannot see, it cannot mirror.
 
    A test written first, from the TC, before the code existed, has been seen red once already —
    the same evidence a break manufactures later — so that row may waive its break:
@@ -114,26 +113,21 @@ row.**
    python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
    ```
 
-   It fails on a requirement no row measures and on a row with no `break`. A gap you accept
-   is a line in the ledger carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
-   repo` — never silence. A waiver excuses a gap someone looked at; **more than one, past 30%
-   of the list, is a bulk pass wearing per-id clothes**, and the gate fails on that too — one
-   waiver on a short list is the exception it leaves you. Varying the
-   wording does not make it smaller — either the rows exist, or `reqs.txt` is wider than what
-   this run is about and gets cut down to the part it measures. The lint prints the ratio —
-   `coverage: 629 requirement(s) · 17 carried by rows · 612 waived (97%)` — and that line goes
-   into the table verbatim, because `DONE` over a mostly-waived list is a claim about 17 rows,
-   not 629 requirements.
+   A gap you accept is a line carrying a reason — `# no-row-ok: REQ-A-007 — ships in the other
+   repo` — never silence. **A waiver excuses a gap someone looked at; a page of them is a bulk
+   pass wearing per-id clothes**, and the gate fails on that too. Rewording does not shrink it:
+   either the rows exist, or `reqs.txt` is wider than this run and gets cut down to the part it
+   measures. The coverage line the lint prints goes into the table verbatim — `DONE` over a
+   mostly-waived list is a claim about the rows, not about the list.
 
-   The gate only knows the list you wrote, and only that the id is *mentioned* by a row. A
-   requirement missing from `reqs.txt`, or named by a row that does not measure it, is
-   invisible here — step 5 is what finds both.
+   The gate only knows the list you wrote, and only that a row *mentions* the id. A requirement
+   missing from `reqs.txt`, or named by a row that does not measure it, is invisible here —
+   step 5 is what finds both.
 7. **Slice phases** — groups of row ids, by dependency.
 8. **Pre-flight** `python3 "$GOALRUN"` — know what is already red. Nothing else may be
-   building while it runs: a check racing another compile goes red for reasons that are
-   not the code. Two goalruns *in one tree* refuse each other by lock; a build *you* started in another
-   shell is yours to wait for. A red you think is contention is not a finding either way —
-   name the build, wait, and re-run that row with `--only`; the re-run is the evidence.
+   building while it runs; a check racing another compile goes red for reasons that are not
+   the code. A red you blame on contention is not a finding either way — wait, re-run that row
+   with `--only`, and the re-run is the evidence.
 
 Show ledger, phases, red rows, and a menu: **run / edit a row / re-slice / skip
 pre-flight**.
@@ -159,35 +153,41 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
 
 ## Prove — before you may say done
 
-1. **Whole ledger** — phases cannot see cross-phase regressions.
-2. **`python3 "$GOALRUN" --verify`** — it copies the tree, plants the break in the copy, runs
-   the check there, and deletes the copy. Your files are read, never written.
+1. **One command, the whole ledger** — phases cannot see cross-phase regressions.
 
-   It runs every check once on the tree first: a row already red proves nothing by going red
-   again (`ALREADY RED`), and it is kept out of the sweep, since a row that is red for its own
-   reasons would otherwise make every other row report `BLAST`. An honest row for work nobody
-   has started is exactly this case. Then, per row, it plants the `break` and demands the check
-   go red. `HOLLOW` = the check did not move under the defect this
-   break planted — it tests nothing, or nothing about *this* clause. `STUCK` = its check hung
-   under the break instead of failing, which proves nothing either way. `BREAK FAILED` = the
-   break command itself failed, or changed nothing in the copy. `NOTHING VERIFIED` = no row ran
-   a break at all — every one was skipped, `MANUAL`, or already red; that run proved nothing
-   and exits 1.
+   ```bash
+   python3 "$GOALRUN" --verify
+   ```
 
-   **`HOLLOW` is a finding about the cases, not about the row.** It says every input the check
-   tries is an input this defect is invisible in — so the route is backwards into `testcase`,
-   whose `Distinguishes from` column exists for exactly this, not forwards into the ledger.
-   Fix the check by adding the case that discriminates; never re-point the row.
+   It prints the ledger table first — the ordinary run — then, per row, makes the edit the
+   `break` describes, runs the check, and writes the file back byte for byte. A row that did
+   not pass in the table is `ALREADY RED`: it proves nothing by going red again, so no break is
+   planted for it. Interrupted, it restores on the way out; killed outright, the next run puts
+   the file back and says which rows it repaired.
 
-   A whole-ledger `--verify` also sweeps every other row under each planted break, to find
-   rows whose checks cannot tell one defect from another (`BLAST`). It is on for the proof and
-   off for a `--verify A,B` subset; `--blast` / `--no-blast` force either way, and
-   `ledger-design.md` has the budget and the flags.
+   Every verdict says what it means; two need a decision from you.
 
-3. **Tighten each break once the code exists.** A plan-time break is `rm -f <deliverable>`,
-   cruder than the requirement: the row prints `VERIFIED` while its clause stays untested.
-   Re-point it at the real defect and verify again. **Each** means each — a phase handed to
-   you already green is where an untightened break hides, because nobody called the loan in.
+   **`HOLLOW` is a finding about the cases, not about the row.** Every input the check tries is
+   one this defect is invisible in — so the route is backwards into `testcase`, whose
+   `Distinguishes from` column exists for exactly this, not forwards into the ledger. Add the
+   case that discriminates; never re-point the row.
+
+   **`BLAST` is a finding about breadth.** Two rows whose checks cannot tell one defect from
+   another are one measurement written twice. Narrow the check that is too wide — usually one
+   running the whole suite instead of its own test. Finding it costs a check per row per row,
+   so it runs on request (`--blast`); `ledger-design.md` has what it costs and when to pay.
+
+3. **Once, at the end.** This is the only `--verify` the run needs, and it replaces the final
+   plain run rather than following it — verifying a row whose code does not exist yet reads
+   `ALREADY RED` and proves nothing, so an earlier pass buys a wait, not a fact. During the
+   phases, `--only` is the whole loop, and any table shown before this one says `unverified`
+   against every `break` row.
+
+   Verify again only for what this pass found, and only for the rows it named: `BREAK FAILED`
+   → the break missed its target, fix it and `--verify <ID>`; `HOLLOW` → back into `testcase`
+   for the case that discriminates, then `--verify <ID>`. Any row, check or break edited
+   afterwards → `--verify` again, the whole ledger, because a rewritten clause can invalidate
+   a sibling row's check.
 4. **Unsigned `MANUAL` rows** — ask the user row by row, then `python3 "$GOALRUN" --sign UX
    --who tuananh --note "viewed 3 surfaces"`. ⛔ Never run `--sign` except to record an
    answer the user actually gave.
@@ -195,8 +195,8 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    `references/pressure-test.md` and update the record.
 
 `DONE` only when every row is `PASS`. Anything short: the table, `NOT DONE`. A `--verify`
-that ends `BLAST`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` or `SWEEP
-STOPPED` has not proven the ledger, whatever the rows said a minute earlier.
+that ends `HOLLOW`, `BLAST`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` or
+`SWEEP STOPPED` has not proven the ledger, whatever the rows said a minute earlier.
 
 ## Report the ledger, not a narrative
 
@@ -219,9 +219,9 @@ NOT DONE — 1 failing (DARK), 1 waiting on tuananh (UX)
 ```
 
 Failing needs you; waiting needs a person. An unverified `PASS` is a claim you cannot back:
-`--verify` every `break` row before the first table you show, and write `unverified` after any
-row without one. Re-pointing a row at a check that measures something else is the forbidden
-edit — green rows too, not only the red ones where the temptation lives. Narrowing to the same
+Write `unverified` after every `break` row in a table shown before the Prove pass, and never
+call a run done on one. Re-pointing a row at a check that measures something else is the
+forbidden edit — green rows too, not only the red ones where the temptation lives. Narrowing to the same
 requirement, measured more precisely, is the allowed direction: `--verify` it and say which
 requirement it still traces to.
 
@@ -230,8 +230,8 @@ requirement it still traces to.
 It happens, and "the row is wrong" is sometimes true. The route is backwards through the
 pipeline, never sideways through the ledger: amend the spec → re-run `docs-review` over the
 changed part → rewrite `reqs.txt` → drop or rewrite the row → `--lint-ledger --requirements` →
-`--verify` the whole ledger, not just the rewritten rows, because a split clause can invalidate
-a sibling row's check.
+and, once the Prove pass has run, `--verify` the whole ledger again rather than the rewritten
+rows alone, because a split clause can invalidate a sibling row's check.
 
 **A change that arrived only in conversation has no artifact, so you write one.** The decision
 goes into the spec verbatim — the decider's words, the date, the forum — and that quote is the
@@ -256,8 +256,9 @@ alone. Neither is arguing, and neither is `--sign`.
 4. **Unsteered reviews only.**
 5. **Report what a check says, not what you hope.** Blocked is red.
 6. **Green without a deliverable is red** — by script.
-7. **A check that has never gone red is untested.** Give every row a `break` and `--verify`
-   it; a row without one fails `--lint-ledger` unless the ledger waives it with a reason.
+7. **A check that has never gone red is untested.** Give every row a `break`; the Prove pass
+   is where it goes red. A row without one fails `--lint-ledger` unless the ledger waives it
+   with a reason.
    A break is written from the requirement by someone who has not seen the check; written from
    the check it only proves the two agree.
 8. **Three reds on one row is a handoff.**
@@ -290,12 +291,13 @@ no table above it · "effectively done" · a check run by hand · editing a row'
 | "The goal is one sentence, decomposition is overkill" | A one-sentence goal is where the implicit requirements hide. Walk `dimensions.md`. |
 | "The ledger looks complete to me" | So does every ledger, from inside. Rule 10 — audit it with `docs-review`. |
 | "I'll write the check inline, faster than running `testcase`" | An inline check tests what you remembered. `testcase`'s second pass is what finds the case you did not. |
-| "The code does not exist yet, so I'll guess the break" | A substitution matching nothing prints `VERIFIED` for a row it never tested. Break the deliverable instead. |
 | "No break column for this one, the check is obviously real" | Obvious is what `HOLLOW` rows looked like too. Write the break or waive it in the ledger, with a reason. |
 | "`--verify` exited 0, so the ledger is proven" | Three ways it still lies: no row ran (`NOTHING VERIFIED`), two rows measure each other's defects (`BLAST`), or a break plants something cruder than the requirement. |
 | "The break fires, so the row is verified" | It fires against *something*. Deleting the function reddens a rounding check without testing rounding. |
 | "the check greps the symbol, so it covers the clause" | It proves someone typed the word. Delete the body, keep the name: still green. |
 | "629 waivers, one line each, lint exits 0" | A waiver excuses a gap you looked at; past the step 7 threshold it is a bulk pass, and the gate says so. |
+| "I'll verify this phase now, while it's fresh" | The rows after it move the code under its feet, and the pass costs a check per row plus a sweep of rows × rows — you would pay it again at the end. |
+| "The final verify is expensive, I'll run it on the rows I touched" | A row you did not touch can be the one a rewritten clause broke. A subset verify is for the rows the last pass named, not the rows you remember editing. |
 | "That red was just the other build racing it" | Maybe. A re-run with `--only` says so; your explanation does not. |
 | "Four rows, I'll write the breaks myself" | A reviewer steered one run into a break that mirrored its check. Only the sweep caught it. Hand `what` to someone who has not seen `check`. |
 | "The requirement changed, so I'll fix the row" | Backwards through the pipeline — spec, `docs-review`, `reqs.txt`, then the row. An edit starting in the ledger has no author but you. |

@@ -1,5 +1,5 @@
 [![Version](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=blue)](.claude-plugin/plugin.json)
-[![Skills](https://img.shields.io/badge/skills-4-8957e5)](#danh-sách-skill)
+[![Skills](https://img.shields.io/badge/skills-5-8957e5)](#danh-sách-skill)
 [![Stars](https://img.shields.io/github/stars/xtieume/testcase?style=flat&color=f5a623)](https://github.com/xtieume/testcase/stargazers)
 [![Last commit](https://img.shields.io/github/last-commit/xtieume/testcase)](https://github.com/xtieume/testcase/commits/main)
 [![License](https://img.shields.io/github/license/xtieume/testcase?color=green)](LICENSE)
@@ -71,6 +71,12 @@ Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định mộ
 | Skill | Làm gì | Kích hoạt |
 | ----- | ------ | --------- |
 | 📥 [`playwright-notion`](.agents/skills/playwright-notion/SKILL.md) | Tải trang Notion về markdown qua browser đang đăng nhập, khi không có API token lẫn nút Export | "tải các trang Notion này về" |
+
+### Soạn prompt
+
+| Skill | Làm gì | Kích hoạt |
+| ----- | ------ | --------- |
+| ✍️ [`normalize`](.agents/skills/normalize/SKILL.md) | Viết lại một prompt đời thường lan man thành prompt kỹ thuật gọn — giữ nguyên yêu cầu, chuyển sang dạng mệnh lệnh, nói rõ khi nào hỏi lại và thế nào là xong | "chuẩn hóa prompt này cho /goalrun" |
 
 ## Quy ước chung
 

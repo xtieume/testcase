@@ -981,23 +981,23 @@ def test_a_row_already_red_is_not_verified_and_is_kept_out_of_the_sweep():
         ledger(tmp, 'GOOD\tx\ttest -f old.txt\t—\trm -f old.txt\n'
                     'UNBUILT\ty\ttest -f src/cli.py\t—\trm -f src/cli.py\n')
         out = run_cli(tmp, '--verify')
-        assert 'already red before any break: UNBUILT' in out.stdout, out.stdout
+        assert 'UNBUILT  FAIL' in out.stdout, 'the table --verify prints is the run\'s own'
         assert 'ALREADY RED UNBUILT' in out.stdout, out.stdout
         assert 'VERIFIED GOOD' in out.stdout, out.stdout
         assert 'BLAST' not in out.stdout, 'a row red for its own reasons is not collateral'
         assert out.returncode == 1, out.stdout
 
 
-def test_verify_survives_a_check_that_litters():
-    """A check that writes an artifact runs inside the clone, so the litter never reaches the
-    real tree — there is no clean-tree gate left for it to trip anyway."""
+def test_a_check_that_litters_litters_where_a_run_would():
+    """The table half of --verify is the ordinary run, so a check that writes an artifact
+    writes it where every other run of that check already did. Only the break half is
+    isolated, and that is the half that matters: the mutation never reaches the tree."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
         ledger(tmp, 'A\tx\ttouch junk.junk && test -f old.txt\t—\trm -f old.txt\n')
-        out = run_cli(tmp, '--verify', '--no-blast')
+        out = run_cli(tmp, '--verify')
         assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout + out.stderr
-        assert not os.path.exists(os.path.join(tmp, 'junk.junk')), \
-            'the litter landed in the real tree, not just the clone'
+        assert os.path.exists(os.path.join(tmp, 'old.txt')), 'the break escaped the clone'
 
 
 def test_verify_works_in_a_directory_with_nothing_tracked_at_all():

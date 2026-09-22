@@ -152,11 +152,18 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
 
 ## Prove — before you may say done
 
-1. **Whole ledger** — phases cannot see cross-phase regressions.
-2. **`python3 "$GOALRUN" --verify`** — it copies the tree, plants the break in the copy, runs
-   the check there, and deletes the copy. Your files are read, never written.
+1. **One command, the whole ledger** — phases cannot see cross-phase regressions.
 
-   Every verdict it prints says what it means; two need a decision from you.
+   ```bash
+   python3 "$GOALRUN" --verify
+   ```
+
+   It prints the ledger table first — the ordinary run, in your tree — then, per row, copies
+   the tree, plants the `break` in the copy, runs the check there, and deletes the copy. The
+   mutation never reaches your files. A row that did not pass in the table is `ALREADY RED`:
+   it proves nothing by going red again, so no break is planted for it.
+
+   Every verdict says what it means; two need a decision from you.
 
    **`HOLLOW` is a finding about the cases, not about the row.** Every input the check tries is
    one this defect is invisible in — so the route is backwards into `testcase`, whose
@@ -168,10 +175,11 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    running the whole suite instead of its own test. Finding it costs a check per row per row,
    so it runs on request (`--blast`); `ledger-design.md` has what it costs and when to pay.
 
-3. **Once, at the end.** This is the only `--verify` the run needs, and it runs after the last
-   row is green — verifying a row whose code does not exist yet reads `ALREADY RED` and proves
-   nothing, so an earlier pass buys a wait, not a fact. During the phases, `--only` is the
-   whole loop, and a table shown before this pass says `unverified` against every `break` row.
+3. **Once, at the end.** This is the only `--verify` the run needs, and it replaces the final
+   plain run rather than following it — verifying a row whose code does not exist yet reads
+   `ALREADY RED` and proves nothing, so an earlier pass buys a wait, not a fact. During the
+   phases, `--only` is the whole loop, and any table shown before this one says `unverified`
+   against every `break` row.
 
    Verify again only for what this pass found, and only for the rows it named: `BREAK FAILED`
    → the break missed its target, fix it and `--verify <ID>`; `HOLLOW` → back into `testcase`

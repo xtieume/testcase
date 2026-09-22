@@ -394,12 +394,16 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
     return 'PASS', note
 
 
-def report(rows, signatures, baseline_files, timeout):
-    """Print the table. Return [(status, row)]."""
+def report(rows, signatures, baseline_files, timeout, cwd=None, times=None):
+    """Print the table. Return [(status, row)]. `times`, if given, collects how long each
+    distinct check took, which is what lets a caller price the work it is about to do."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
-        status, note = decide(row, signatures, baseline_files, timeout)
+        began = time.monotonic()
+        status, note = decide(row, signatures, baseline_files, timeout, cwd)
+        if times is not None and not row.check.startswith('MANUAL:'):
+            times.setdefault(row.check, time.monotonic() - began)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
         results.append((status, row))
     return results
@@ -668,34 +672,26 @@ def _dur(seconds):
     return f'{seconds:.0f}s' if seconds < 90 else f'{seconds / 60:.0f} min'
 
 
-def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET):
-    """Plant each row's break inside a disposable clone of the tree, prove its check goes red
-    there, then throw the clone away. Return True if all did.
+def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
+           signatures=None, baseline_files=None):
+    """Run the ledger, then plant each row's break inside a disposable clone of the tree and
+    prove its check goes red there. Return True if every row passed and every break was
+    caught.
 
-    The caller's own tree is only ever read."""
+    The break half only ever writes to a clone; the table half is the ordinary run, in the
+    tree, which is the same work a run does anyway — so the proof is one command, not two."""
     everything = rows                       # --blast scans the whole ledger, not the selection
     if ids:
         rows = select(rows, ids)
-    # one pass over a fresh clone first: a row whose check already fails proves nothing when
-    # its break makes it fail again, and it reddens every other row's sweep for reasons that
-    # have nothing to do with the planted defect. Run in a clone like everything else here, so
-    # even a check with side effects (one that litters an artifact) never touches the real tree
+    # the table first, in the tree: a row that does not pass where you work proves nothing by
+    # going red under a break, and it would redden every other row's sweep for reasons that
+    # have nothing to do with the planted defect. This is the run's own table, so the proof
+    # does not re-run every check to learn what the run already printed
     scan = everything if blast else rows
-    already, cost = set(), {}
-    pre = clone_tree(cwd or '.')
-    try:
-        for r in scan:
-            if r.check.startswith('MANUAL:'):
-                continue
-            began = time.monotonic()
-            if not run_check(r.check, timeout, pre)[0]:
-                already.add(r.id)
-            cost.setdefault(r.check, time.monotonic() - began)
-    finally:
-        shutil.rmtree(pre, ignore_errors=True)
-    if already:
-        print(f'already red before any break: {", ".join(sorted(already))} — those rows prove '
-              f'nothing until they pass, and the sweep ignores them')
+    cost = {}
+    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost)
+    already = {r.id for st, r in results if st != 'PASS'}
+    print()
     live = [r for r in rows
             if r.brk and not r.check.startswith('MANUAL:') and r.id not in already]
     if live and cost:
@@ -780,6 +776,8 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                       f'the same file do')
         finally:
             shutil.rmtree(clone, ignore_errors=True)
+    if already:
+        all_ok = False
     if not ran:
         # rule 2, turned on the script itself: a run that proved nothing is not a pass
         where = 'no row in this selection' if ids else 'no row'
@@ -945,8 +943,13 @@ def _run_checks(a, rows, baseline):
         # one, N=0 sweeps nothing rather than everything, and --no-blast (-1) is explicit
         blast = a.blast is not None and a.blast != -1
         budget = max(0, a.blast or 0)
-        return 0 if verify(rows, a.verify, a.timeout, blast=blast,
-                           waived=waivers(a.ledger)['verify-ok'], budget=budget) else 1
+        ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
+                    waived=waivers(a.ledger)['verify-ok'], signatures=load_signatures(),
+                    baseline_files=baseline['files'] if baseline else {})
+        print()
+        print(f'DONE — the ledger passes and every break was caught' if ok else
+              'NOT DONE — the ledger is not proven')
+        return 0 if ok else 1
 
     # `is not None`, not truthiness: `--only ''` names no row, and falling through to the
     # whole ledger turns a phase run into a `DONE` — the one verdict --only may never print

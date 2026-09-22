@@ -115,9 +115,9 @@ before deciding whether to pay for `--blast`.
 
 ## A break runs in a copy
 
-`--verify` copies the tree, plants the break in the copy, runs the check there, and deletes the
-copy; your files are read, never written. It runs once, after the last row is green. What that
-costs, and what it cannot see:
+`--verify` prints the ledger table in your tree, then per row copies the tree, plants the break
+in the copy, runs the check there, and deletes the copy. It runs once, at the end, in place of
+the final plain run. What that costs, and what it cannot see:
 
 - **The check runs in the copy**, so a check reaching the original tree by an absolute path
   tests unmutated code and reads as `HOLLOW` through no fault of its own. Keep checks relative.
@@ -129,8 +129,8 @@ costs, and what it cannot see:
   incremental build stays incremental; a dependency restore keyed to the absolute path does
   not, and repeats on every row unless the check pins it.
 - **State outside the tree** — databases, services, `$HOME` — is neither copied nor undone.
-- **Only `--verify` runs in a copy.** A plain run and `--only` run checks in the tree itself,
-  so a check that writes leaves what it wrote.
+- **Only the break half runs in a copy.** The table, a plain run and `--only` all run checks
+  in the tree itself, so a check that writes leaves what it wrote — where it already did.
 - **A directory deliverable** ships when anything under it changes — a check that writes a
   log into it counts, so keep generated output out of a directory a row names.
 

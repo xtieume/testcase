@@ -41,28 +41,11 @@ Two minutes here save the developer twenty:
 - One bug per report. Three symptoms of one cause is one report; three causes filed as one
   gets partially fixed and closed.
 
-## Severity — our convention
+## Severity
 
-Many teams score severity as impact × likelihood. This skill does not: **severity is impact
-alone, frequency belongs to priority.** A rare S1 is still S1 — splitting them keeps a nasty
-bug from being downgraded because it is hard to hit. If the project has its own matrix, that
-matrix wins; say which one you used.
-
-Impact means impact on the user and the data — never how annoying the bug was to hit, how
-long it took to find, or how bad it looks.
-
-| Level | Criterion | Example |
-| ----- | --------- | ------- |
-| S1 | Data loss or corruption, permission bypass, money wrong, core flow impossible for everyone | Checkout charges the wrong amount; a Viewer can delete orders |
-| S2 | Major feature broken with no workaround, or wrong data shown as if correct | Search returns nothing; an order total ignores a refund |
-| S3 | Degraded, workaround exists and is discoverable | Filter option missing but the URL parameter works |
-| S4 | Cosmetic, no user can act on it wrongly | Label typo; 2 px misalignment |
-
-**Silent wrong data outranks a loud crash.** A crash is noticed; a wrong total is trusted.
-Wrong-but-plausible output is S1/S2 even when nothing errors.
-
-Contrast, focus-visible and hit-target violations are S2 however small they look
-(`design-validation.md`). You propose severity — priority is the team's call.
+Propose one; the team sets priority. Impact on the user and the data decides it — not how
+annoying the bug was to hit, how long it took to find, or how loud it is. Say which scale you
+used if the project has its own.
 
 ## Linking back
 

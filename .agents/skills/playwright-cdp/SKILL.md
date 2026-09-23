@@ -13,7 +13,7 @@ Core principle: **do not scrape the DOM, and do not copy a browser profile.** At
 
 For GitHub there is nothing to build: `gh pr view <n> --json body,comments,reviews` and `gh api repos/<repo>/pulls/<n>/comments` already return everything, with credentials `gh` holds. Use those directly.
 
-Read-only. Every endpoint used fetches data or produces a download; nothing is created, edited or deleted.
+Reading is the main job and touches nothing: those endpoints only fetch data or produce a download. **`slack-post.mjs` is the one exception — it writes.** See *Posting to Slack* below before using it.
 
 ## What comes out
 
@@ -48,7 +48,7 @@ Skipping either one wastes an hour. Both were verified by failure on macOS.
 scripts/agent-browser.sh          # headless; opens a window only on first run
 ```
 
-It launches the Chrome for Testing that ships with Playwright against a profile under `~/.cache/playwright-notion-profile`, so **the everyday browser is never touched**. The first run shows a window: sign in to Notion and Slack there once. Every run after that is headless and the session persists.
+It launches the Chrome for Testing that ships with Playwright against a profile under `~/.cache/playwright-cdp-profile`, so **the everyday browser is never touched**. The first run shows a window: sign in to Notion and Slack there once. Every run after that is headless and the session persists.
 
 | Need | Command |
 |---|---|
@@ -57,7 +57,7 @@ It launches the Chrome for Testing that ships with Playwright against a profile 
 | Throw the profile away (loses the login) | `scripts/agent-browser.sh --reset` |
 | Check CDP is up | `curl -s http://127.0.0.1:9222/json/version` |
 
-No automation browser on the machine → `npx playwright install chromium`, or point `NOTION_BROWSER_BIN` at a Chromium-family binary.
+No automation browser on the machine → `npx playwright install chromium`, or point `CDP_BROWSER_BIN` at a Chromium-family binary.
 
 `scripts/start-browser.sh [brave|chrome|edge]` remains for the one case the owned profile cannot cover: a page reachable only from the personal profile. It **closes the user's browser** (the profile lock blocks the debug port) — say so before running it. If it reports `remote debugging requires a non-default data directory`, that build refuses CDP on its default profile dir; Brave commonly works where Chrome refuses.
 
@@ -107,6 +107,26 @@ Replies are comments: the body keeps the top-level messages, `comments.md` holds
 
 The web client's token lives only on the `app.slack.com` origin — an `/archives/` link is a stub page that redirects to the desktop app, so the script hops origins by itself. `no localConfig_v2` / `no token for team` means that profile is not signed in to Slack: `agent-browser.sh --headed`, sign in, retry.
 
+## Posting to Slack
+
+`slack-post.mjs` posts a message, or a reply in a thread, as the signed-in user.
+
+```bash
+node scripts/slack-post.mjs <url> '<text>'            # shows what would be posted
+node scripts/slack-post.mjs <url> '<text>' --send     # actually posts
+```
+
+A URL pointing at a message or thread replies in that thread; a channel URL posts a new message. Long or multi-line text: `-` reads stdin, `@file.md` reads a file, which also avoids fighting the shell over quoting.
+
+**Without `--send` it is a dry run**: it prints the workspace, the channel name and the thread it would land in, and posts nothing. That default exists because the destination is the easy thing to get wrong — a channel id in a URL says nothing about which channel it is, and a message cannot be unsent from the notifications people already got.
+
+Rules for the agent, not just the script:
+
+- **Never post without the user having seen the exact text and the exact destination.** Run the dry run, show its output, wait for a yes. A previous yes does not cover the next message.
+- Never post on your own initiative — only when asked to post something specific.
+- It posts **as the user**, under their name. Write what they would write, not a bot announcement.
+- Report the permalink the script prints, so they can check or delete it.
+
 ## Step 4 — verify
 
 Never report success from an exit code. Each script prints its counts per document:
@@ -122,6 +142,8 @@ OK  9 comments  27 files  <out>/<Name>.md
 ```bash
 node scripts/test-doc.mjs        # self-check for the renderers, needs no browser
 ```
+
+A `slack-post.mjs` run is verified by its own output: a dry run ends in `DRY RUN — nothing was posted`, a real one in `POSTED <permalink>`. Never claim something was posted without that line.
 
 ## Common mistakes
 
@@ -158,6 +180,7 @@ Keep the output contract: import `commentBook`, `writeDoc` and `saveAsset` from 
 
 ## Warn the user before starting
 
+- Posting to Slack is visible to everyone in the channel and cannot be unsent from their notifications.
 - These are internal company documents being copied to a local disk. Whether that fits their company policy is their call, not something to assume.
 - While a run is active the browser listens on a local debug port, so any local process can drive it. `agent-browser.sh --stop` when done.
 - `start-browser.sh` (the fallback path only) closes their everyday browser; unsaved work in it is at risk.

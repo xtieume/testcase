@@ -70,7 +70,7 @@ Four diagrams of that pipeline, and of how `goalrun` decides a row and proves a 
 
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
-| 📥 [`playwright-notion`](.agents/skills/playwright-notion/SKILL.md) | Notion → markdown through a logged-in browser, when API token and Export are both unavailable | "download these Notion pages" |
+| 📥 [`playwright-cdp`](.agents/skills/playwright-cdp/SKILL.md) | Notion pages and Slack threads → markdown through a logged-in browser: body, every comment, and the attachments downloaded | "read this Notion page", "pull this Slack thread" |
 
 ### Authoring
 
@@ -90,7 +90,7 @@ Conventions every skill here follows, so a new one is predictable before you ope
 Setup beyond cloning, where a skill needs it:
 
 ```bash
-cd .agents/skills/playwright-notion/scripts && npm install   # once
+cd .agents/skills/playwright-cdp/scripts && npm install   # once
 ```
 
 ## Adding a skill

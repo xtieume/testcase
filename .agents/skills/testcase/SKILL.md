@@ -32,7 +32,6 @@ Read each **when the workflow says** — not upfront.
 | File | Read when |
 | ---- | --------- |
 | `references/coverage-map.md` | Always, at step 2 |
-| `references/review-lenses.md` | Step 4, by each reviewer — not at step 3 |
 | `references/i18n-jp.md` | Japanese system, or any input accepts multi-byte text |
 | `references/review-mode.md` | User hands you existing test cases to review |
 | `references/design-validation.md` | The requirement is a Figma link, mockup or screenshot |
@@ -122,8 +121,6 @@ Spawn subagents (`Agent`/`Task`, `general-purpose`) and give each **only**: the 
 
 **Not your pass-1 reasoning** — sharing your analysis makes the reviewer rubber-stamp your blind spots. It must rebuild the coverage map from the requirement and map the cases onto it.
 
-Give each reviewer `references/coverage-map.md` **and `references/review-lenses.md`** — the lenses are questions asked of a finished table, and measurably do nothing as authoring advice.
-
 Run **two reviewers per round, in parallel**, each carrying the Arithmetic lens as well — one holding both of the other lenses finds the gaps of whichever it started with, then stops:
 
 | Lens | Question |
@@ -131,6 +128,7 @@ Run **two reviewers per round, in parallel**, each carrying the Arithmetic lens 
 | Trace | Every requirement statement has a case; every case traces back |
 | Attack | How does it break while the happy path passes? State, permission, concurrency, dependency failure, boundary — and for each case, which wrong implementation it would fail to notice |
 | Arithmetic | Every concrete expected value, recomputed from the input by hand or by a one-line script. A number nobody recomputed is a guess with a decimal point |
+| Discrimination | Build the implementation each `Distinguishes from` names, run the case's own input through it, and check the result differs. It is the one column nothing else checks |
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
 
@@ -214,42 +212,20 @@ inputs.
 
 **4 — Risk coverage beats quantity.** 30 cases covering real risks beat 100 repetitive ones.
 
-**5 — Do not invent requirements, and do not manufacture ambiguity either.** Three outcomes,
-not two:
-
-- The requirement answers it → the expected value, derived from the text.
-- The requirement is *silent* but one reading follows from the rules it does state → write that
-  value and **name the assumption in the cell**: `4.0 — assumes every calendar day in the range
-  deducts; R3 excludes only the holiday`. The case stays runnable and falsifiable, and the
-  assumption is raised as a question in step 8. Silence is not ambiguity.
-- The requirement genuinely supports two readings that give different values → `TBD —
-  requirement clarification needed`, `Automatable: N`, and the question in step 8.
-
-**The line between the last two: both readings need text behind them.** "3 months after the
-next anniversary" is two readings because *next* grammatically points at either anniversary —
-that is a `TBD`. A spec that excludes public holidays and never mentions weekends is not two
-readings; the second one imports a working-day concept from outside. Assert the literal value,
-name the assumption, ask the question. Over-hedging is its own failure: a table where half the
-expected results say `TBD` cannot run, and nobody reads the questions buried behind them.
-
-A bare `TBD` on a case a reading would settle is a weak case, not caution: it ships a row that
-can never run. Guessing and over-hedging fail the same way — neither states what it assumed.
+**5 — Do not invent requirements, and do not manufacture ambiguity either.** Where the text
+answers it, derive the value. Where it is silent but one reading follows from the rules it does
+state, write that value and name the assumption in the cell. Only where two readings genuinely
+have text behind them is it `TBD — requirement clarification needed`, `Automatable: N`, with
+the question in step 8. Guessing and over-hedging fail the same way: neither says what it
+assumed, and a table half full of `TBD` cannot run.
 
 **6 — Distinguish "not applicable" from "not tested".** N/A needs a why: `Permission: N/A — no authentication/authorization.` Never silently omit. Where the lint would fail on it, put the reason in a `coverage-ok` comment so the next run inherits the decision.
 
 **7 — The table is not the finish line.** Every `Automatable: Y` case ships as a test that actually runs, in the repo's own framework, carrying its case ID.
 
-**8 — A boundary case must be reachable by the system's own trigger.** Nudging an input by one
-unit is how a boundary is usually built, and it quietly invents states the system never
-produces: "one day before three years of service" is not an anniversary, so a grant that fires
-*on* the anniversary can never run there — the case tests a code path no trigger reaches, and
-passes or fails for reasons nobody can act on. Move the boundary onto a state the system
-actually reaches (the last anniversary below the threshold) and the same off-by-one is caught,
-this time by a scenario a user can be in. Check every precondition against the rules the other
-cases establish, in both directions: a **date** no trigger reaches, and a **quantity the
-requirement's own rules cannot produce**. "4 days granted at the anniversary" is unreachable
-just as surely as a non-anniversary grant, when the tier table for that service length says
-16 — a precondition's numbers are derived, not free variables. Re-derive each one rather than
-reading past it.
+**8 — A boundary case must be reachable.** Nudging an input by one unit is how a boundary gets
+built, and it invents states the system never produces — "one day before three years of
+service" is not an anniversary, so a grant firing *on* anniversaries never runs there. Dates
+and quantities both: a precondition's numbers are derived from the rules, not free variables.
 
 **9 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

@@ -50,21 +50,31 @@ rather than dropping it.
 <target line — path, URL, or the command it will follow>
 
 ## Goal
-<1–3 sentences: end state + where progress is recorded>
+<1–3 sentences: the end state>
 
-## <Rule section>
-<numbered or bulleted imperatives>
+## Must be true
+<one line each: a behaviour, a number, a file that exists, a thing that must not change>
 
-## <Rule section>
-...
-
-## Done
-<what must be true before finishing>
+## How to work
+<one line each: sources and their order, who to ask, when to stop and report, what to try
+first, what to record where while working, the user's hunches>
 ```
 
-Section names come from the input's own topics — `Investigation rules`, `Closing codes`,
-`Test cases`, `Q&A`, `Traceability`. Do not impose a fixed template; a prompt about docs has
-no `Test cases` section.
+Every line goes in exactly one of the two lists, by one test: **after the work is finished,
+could someone check it without having watched the work being done?** Yes → *Must be true*.
+No → *How to work*. "Session lasts 8 hours" is checkable afterwards; "check yesterday's logs
+first" is not. "No new dependencies" is checkable; "ask before touching the schema" is not.
+
+The first line of *Must be true* is the goal's end state, as a checkable fact — "CSV export
+exists on the orders page", not only a sentence under *Goal*.
+
+A sentence carrying both halves splits in two. "Write a reproducing test first, then fix" →
+*a reproducing test exists* under *Must be true*, *write it before the fix* under *How to
+work*. "Run the benchmark before and after and paste the numbers in the PR" → *the PR has
+before and after numbers*, and *run it before and after*.
+
+A hunch stays a hunch: "i think the n+1 is part of it but idk" becomes *"User suspects the N+1
+in the product loader (unconfirmed)"* under *How to work* — never a task, never a requirement.
 
 Rewriting rules:
 

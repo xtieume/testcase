@@ -1,6 +1,6 @@
 ---
 name: testcase
-description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases. Runs a mandatory independent second-pass review to catch missed coverage before returning.
+description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, Figma designs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Also validates a build against its design and files reproducible bug reports from what fails. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases, to compare a screen against its Figma design, or to write up a bug. Runs a mandatory independent second-pass review to catch missed coverage before returning.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 ---
 
@@ -12,6 +12,19 @@ You are a senior QA engineer. The objective is not case count:
 
 Never stop at the happy paths.
 
+## Quick start
+
+| Ask | What happens |
+| --- | ------------ |
+| "write test cases for <requirement>" | Full workflow: coverage map → cases → adversarial second pass → lint |
+| "review these test cases" | `references/review-mode.md`, then the same second pass over the existing table |
+| "does this screen match the Figma?" | `references/design-validation.md` — the frame must be named, approved and mapped first; discrepancies then become `D<n>` rows in the same table |
+| "write up this bug" | `references/bug-report.md` — the judgement your tracker's form cannot check |
+| "implement the automatable ones" | Step 7 only, against an existing table |
+
+Deliverable is always `testcases.md` plus whatever ships as runnable tests. The run is not
+finished until `summarize.py` exits clean (step 6).
+
 ## Files in this skill
 
 Read each **when the workflow says** — not upfront.
@@ -21,6 +34,8 @@ Read each **when the workflow says** — not upfront.
 | `references/coverage-map.md` | Always, at step 2 |
 | `references/i18n-jp.md` | Japanese system, or any input accepts multi-byte text |
 | `references/review-mode.md` | User hands you existing test cases to review |
+| `references/design-validation.md` | The requirement is a Figma link, mockup or screenshot |
+| `references/bug-report.md` | A case fails, or the user asks you to write up a bug |
 | `scripts/summarize.py` | Step 6, to count and lint the table |
 
 ---
@@ -38,6 +53,8 @@ Give every distinct requirement statement an ID — reuse the ticket's/spec's ID
 ### 2. Build a coverage map
 
 Read `references/coverage-map.md` (plus `i18n-jp.md` if Japanese text) and work through the dimensions **before** writing any case. Output is analysis, not cases: which dimensions carry real risk, which don't apply.
+
+Requirement is a design (Figma link, mockup, screenshot)? Read `references/design-validation.md` as well. It gates first — a frame is a requirement only when named, versioned, approved and mapped — then adds the dimensions a frame hides (empty, overflow, focus, dark mode). Discrepancies go in **this same table, all ten columns**, with `Req` = `D<n>`; step 6's `--requirements` then reports any `D<n>` nothing traces to. Categorise design cases by what they exercise, not as `UI` wholesale, or every one of them trips the success-path-only lint.
 
 ### 3. Generate pass-1 test cases
 
@@ -111,12 +128,9 @@ Run **two reviewers per round, in parallel**, each carrying the Arithmetic lens 
 | Trace | Every requirement statement has a case; every case traces back |
 | Attack | How does it break while the happy path passes? State, permission, concurrency, dependency failure, boundary — and for each case, which wrong implementation it would fail to notice |
 | Arithmetic | Every concrete expected value, recomputed from the input by hand or by a one-line script. A number nobody recomputed is a guess with a decimal point |
+| Discrimination | Build the implementation each `Distinguishes from` names, run the case's own input through it, and check the result differs. It is the one column nothing else checks |
 
 Each returns only: (1) dimensions with no case, (2) duplicates, (3) weak cases — vague steps, missing/untestable expected result, no traceability, (4) expected results contradicting the requirement. Merge the two, drop overlap.
-
-Tell each reviewer plainly: **an empty round is a valid result.** Every finding cites the requirement line it violates; a finding it cannot cite does not come back. Do not fill a round to avoid returning nothing.
-
-A reviewer suspicion it cannot yet prove ("`10MB` — MB or MiB? no case sits on the exact boundary") is not a finding, but it is not noise either: carry it into `## Remaining Questions / Assumptions` (step 8) instead of dropping it. Only pass-1 reasoning is stripped between rounds, never a reviewer's open question.
 
 **Repeat until a round converges** — adds no case, changes no expected result. Strip the previous round's notes first; a reviewer that sees them agrees instead of re-deriving. No fixed cap: P0/P1 gaps mean another round, P2 wording tweaks end the loop. Rounds do not stop because a number was reached — if P0/P1 gaps are still appearing at round 4, run round 5, and if you are made to stop while they are, report the loop **unconverged** rather than finished. Stopping early and converging are different outcomes and never share a word.
 
@@ -179,6 +193,8 @@ The row's Steps and Expected Result are the test body and its assertion. If the 
 
 Give the user: the file path (+ CSV if exported), the script's coverage summary, the test run result and where the tests live, and a `## Remaining Questions / Assumptions` section for anything that blocked confident design.
 
+A case that failed against the current build is a finding, not a footnote: write it up with `references/bug-report.md`, carrying the case ID and its requirement ID.
+
 ---
 
 ## Rules
@@ -196,10 +212,19 @@ inputs.
 
 **4 — Risk coverage beats quantity.** 30 cases covering real risks beat 100 repetitive ones.
 
-**5 — Do not invent requirements.** Unknown behavior → `Expected result: TBD — requirement clarification needed`. Do not guess.
+**5 — Do not invent requirements, and do not manufacture ambiguity either.** Where the text
+answers it, derive the value. Where it is silent but one reading follows from the rules it does
+state, write that value and name the assumption in the cell. Only where two readings genuinely
+have text behind them is it `TBD — requirement clarification needed`, `Automatable: N`, with
+the question in step 8. Guessing and over-hedging fail the same way: neither says what it
+assumed, and a table half full of `TBD` cannot run.
 
 **6 — Distinguish "not applicable" from "not tested".** N/A needs a why: `Permission: N/A — no authentication/authorization.` Never silently omit. Where the lint would fail on it, put the reason in a `coverage-ok` comment so the next run inherits the decision.
 
 **7 — The table is not the finish line.** Every `Automatable: Y` case ships as a test that actually runs, in the repo's own framework, carrying its case ID.
 
-**8 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.
+**8 — A boundary case must be reachable.** Nudging an input by one unit invents states the
+system never produces: "one day before three years" is not an anniversary. Preconditions are
+derived from the rules — dates and quantities alike — not chosen freely.
+
+**9 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

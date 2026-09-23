@@ -63,7 +63,7 @@ Four diagrams of that pipeline, and of how `goalrun` decides a row and proves a 
 
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
-| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Test cases from a requirement, attacks its own output for missed cases, then implements the automatable ones as runnable tests | "write test cases for…" |
+| 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Test cases from a requirement or a Figma design, attacks its own output for missed cases, then implements the automatable ones as runnable tests and files what fails | "write test cases for…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
 
 ### Data capture

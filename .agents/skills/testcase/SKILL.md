@@ -223,9 +223,8 @@ assumed, and a table half full of `TBD` cannot run.
 
 **7 — The table is not the finish line.** Every `Automatable: Y` case ships as a test that actually runs, in the repo's own framework, carrying its case ID.
 
-**8 — A boundary case must be reachable.** Nudging an input by one unit is how a boundary gets
-built, and it invents states the system never produces — "one day before three years of
-service" is not an anniversary, so a grant firing *on* anniversaries never runs there. Dates
-and quantities both: a precondition's numbers are derived from the rules, not free variables.
+**8 — A boundary case must be reachable.** Nudging an input by one unit invents states the
+system never produces: "one day before three years" is not an anniversary. Preconditions are
+derived from the rules — dates and quantities alike — not chosen freely.
 
 **9 — Be adversarial.** "How could this fail even though the happy path works?" drives the second pass.

@@ -147,25 +147,13 @@ the loop cannot resolve it — running round five buys a third answer, not agree
 cell, record both readings and who flipped which way under its question in step 8, and stop
 re-litigating it. Such a cell does not block convergence; it is escalated, not open.
 
-**A case built to be independent of an open question must prove nothing else fires in its
-window.** Reaching past two candidate cutoffs means a span long enough for another rule to run
-inside it — a second annual grant, a scheduled job, a session expiry. State in the
-preconditions what is held still, or the case is assumption-dependent in a way its own note
-denies.
-
 **When an expected value depends on an unresolved question, assert an invariant true under
 every answer.** A balance that is 0 under one reading and 16 under the other is still never 20,
 and 20 is what the bug produces — the case runs today, catches what it was written for, and
 commits to nothing. Reach for this before `TBD`: the third branch of rule 5 is for a value with
-no such invariant, not for every value touched by an open question.
-
-**The invariant must hold across every open question the case touches, not the one you had in
-mind.** That same balance is invariant across the expiry reading and not across the grant
-reading: if a grant replaces rather than adds, the later grant overwrites the total to 16
-whether expiry ran or not, 16 sits inside the accepted range, and the case quietly stops
-discriminating. List the questions a case depends on before trusting its inequality — this
-skill shipped the example above as settled and a later round found the second question inside
-it.
+no such invariant, not for every value touched by an open question. The invariant must hold
+across **every** open question the case touches: an inequality looks like it has already
+hedged, so the second question inside it goes unlooked-for.
 
 **Do not invent a field to make a case discriminate.** When the balance moves identically
 whether or not the bug exists, the tempting fix is to assert on an audit row, a timestamp, a
@@ -191,13 +179,6 @@ outside the range changes nothing, so an implementation scanning a window wider 
 request passes them all. The same asymmetry appears wherever a rule *removes* something:
 build the case that proves it does not remove more.
 
-**A hedge is only as good as the row it was copied from.** Marking a case neutral on an open
-question by pointing at a sibling that already looks neutral spreads the sibling's hidden
-commitment instead of avoiding it — here a race case called itself neutral by citing one whose
-own failure mode only occurs under one answer. Derive the neutrality from the requirement, and
-list every case an open question touches under that question, so two cases cannot quietly
-answer it in opposite directions.
-
 **Verify `Distinguishes from` by running the case's own input through the implementation it
 names.** The column is a claim, not a label, and it is the only part of a case nothing else
 checks — a lint sees a filled cell, a reviewer reading for coverage sees a plausible sentence.
@@ -205,14 +186,6 @@ Two failures here survived ten rounds: a tier case at a value a year below the t
 both operators return the same number, and a balance case where the correct result, the
 double-subtraction and the gross check all reject. Pick the input that makes them diverge; if
 none does, the case is decoration.
-
-**Moving a case's input to fix one property silently breaks another.** A boundary case made
-*reachable* by shifting it onto a state the system produces can stop *discriminating*: two
-cases moved off a tier edge onto the previous anniversary still caught a miscount, but no
-longer caught the `>` versus `>=` they were written for and still claimed — at a service value
-a full year below the threshold, both operators return the same tier. `Distinguishes from` is
-a claim about the input, so when the input moves, re-derive it: name what the case catches
-now, not what it caught before.
 
 **A row a previous round flagged gets re-derived whole, not just where it was patched.** A
 reviewer stops at the first cause it finds; the fix for that cause routinely introduces the

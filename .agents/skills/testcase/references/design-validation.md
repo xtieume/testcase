@@ -82,14 +82,15 @@ showing "12 items" is not a requirement that the card holds 12.
 Compare the design's values against the implementation's **own** tokens — the CSS variable,
 theme entry or constant in the source.
 
-A hard-coded `#3B82F6` that renders identically to `--color-primary` is still a finding: it
-breaks the moment the theme changes, and no screenshot diff can see it.
+A value that **differs** from the approved frame is a finding. A hard-coded value that
+**matches** it is a maintainability note, not a defect, unless the requirement or the frame
+asks for token binding — list it under questions.
 
 Check in this order, stopping at the first failure — a wrong component makes every downstream
 measurement meaningless:
 
 1. **Component identity** — the design system's component and variant, or a re-implementation?
-2. **Token binding** — values reference tokens, and the same tokens the design used?
+2. **Values** — do they match the approved frame's values?
 3. **Structure** — order, grouping, hierarchy.
 4. **Spacing and size** — against the design's spacing scale.
 5. **Typography** — family, size, weight, line-height, letter-spacing.
@@ -115,9 +116,9 @@ The frame only ever showed the full, happy, English, mid-width case:
 
 Any of these the design does not cover is a `TBD` for the designer, not a bug and not a guess.
 
-**A real defect in the code you are reading is still reported, even when it is not a design
-discrepancy.** Scope keeps you from inventing findings; it does not make you walk past a
-crash. A missing import in the file you opened to compare tokens goes in the report.
+**Code that contradicts a requirement is still reported, even when it is not a design
+discrepancy** — wrong result or crash, on input the requirement allows. A gap no requirement
+asks about (a null the spec never mentions, a negative rate) is a question, not a bug.
 
 ## Accessibility — from the tool, never by eye
 

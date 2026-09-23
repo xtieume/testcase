@@ -18,8 +18,8 @@ canonical, quoted two estimated values as evidence, and turned a designer's
 note to a colleague into a medium-severity defect. False positives: 1 vs 2,
 and the baseline question answered vs declined. That reference stayed.
 
-**A full run — logic, design and bug write-ups.** Same token cost either way
-(290k vs 289k; the references load only when the task needs them). Real
+**A full run — logic, design and bug write-ups.** Token cost level on that
+spec (290k vs 289k) — five specs later put it at +15%. Real
 defects found 7 vs 2, misses 0 vs 4, false positives 1 vs 0. A team lead
 would rather receive the newer one; its single flaw was asserting a disputed
 reading as a confirmed bug while its own questions file still asked about it.
@@ -38,6 +38,38 @@ one tied them and one inverted them, quoting the table and then overriding it.
 The table went. The same runs showed the reference lifting exact values, cited
 expectations, frequency ratios and isolation — isolation from 0 of 3 to 3 of
 3 — so those stayed.
+
+**Five specs, full runs, blind-judged.** Hotel cancellation, login lockout,
+stock reservation, payroll overtime and seat holds, each with a written spec,
+a design export and code carrying defects that contradict a specific line. One
+agent per version per spec, one judge per spec seeing both deliverables under
+random labels, building its own ground truth before reading either.
+
+|                    | before | after |
+| ------------------ | ------ | ----- |
+| real defects found | 11     | 27    |
+| missed             | 17     | 1     |
+| false positives    | 1      | 6     |
+| right design frame | 1 / 5  | 5 / 5 |
+| bug report quality | 2.9    | 4.5   |
+| tokens             | 958k   | 1.10M |
+
+Recall 39% to 96% for 15% more tokens. In three of five runs the earlier
+version declared code and design out of scope and filed nothing, and one judge
+found it had read the code — its test cases named internal functions the spec
+never mentions — without reporting what it saw.
+
+All six false positives shared two causes, both lines this branch had added:
+robustness gaps no requirement asks about filed as bugs, and hard-coded values
+that match the approved frame filed as token-binding defects. Narrowed and
+re-measured with three independent agents per arm: false positives 2 of 3 to 0
+of 3, real defects 5.0 to 5.3 of 6.
+
+**A method note.** Several earlier checks here ran three repetitions inside
+one agent. Those are not independent — they agreed with each other every
+time — so each counts as roughly one sample. Single-agent results suggested
+the narrowing had cost three real defects; independent agents showed all
+three were noise.
 
 The rule that came out of this: **add knowledge, not discipline.** Guidance
 that tells the model to be careful changes nothing measurable. Guidance that

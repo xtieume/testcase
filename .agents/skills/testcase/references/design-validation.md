@@ -95,7 +95,12 @@ measurement meaningless:
 5. **Typography** — family, size, weight, line-height, letter-spacing.
 6. **Colour** — fill, text, border, in **both** light and dark mode.
 
-## The states a design rarely shows, and always needs
+## The states a design rarely shows
+
+These are **questions to put to the designer**, not a list to file findings against. A state
+the product does not have is not a gap: absent a requirement asking for it, "no dark mode on
+this screen" is an observation, not a defect. File one only where the requirement, the design
+or the code shows the state is meant to exist.
 
 The frame only ever showed the full, happy, English, mid-width case:
 
@@ -109,6 +114,10 @@ The frame only ever showed the full, happy, English, mid-width case:
 - **Theme** — dark mode, if the product has one.
 
 Any of these the design does not cover is a `TBD` for the designer, not a bug and not a guess.
+
+**A real defect in the code you are reading is still reported, even when it is not a design
+discrepancy.** Scope keeps you from inventing findings; it does not make you walk past a
+crash. A missing import in the file you opened to compare tokens goes in the report.
 
 ## Accessibility — run the tool, do not judge by eye
 

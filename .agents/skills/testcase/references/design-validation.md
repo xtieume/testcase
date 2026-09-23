@@ -160,5 +160,4 @@ not. So an empty state is `Boundary` (zero is a boundary), a failed fetch is `Er
 element only some roles see is `Permission`. A `D<n>` with genuinely no risk case takes a
 `coverage-ok` comment naming the reason.
 
-Severity comes from `bug-report.md`, plus: a purely visual difference no user can act on
-wrongly is S4 — unless it breaks contrast, focus or hit-target, which is S2 however small.
+A contrast, focus or hit-target failure is never cosmetic, however small it looks.

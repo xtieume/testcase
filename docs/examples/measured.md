@@ -31,6 +31,14 @@ to a two-line decision, 2 of 3. At its current length, 1 of 3. Short forms fit
 rules that pick a branch; this one states what an output must contain, and
 shortening it halved what it bought.
 
+**The bug-report reference, three reps each.** On a loud deterministic crash
+and a silently wrong total that was intermittent and slow to catch: without it,
+all three runs rated the silent total above the crash. With its severity table,
+one tied them and one inverted them, quoting the table and then overriding it.
+The table went. The same runs showed the reference lifting exact values, cited
+expectations, frequency ratios and isolation — isolation from 0 of 3 to 3 of
+3 — so those stayed.
+
 The rule that came out of this: **add knowledge, not discipline.** Guidance
 that tells the model to be careful changes nothing measurable. Guidance that
 answers a question it cannot derive — which frame is the requirement — does.

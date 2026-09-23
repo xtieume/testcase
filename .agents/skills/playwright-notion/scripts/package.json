@@ -1,9 +1,0 @@
-{
-  "name": "playwright-notion-scripts",
-  "private": true,
-  "type": "module",
-  "description": "Dependencies for the playwright-notion skill scripts. Run `npm install` here once.",
-  "dependencies": {
-    "playwright": "^1.40.0"
-  }
-}

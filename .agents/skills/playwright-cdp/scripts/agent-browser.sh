@@ -7,7 +7,7 @@
 # usage: ./agent-browser.sh [port] | --headed | --stop | --reset
 set -uo pipefail
 
-PROFILE="${NOTION_PROFILE_DIR:-$HOME/.cache/playwright-notion-profile}"
+PROFILE="${CDP_PROFILE_DIR:-$HOME/.cache/playwright-cdp-profile}"
 PORT="9222"
 HEADED="${NOTION_HEADED:-0}"
 
@@ -27,7 +27,7 @@ esac
 
 # Chrome for Testing ships with Playwright and is built for automation, so it
 # takes CDP on a custom profile dir without the refusals a branded build makes.
-BIN="${NOTION_BROWSER_BIN:-}"
+BIN="${CDP_BROWSER_BIN:-}"
 if [ -z "$BIN" ]; then
   BIN=$(find "$HOME/Library/Caches/ms-playwright" -maxdepth 6 -type f \
         -path "*Chrome for Testing.app/Contents/MacOS/*" 2>/dev/null | sort | tail -1)
@@ -35,7 +35,7 @@ fi
 [ -x "$BIN" ] || {
   echo "no automation browser found. Install one with:" >&2
   echo "  npx playwright install chromium" >&2
-  echo "or point NOTION_BROWSER_BIN at a Chromium-family binary." >&2
+  echo "or point CDP_BROWSER_BIN at a Chromium-family binary." >&2
   exit 1
 }
 

@@ -1,8 +1,8 @@
 {
-  "name": "playwright-notion-scripts",
+  "name": "playwright-cdp-scripts",
   "private": true,
   "type": "module",
-  "description": "Dependencies for the playwright-notion skill scripts. Run `npm install` here once. playwright-core only: the scripts attach to a running browser over CDP, so there is nothing to download.",
+  "description": "Dependencies for the playwright-cdp skill scripts. Run `npm install` here once. playwright-core only: the scripts attach to a running browser over CDP, so there is nothing to download.",
   "dependencies": {
     "playwright-core": "^1.40.0"
   }

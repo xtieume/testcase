@@ -70,7 +70,7 @@ Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định mộ
 
 | Skill | Làm gì | Kích hoạt |
 | ----- | ------ | --------- |
-| 📥 [`playwright-notion`](.agents/skills/playwright-notion/SKILL.md) | Tải trang Notion về markdown qua browser đang đăng nhập, khi không có API token lẫn nút Export | "tải các trang Notion này về" |
+| 📥 [`playwright-cdp`](.agents/skills/playwright-cdp/SKILL.md) | Trang Notion và thread Slack → markdown qua browser đang đăng nhập: nội dung, toàn bộ comment, và file đính kèm tải về | "đọc trang Notion này", "lấy thread Slack này" |
 
 ### Soạn prompt
 
@@ -90,7 +90,7 @@ Quy ước mà mọi skill ở đây tuân theo, để đoán được một ski
 Bước cài thêm, với skill nào cần:
 
 ```bash
-cd .agents/skills/playwright-notion/scripts && npm install   # một lần
+cd .agents/skills/playwright-cdp/scripts && npm install   # một lần
 ```
 
 ## Thêm skill mới

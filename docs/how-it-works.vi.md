@@ -12,7 +12,7 @@ không im lặng cho qua.
 
 ```mermaid
 flowchart TD
-    SPEC["Spec, tài liệu, ticket"]
+    SPEC["Spec, tài liệu, ticket, design đã duyệt"]
 
     subgraph DR["docs-review — cần gì"]
         DR1["Đối chiếu tài liệu với spec"]
@@ -21,10 +21,12 @@ flowchart TD
     end
 
     subgraph TC["testcase — chứng minh thế nào"]
-        TC1["Sinh case từ yêu cầu"]
+        TC1["Sinh case từ yêu cầu — và từ frame design đã duyệt, dạng D-id"]
         TC2["Pass 2 tấn công chính output của pass 1"]
         TC3["TC-id truy về REQ-, kèm test thật trong framework của repo"]
+        TC4["Bug report cho những gì code đang sai"]
         TC1 --> TC2 --> TC3
+        TC2 --> TC4
     end
 
     subgraph GR["goalrun — đã đạt chưa"]
@@ -54,6 +56,11 @@ flowchart TD
     style FAIL3 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style FAIL4 fill:#f8d7da,stroke:#a3303b,color:#3b1015
 ```
+
+`normalize` không phải một stage. Nó đứng trước, cho người cần biến một yêu cầu lan man thành
+prompt: cái gì phải đúng một bên, cách làm một bên. Đo thử làm bước nạp vào `goalrun`, nó làm
+rơi requirement mà yêu cầu gốc vẫn giữ — và requirement không có row thì pass trong im lặng —
+nên pipeline đọc thẳng yêu cầu gốc.
 
 ## 2. Khác gì
 

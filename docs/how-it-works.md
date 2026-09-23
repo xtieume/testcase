@@ -12,7 +12,7 @@ rather than passing in silence.
 
 ```mermaid
 flowchart TD
-    SPEC["Spec, docs, ticket"]
+    SPEC["Spec, docs, ticket, approved design"]
 
     subgraph DR["docs-review — what is required"]
         DR1["Audit docs against the spec"]
@@ -21,10 +21,12 @@ flowchart TD
     end
 
     subgraph TC["testcase — how it is proven"]
-        TC1["Cases from the requirement"]
+        TC1["Cases from the requirement — and from an approved design frame, as D-ids"]
         TC2["Second pass attacks its own output"]
         TC3["TC-ids traced to a REQ-, plus tests in the repo's own framework"]
+        TC4["Bug reports for what the code already gets wrong"]
         TC1 --> TC2 --> TC3
+        TC2 --> TC4
     end
 
     subgraph GR["goalrun — whether it holds"]
@@ -54,6 +56,11 @@ flowchart TD
     style FAIL3 fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style FAIL4 fill:#f8d7da,stroke:#a3303b,color:#3b1015
 ```
+
+`normalize` is not a stage. It sits in front, for a person turning a rambling request into a
+prompt: what must be true on one side, how to work on the other. Measured as a step feeding
+`goalrun`, it lost requirements the raw request kept — and a requirement with no row passes
+silently — so the pipeline reads the request itself.
 
 ## 2. What changes
 

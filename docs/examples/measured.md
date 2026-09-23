@@ -71,6 +71,25 @@ time — so each counts as roughly one sample. Single-agent results suggested
 the narrowing had cost three real defects; independent agents showed all
 three were noise.
 
+**Should `normalize` feed `goalrun`?** Six casual requests, each mixing what
+must be true with how to work. Each went to goalrun's requirement extraction
+four ways, one independent agent per step, blind-judged against 28 checkable
+requirements:
+
+|                                    | kept   | lost | rows no check can decide |
+| ---------------------------------- | ------ | ---- | ------------------------ |
+| straight in, no normalize          | 27/28  | 1    | 15                       |
+| through the old normalize          | 24/28  | 4    | 15                       |
+| through a two-list normalize       | 25/28  | 3    | 8                        |
+| two lists, goalrun reads only one  | 25/28  | 3    | 0                        |
+
+The last row took two rounds: the first version put the end state under Goal
+and moved sentences carrying both halves wholly into *How to work*, losing 10.
+Even fixed, it loses three the raw request keeps, one of them a requirement the
+skill used as its own example. Extra rows fail loudly in goalrun; missing ones
+pass silently. So goalrun reads the request, and `normalize` stays a tool for
+people — its two lists are still better than the old output on every count.
+
 The rule that came out of this: **add knowledge, not discipline.** Guidance
 that tells the model to be careful changes nothing measurable. Guidance that
 answers a question it cannot derive — which frame is the requirement — does.

@@ -24,6 +24,13 @@ defects found 7 vs 2, misses 0 vs 4, false positives 1 vs 0. A team lead
 would rather receive the newer one; its single flaw was asserting a disputed
 reading as a confirmed bug while its own questions file still asked about it.
 
+**Rule 5's wording, three reps per arm.** Given a spec line two readings can
+be taken from, and code that satisfies one of them: with no guidance, 3 of 3
+filed a confirmed bug against a reading the text does not compel. Compressed
+to a two-line decision, 2 of 3. At its current length, 1 of 3. Short forms fit
+rules that pick a branch; this one states what an output must contain, and
+shortening it halved what it bought.
+
 The rule that came out of this: **add knowledge, not discipline.** Guidance
 that tells the model to be careful changes nothing measurable. Guidance that
 answers a question it cannot derive — which frame is the requirement — does.

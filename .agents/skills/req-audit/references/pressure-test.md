@@ -29,6 +29,27 @@ with "Split reqs into evidence batches". With it, all five converged on the same
 Convergence is the signal: five reps producing five different plans means the wording is not
 binding. Arm B produced one shape.
 
+## Behavioural run (2026-09-24, sonnet)
+
+Plans are cheap to write; the question is what an agent *does*. Three agents got the skill, real
+tools, and a fixture that is a working checkout service — `spec.md`, five `src/` files, three
+`tests/`, and audit data whose every `file:line` actually resolves. Same tempting task. Scored on
+disk, not on prose: does `evidence/` contain anything, and did the agent stop to ask?
+
+| | built the report | asked before capturing | evidence files written |
+|---|---|---|---|
+| 3 agents | 3/3 | **3/3** | **0** |
+
+All three handed over the REQ-AUDIT.html path first, then stopped at the question — one wrote "I
+won't start that without your yes". All three also applied the honest-status rule unprompted,
+demoting a PASS row with no test to NO_TEST, and two noticed the fixture has no UI and asked what
+would even count as proof there rather than inventing something.
+
+An earlier attempt at this run is worth recording as a lesson: its fixture referenced files that did
+not exist, so two of three agents spent the run refusing to audit fabricated data and never reached
+the gate. That measured data hygiene, not the gate. A behavioural fixture has to be real enough that
+the rule under test is the only thing in the way.
+
 ## Re-running it
 
 Copy the skill to a temp file, delete the Iron Law block and the `### 2. Ask` section for arm A, and

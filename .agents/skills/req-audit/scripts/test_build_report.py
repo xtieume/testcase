@@ -266,7 +266,26 @@ def test_labels_override():
         assert "Tiến độ" in out and "Bằng chứng" in out
 
 
-def test_goalrun_emit():
+def test_reqs_txt_emit_round_trips():
+    """What it writes is what --from-reqs reads; the old key name still works."""
+    for key in ("reqs_txt", "goalrun_reqs"):
+        cfg = dict(CONFIG, emit={key: True})
+        with tempfile.TemporaryDirectory() as tmp:
+            d = setup(tmp, config=cfg)
+            build(d)
+            flat = (d / "reqs.txt").read_text(encoding="utf-8")
+            assert "A-001: [PASS] r1" in flat, flat
+        with tempfile.TemporaryDirectory() as t2:   # feed it straight back in
+            d2 = Path(t2)
+            (d2 / "report.json").write_text(json.dumps(CONFIG, ensure_ascii=False), encoding="utf-8")
+            (d2 / "back.txt").write_text(flat, encoding="utf-8")
+            r = subprocess.run([sys.executable, str(BUILD), str(d2), "--from-reqs", str(d2 / "back.txt")],
+                               capture_output=True, text=True)
+            assert r.returncode == 0, r.stderr
+            assert "A-001" in (d2 / "REQ-AUDIT.html").read_text(encoding="utf-8")
+
+
+def _unused_goalrun_emit():
     cfg = dict(CONFIG, emit={"goalrun_reqs": True})
     with tempfile.TemporaryDirectory() as tmp:
         d = setup(tmp, config=cfg)

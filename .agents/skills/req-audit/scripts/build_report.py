@@ -127,8 +127,8 @@ tr.f select{background:var(--surface)}
 td{color:var(--ink2)}
 /* indicator columns (ids, status) read as one token -- wrapping them mid-word is noise;
    content columns keep wrapping */
-td.nw{color:var(--ink);white-space:nowrap}
-th{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td.nw{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+th{text-wrap:balance}
 /* the requirement table scrolls inside its own box -- 700+ rows must not turn the
    page into an endless scroll, and the sticky header only works against this container */
 .tw{max-height:__TH__;overflow:auto;border:1px solid var(--grid);border-radius:8px;
@@ -528,7 +528,8 @@ class Report:
         o.append("</table></div></main>")
 
         (self.root / "REQ-AUDIT.html").write_text("\n".join(o), encoding="utf-8")
-        if self.cfg.get("emit", {}).get("goalrun_reqs"):
+        emit = self.cfg.get("emit", {})
+        if emit.get("reqs_txt") or emit.get("goalrun_reqs"):   # goalrun_reqs: old name
             (self.root / "reqs.txt").write_text(
                 "".join(f"{r['id']}: [{r['status']}] {r.get('req', '')}"
                         + (f" (src: {r['src']})" if r.get("src") else "") + "\n" for r in reqs),

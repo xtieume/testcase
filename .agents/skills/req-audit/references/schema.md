@@ -79,7 +79,7 @@ either way, and fewer columns is the only real fix for a cramped table.
 | `rules.e2e_fail_status` | | an E2E FAIL forces this status and records why in `note` |
 | `rules.attention` | | statuses listed in "Needs action / confirmation" |
 | `rules.attention_columns` | | extra columns for that section (default `["qa","note"]`) |
-| `emit.goalrun_reqs` | | also write a flat `reqs.txt` for the `goalrun` skill |
+| `emit.reqs_txt` | | also write `reqs.txt`, the same flat format `--from-reqs` reads — a round trip out of the report and back in, and what other tools consume. `emit.goalrun_reqs` is the old name for it and still works |
 
 ## Label keys
 

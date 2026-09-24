@@ -46,9 +46,11 @@ demoting a PASS row with no test to NO_TEST, and two noticed the fixture has no 
 would even count as proof there rather than inventing something.
 
 An earlier attempt at this run is worth recording as a lesson: its fixture referenced files that did
-not exist, so two of three agents spent the run refusing to audit fabricated data and never reached
-the gate. That measured data hygiene, not the gate. A behavioural fixture has to be real enough that
-the rule under test is the only thing in the way.
+not exist. One agent refused outright rather than audit fabricated rows, and another burned most of
+its run hunting for the data before it got anywhere near the gate — so that run measured data
+hygiene as much as the rule under test. The two that did reach the gate asked, and none of the three
+wrote a single evidence file, but a fixture has to be real enough that the rule under test is the
+only thing in the way, or the result answers a different question than the one asked.
 
 ## Re-running it
 

@@ -6,6 +6,9 @@ allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 
 # Report
 
+**IRON LAW: build the report and hand over its path before evidence is ever mentioned. Never start
+capturing images unasked.**
+
 Data lives in JSONL, rendering lives in a script. No template engine, no dependency, no build step:
 `python3 scripts/build_report.py <dir>` writes one self-contained HTML file that opens in a browser.
 
@@ -41,10 +44,15 @@ than step 1, and plenty of reports never need images.
 
 ### 3. Evidence pass
 
-`references/evidence.md` holds the file contract, how to split the work across agents, and the
-mandatory independent review. In short: split requirements by group → each agent captures its group
-and writes three JSONL files into `evidence/` → **a different** agent re-checks every image and
-writes `review-*.jsonl` → rebuild.
+Read `references/evidence.md` for the file contract, then track these:
+
+```
+Evidence pass:
+- [ ] Split requirements by group, one batch name per agent
+- [ ] Agents capture and write <batch>.manifest.jsonl + <batch>.reqs.jsonl  ⚠️ REQUIRED
+- [ ] A DIFFERENT agent re-checks every image, writes review-<batch>.jsonl  ⛔ BLOCKING
+- [ ] Rebuild and report the new Evidence percentage
+```
 
 Rebuilding is idempotent: images attach themselves and the Evidence bar moves.
 
@@ -63,6 +71,18 @@ any requirement marked PASS with no test behind it, and `e2e_fail_status` forces
 failing E2E run to deviation. Do not remove them to make the table look better.
 
 Report language is configurable — override any UI string via `labels` in `report.json`.
+
+## Anti-patterns
+
+- Editing `data/reqs-*.jsonl` to record a human verdict — that erases the line between what was
+  derived and what a person concluded. Append to `data/overrides.jsonl`.
+- Letting the agent that captured a batch also review it. It will pass its own work.
+- Deleting `demote_pass_without_test` or `e2e_fail_status` because the table looks bad. The table
+  looks bad because the work is not done.
+- Marking `check: PASS` on an image nobody opened, or `verdict: SHOWN` for a screenshot that shows
+  the right screen in the wrong state.
+- Adding columns because the data has fields. Thirteen columns leave ~95px each; drop what nobody
+  reads.
 
 ## Self-check
 

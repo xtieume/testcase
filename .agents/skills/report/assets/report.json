@@ -1,0 +1,132 @@
+{
+ "title": "<SCOPE> — requirement audit",
+ "header": "<b>Scope:</b> … <b>Spec:</b> <code>path/to/spec</code> … <b>Method:</b> one Req per behaviour / condition / validation / edge case, each quoting <code>file:line</code> and checked against code and tests.",
+ "group_by": "id_prefix",
+ "findings": [],
+ "columns": [
+  {
+   "key": "id",
+   "label": "Req ID",
+   "nowrap": true,
+   "width": "112px"
+  },
+  {
+   "key": "area",
+   "label": "Area",
+   "width": "76px"
+  },
+  {
+   "key": "req",
+   "label": "Requirement",
+   "width": "16%"
+  },
+  {
+   "key": "src",
+   "label": "Spec source",
+   "width": "10%"
+  },
+  {
+   "key": "acc",
+   "label": "Acceptance",
+   "width": "70px"
+  },
+  {
+   "key": "status",
+   "label": "Status",
+   "render": "status",
+   "nowrap": true,
+   "width": "136px"
+  },
+  {
+   "key": "evidence",
+   "label": "Evidence",
+   "render": "evidence",
+   "width": "13%"
+  },
+  {
+   "key": "impl",
+   "label": "Implementation",
+   "width": "10%"
+  },
+  {
+   "key": "unit",
+   "label": "Unit/IT test",
+   "width": "8%"
+  },
+  {
+   "key": "e2e",
+   "label": "E2E",
+   "render": "e2e",
+   "width": "7%"
+  },
+  {
+   "key": "qa",
+   "label": "Issue / Q&A",
+   "width": "8%"
+  },
+  {
+   "key": "note",
+   "label": "Note",
+   "width": "10%"
+  }
+ ],
+ "status": {
+  "PASS": {
+   "icon": "✅",
+   "label": "Implemented and tested",
+   "color": "#0ca30c"
+  },
+  "NO_TEST": {
+   "icon": "🟡",
+   "label": "Implemented, no test",
+   "color": "#fab219"
+  },
+  "MISSING": {
+   "icon": "⬜",
+   "label": "Not implemented",
+   "color": "#898781"
+  },
+  "DEVIATION": {
+   "icon": "🔴",
+   "label": "Deviates from spec",
+   "color": "#d03b3b"
+  },
+  "CONFIRM": {
+   "icon": "❓",
+   "label": "Unclear — needs confirm",
+   "color": "#ec835a"
+  },
+  "OUT_OF_SCOPE": {
+   "icon": "⚪",
+   "label": "Out of scope",
+   "color": "#c3c2b7"
+  }
+ },
+ "rules": {
+  "done": [
+   "PASS"
+  ],
+  "demote_pass_without_test": {
+   "from": "PASS",
+   "to": "NO_TEST",
+   "when_empty": [
+    "unit",
+    "e2e"
+   ]
+  },
+  "e2e_fail_status": "DEVIATION",
+  "attention": [
+   "CONFIRM",
+   "DEVIATION",
+   "MISSING"
+  ],
+  "attention_columns": [
+   "qa",
+   "note"
+  ]
+ },
+ "emit": {
+  "goalrun_reqs": false
+ },
+ "labels": {}
+}

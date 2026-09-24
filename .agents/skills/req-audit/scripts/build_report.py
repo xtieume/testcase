@@ -1,4 +1,4 @@
-"""Build REPORT.html from report.json + data/*.jsonl.
+"""Build REQ-AUDIT.html from report.json + data/*.jsonl.
 
 Run: python3 build_report.py <dir>                      (<dir> holds report.json)
      python3 build_report.py <dir> --from-reqs <file>   import a flat reqs.txt first
@@ -527,7 +527,7 @@ class Report:
             o.append(f'<tr data-r="{blob}">{cells}</tr>')
         o.append("</table></div></main>")
 
-        (self.root / "REPORT.html").write_text("\n".join(o), encoding="utf-8")
+        (self.root / "REQ-AUDIT.html").write_text("\n".join(o), encoding="utf-8")
         if self.cfg.get("emit", {}).get("goalrun_reqs"):
             (self.root / "reqs.txt").write_text(
                 "".join(f"{r['id']}: [{r['status']}] {r.get('req', '')}"

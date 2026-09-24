@@ -9,7 +9,7 @@ Build: `python3 scripts/build_report.py <dir>`.
 <dir>/data/overrides.jsonl   post-verification corrections (optional)
 <dir>/data/e2e-results.jsonl E2E outcomes (optional)
 <dir>/evidence/…             see references/evidence.md
-<dir>/REPORT.html            generated
+<dir>/REQ-AUDIT.html            generated
 ```
 
 Rendering is plain Python — deterministic, no network, no model. The judgement lives in the data.
@@ -73,13 +73,20 @@ either way, and fewer columns is the only real fix for a cramped table.
 | `findings` | | list of HTML strings for the "Key findings" section |
 | `baseline` | | `{"label","total","status":{},"e2e":{}}` → the "Before → Now" table |
 | `table_height` | | height of the requirement table's scroll box (default `72vh`). The table scrolls inside it so 700 rows do not turn the page into an endless scroll |
-| `labels` | | override any UI string, e.g. `{"progress":"Tiến độ","evidence":"Bằng chứng"}`. Report language is config, not code |
+| `labels` | | override any UI string; report language is config, not code. The keys are listed below |
 | `rules.done` | | which statuses count as done for the headline percentage (default: first status) |
 | `rules.demote_pass_without_test` | | `{"from","to","when_empty":[field,…]}` — demote when the row tracks tests at all (at least one listed field is present) and none of them holds a value. An empty field means "looked, found none" and counts toward the demotion; a row carrying none of the fields says nothing about tests, so an imported flat list keeps its statuses |
 | `rules.e2e_fail_status` | | an E2E FAIL forces this status and records why in `note` |
 | `rules.attention` | | statuses listed in "Needs action / confirmation" |
 | `rules.attention_columns` | | extra columns for that section (default `["qa","note"]`) |
 | `emit.goalrun_reqs` | | also write a flat `reqs.txt` for the `goalrun` skill |
+
+## Label keys
+
+Every visible string outside `title`, `header`, `findings` and the column labels comes from one of
+these, so a whole report can be translated without touching the script:
+
+`progress` · `status` · `evidence` · `evidence_unit` · `evidence_images` · `evidence_findings` · `evidence_none` · `evidence_partial` · `no_evidence_bucket` · `e2e_ran` · `built_at` · `baseline` · `baseline_before_after` · `total_reqs` · `group` · `by_group` · `total` · `findings` · `summary` · `attention` · `table` · `filter` · `req` · `rows` · `all` · `filter_col` · `demoted` · `e2e_failed`
 
 ## Filtering
 

@@ -62,7 +62,7 @@ def build(d, expect_fail=False):
         assert r.returncode != 0, f"expected failure, got:\n{r.stdout}"
         return r.stderr + r.stdout
     assert r.returncode == 0, f"build failed:\n{r.stderr}"
-    return (d / "REPORT.html").read_text(encoding="utf-8")
+    return (d / "REQ-AUDIT.html").read_text(encoding="utf-8")
 
 
 def test_demote_pass_without_test():
@@ -203,7 +203,7 @@ def test_import_reqs_txt():
                 (d / "data" / "reqs-00-imported.jsonl").read_text(encoding="utf-8").splitlines()]
         assert rows[0] == {"id": "A-001", "status": "PASS", "req": "does a thing", "src": "spec.md:12"}
         assert rows[1] == {"id": "A-002", "status": "MISSING", "req": "does another"}
-        out = (d / "REPORT.html").read_text(encoding="utf-8")
+        out = (d / "REQ-AUDIT.html").read_text(encoding="utf-8")
         assert "does a thing" in out
         # re-import must refuse rather than clobber
         r2 = subprocess.run([sys.executable, str(BUILD), str(d), "--from-reqs", str(flat)],

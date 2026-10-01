@@ -23,6 +23,13 @@
   <a href="../../releases"><img alt="Releases" src="https://img.shields.io/badge/Releases-6E7681?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
+<p align="center">
+  <a href="docs/how-it-works.md#1-the-pipeline"><img alt="The pipeline" src="https://img.shields.io/badge/1-The_pipeline-8957e5?style=flat-square"></a>
+  <a href="docs/how-it-works.md#2-what-changes"><img alt="What changes" src="https://img.shields.io/badge/2-What_changes-1f6feb?style=flat-square"></a>
+  <a href="docs/how-it-works.md#3-how-one-row-is-decided"><img alt="How a row is decided" src="https://img.shields.io/badge/3-How_a_row_is_decided-2ea043?style=flat-square"></a>
+  <a href="docs/how-it-works.md#4-proving-the-checks-themselves"><img alt="Proving the checks" src="https://img.shields.io/badge/4-Proving_the_checks-d97757?style=flat-square"></a>
+</p>
+
 testcase is a set of agent skills that take a requirement all the way to code that ships: pin down what the spec asks for, turn it into real tests, then build until every check passes. Every step leaves proof you can rerun.
 
 ## Done should mean done

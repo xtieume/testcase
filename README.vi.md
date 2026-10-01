@@ -23,6 +23,13 @@
   <a href="../../releases"><img alt="Các bản phát hành" src="https://img.shields.io/badge/Bản_phát_hành-6E7681?style=for-the-badge&logo=github&logoColor=white"></a>
 </p>
 
+<p align="center">
+  <a href="docs/how-it-works.vi.md#1-dây-chuyền"><img alt="Dây chuyền" src="https://img.shields.io/badge/1-Dây_chuyền-8957e5?style=flat-square"></a>
+  <a href="docs/how-it-works.vi.md#2-khác-gì"><img alt="Khác gì" src="https://img.shields.io/badge/2-Khác_gì-1f6feb?style=flat-square"></a>
+  <a href="docs/how-it-works.vi.md#3-một-row-được-quyết-thế-nào"><img alt="Một row được quyết thế nào" src="https://img.shields.io/badge/3-Một_row_được_quyết_thế_nào-2ea043?style=flat-square"></a>
+  <a href="docs/how-it-works.vi.md#4-chứng-minh-chính-những-cái-check"><img alt="Chứng minh các check" src="https://img.shields.io/badge/4-Chứng_minh_các_check-d97757?style=flat-square"></a>
+</p>
+
 testcase là bộ skill cho agent, đưa một requirement đi trọn đường tới code ship được: chốt spec yêu cầu gì, biến nó thành test thật, rồi build tới khi mọi check đều pass. Bước nào cũng để lại bằng chứng chạy lại được.
 
 ## Xong phải là xong thật

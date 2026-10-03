@@ -521,38 +521,3 @@ question was whether agents could follow it, not whether they would invent it. A
 their reviewer loops for a single round, so nothing here says whether a second round would have
 caught the arithmetic error the first missed. And no run exercised a `MANUAL` row, a
 `SWEEP STOPPED`, or a tree large enough for the per-row clone to hurt.
-
-## Persistent run handoff — 2026-10-03
-
-Scenario: a fresh agent B must continue export halfway through a phase while agent C has
-unfinished login work in the same source tree. A amended requirements in chat, earlier checks
-were green, verify may have been killed, and the user allows ten minutes. Two independent
-fresh-context consuming agents read the pre-change and updated skill instructions respectively.
-These were read-only proposed-action pressure tests; neither agent executed a build or recovery.
-
-**Baseline response:** “I would first read `.testcases/goalrun/ledger.tsv`,
-`.testcases/goalrun/reqs.txt`, `.testcases/goalrun/baseline.json`, and
-`.testcases/goalrun/signoff.tsv`.” It recognized ambiguity but had no run selector. It could
-not recover phase ordering, strike counts, goal identity or chat-only decisions. It planned
-ordinary checks before suspect recovery, matching the old text while the engine only restored
-legacy undo during `--verify`.
-
-**Updated response:** first `list` and `inspect` the explicit export run, match its spec and
-workspace, then `resume` before edits. It retained baseline, IDs and failure counts, required
-release or deliberate observed-generation takeover, and refused to bypass an orphan check or
-recovery conflict. It selected this run's report/table paths, required missing amendment words
-rather than deriving them from code, and distinguished old greens/subset proof from a current
-bare `--verify`. Unfinished work checkpoints and releases for the next agent.
-
-One gap in the updated response: it proposed `checkpoint --failure` after every engine red.
-The engine already persists these failures. The shared reference and all three skills now say
-`--failure` records only inline/delegated failures not already recorded, so handoff does not
-double-count strikes. Lifecycle additions are a reference protocol with mechanical gates;
-existing proof discipline is retained. Wording micro-tests are not a substitute for execution.
-
-Executable coverage lives beside the tool, not in ignored run artifacts:
-`python3 -m unittest discover -s .agents/skills/goalrun/scripts -p 'test_run*.py'`
-exercises separate subprocess continuation, isolated baselines/signoffs, token revocation,
-generation/version/workspace refusals, input drift, timeout/interruption evidence, guarded
-cross-run recovery, killed-parent/orphan-check locking, and conflicting source edits.
-`python3 .agents/skills/goalrun/scripts/test_goalrun.py` retains legacy engine coverage.

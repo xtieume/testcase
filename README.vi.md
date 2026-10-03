@@ -55,7 +55,7 @@ Chuỗi lõi, mỗi chặng một lần bàn giao. Dùng riêng từng chặng, 
 | 2. Chứng minh | `testcase` | Các id `TC-` truy về một `REQ-`, implement thành test bằng framework của chính repo |
 | 3. Build | `goalrun` | Phần implement, từng phase, tới khi ledger các check exit 0 |
 
-Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định một row và chứng minh một check: [Các skill này làm việc thế nào](docs/how-it-works.vi.md).
+Năm sơ đồ về chuỗi đó, và về cách `goalrun` quyết định một row và chứng minh một check: [Các skill này làm việc thế nào](docs/how-it-works.vi.md).
 
 ## Bắt đầu
 

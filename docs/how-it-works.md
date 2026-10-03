@@ -2,13 +2,14 @@
 
 [Tiếng Việt](how-it-works.vi.md)
 
-Four pictures. Everything here is drawn from the skills' own `SKILL.md` files.
+Five diagrams. Everything here is drawn from the skills' own `SKILL.md` files.
 
 ## 1. The pipeline
 
 `docs-review` says what is required, `testcase` says how it is proven, `goalrun` says whether
 it holds. Each stage hands the next a set of ids, and each boundary has a gate that fails
-rather than passing in silence.
+rather than passing in silence. All three stages use the same explicitly selected run ID;
+requirements, reports and ledger inputs stay inside that run.
 
 ```mermaid
 flowchart TD
@@ -36,7 +37,7 @@ flowchart TD
         GR1 --> GR2 --> GR3
     end
 
-    GATE{"goalrun --lint-ledger --requirements"}
+    GATE{"goalrun --run ID --token TOKEN --lint-ledger"}
     OUT["Exit 0 = the ledger measures something"]
 
     SPEC --> DR1
@@ -79,8 +80,8 @@ flowchart TD
     subgraph WITH["With goalrun"]
         G1["Is it done?"]
         G2["Ledger: one row per requirement"]
-        G3["Run the script"]
-        G4{"Every row PASS?"}
+        G3["Run whole-ledger --verify for the selected run"]
+        G4{"Whole proof passed and evidence still current?"}
         G5["DONE — exit 0"]
         G6["NOT DONE — the table, naming every red and waiting row"]
         G1 --> G2 --> G3 --> G4
@@ -155,15 +156,17 @@ is asked for rather than assumed.
 
 ```mermaid
 flowchart TD
-    V["goalrun --verify"]
+    V["goalrun --run ID --token TOKEN --verify"]
     LOCK{"Another goalrun running checks in this tree?"}
     STOPL["Exit 2 — a check racing another build goes red for reasons that are not the code"]
 
+    RECOVER["Recover pending journals from every run; refuse conflicting edits"]
+    LINT["Gate requirement coverage against this run’s reqs.txt"]
     PRE["Pre-pass: run every check on the tree"]
     RED{"Row already red?"}
     AR["ALREADY RED — it proves nothing by going red again, and stays out of the sweep"]
 
-    PLANT["Make the edit the row's break describes"]
+    PLANT["Journal original and planted bytes, then apply the break"]
     MOVED{"Was there exactly one place to change?"}
     BF["BREAK FAILED — nothing to change, or two places; no check is spent on it"]
 
@@ -172,7 +175,7 @@ flowchart TD
     HOLLOW["HOLLOW — it passed, so every input it tries is one this defect is invisible in"]
     STUCK["STUCK — it hung, which proves nothing either way"]
     VERIFIED["VERIFIED — it went red, as it must"]
-    DROP["Write the file back, byte for byte"]
+    DROP["Compare current bytes, restore the original, then clear the journal"]
 
     SWEEP["--blast: run every other row under this same break"]
     SIB{"Which rows went red?"}
@@ -182,13 +185,14 @@ flowchart TD
 
     V --> LOCK
     LOCK -->|"yes"| STOPL
-    LOCK -->|"no"| PRE
+    LOCK -->|"no"| RECOVER
+    RECOVER --> LINT --> PRE
     PRE --> RED
     RED -->|"yes"| AR
-    RED -->|"no"| PLANT
-    PLANT --> MOVED
+    RED -->|"no"| MOVED
     MOVED -->|"no"| BF
-    MOVED -->|"yes"| CHECK
+    MOVED -->|"yes"| PLANT
+    PLANT --> CHECK
     CHECK --> RESULT
     RESULT -->|"passed"| HOLLOW
     RESULT -->|"hung"| STUCK
@@ -200,7 +204,10 @@ flowchart TD
     SWEEP -->|"out of sweeping time"| BUDGET
     VERIFIED --> DROP
     HOLLOW --> DROP
-    BF --> DROP
+    STUCK --> DROP
+    SHARED --> DROP
+    BLAST --> DROP
+    BUDGET --> DROP
 
     style VERIFIED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style SHARED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
@@ -213,7 +220,7 @@ flowchart TD
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
-Every box above is a string the script actually prints. `HOLLOW`, `STUCK`, `BLAST`,
+Verdicts describe what the script observed. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
 proved nothing is not a pass.
 
@@ -221,3 +228,45 @@ proved nothing is not a pass.
 behaviour from the defect — every input it tries is an input this defect is invisible in. The
 route back is into `testcase`, whose `Distinguishes from` column names the wrong implementation
 each case rules out, never forwards into the ledger by re-pointing the row.
+
+
+## 5. Independent runs and agent handoff
+
+Initialize a run before editing source. Each goal gets its own requirements, ledger, baseline,
+signatures, reports and checkpoint under `.testcases/runs/<id>/`. Working state is excluded
+from git; case tables ship at `docs/testcases/<id>/testcases.md`, and executable tests stay in
+the repository’s test framework. `docs-review` and `testcase` use these same paths even when
+invoked separately.
+
+```mermaid
+flowchart TD
+    NEW["New goal: init run ID before edits"]
+    A["Agent A: resume, save writer token"]
+    WORK["Use selected run paths; checkpoint phase, next action and failure history"]
+    RELEASE["Release: save handoff and revoke A’s token"]
+    B["Agent B: list / inspect, match goal and spec, resume with new token"]
+    CONT["Continue with original baseline, IDs and failure counts"]
+    PROOF["Run whole-ledger --verify; inspect current evidence"]
+    OTHER["Another goal: separate run ID and artifacts"]
+    SOURCE["Shared source: workspace lock serializes engine checks and recovery"]
+
+    NEW --> A --> WORK --> RELEASE --> B --> CONT --> PROOF
+    OTHER --> SOURCE
+    WORK --> SOURCE
+    CONT --> SOURCE
+```
+
+Ownership never expires automatically. After a crash, inspect the current generation, confirm
+that the previous agent and its check processes have stopped, then take over explicitly with
+`--expected-generation`. Delegated children receive selected paths and their assigned role;
+the controller retains the token and records their results.
+
+A new owner must verify again. Source, spec, tests or authoritative run inputs changing also
+makes saved evidence stale. A plain measurement or subset check cannot establish completion:
+inspect must show `whole_ledger_verified: true` and `evidence_stale: false`. Signed MANUAL rows
+and explicit test-first waivers can pass without a planted defect. Direct edits and external
+builds still need coordination because they share source and do not use the tool’s locks.
+
+See [run context](../.agents/skills/goalrun/references/run-context.md) for commands, recovery
+and legacy migration. Continuing in the same canonical workspace preserves ignored state;
+a clone or moved workspace requires an explicit transfer and migration.

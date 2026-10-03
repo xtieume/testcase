@@ -55,7 +55,7 @@ The core pipeline, one handoff per stage. Use any stage alone, or chain them and
 | 2. Prove | `testcase` | `TC-` ids traced to a `REQ-`, implemented as tests in the repo's own framework |
 | 3. Build | `goalrun` | The implementation, phase by phase, until the ledger of checks exits 0 |
 
-Four diagrams of the pipeline, and of how `goalrun` decides a row and proves a check: [How these skills work](docs/how-it-works.md).
+Five diagrams of the pipeline, and of how `goalrun` decides a row and proves a check: [How these skills work](docs/how-it-works.md).
 
 ## Get started
 

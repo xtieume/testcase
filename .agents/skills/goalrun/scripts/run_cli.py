@@ -61,7 +61,7 @@ def fingerprint(store, view, engine):
     spec = view['manifest']['spec']
     if spec:
         full = spec if os.path.isabs(spec) else os.path.join(store.root, spec)
-        files['spec:' + spec] = engine._mark(full) if os.path.isfile(full) else 'unavailable'
+        files['spec:' + spec] = engine._mark(os.path.realpath(full)) if os.path.isfile(full) else 'unavailable'
     return digest(json.dumps(files, sort_keys=True).encode())
 
 
@@ -286,6 +286,53 @@ def named_engine(engine, args):
                     session.finish(code, log_path)
 
 
+def initialize_run(store, engine, args):
+    """Stage the complete payload before making the run visible to other controllers."""
+    destination = store._paths(args.run_id)['testcases']
+    cases = Path(store.root) / 'testcases.md'
+    migrating_cases = args.action == 'migrate' and cases.exists()
+    if migrating_cases and os.path.lexists(destination):
+        raise RunError('migration testcase destination already exists; reconcile its permanent IDs first')
+    linked_table = None
+
+    def populate(paths):
+        nonlocal linked_table
+        if args.action == 'init':
+            engine.take_baseline(path=os.path.join(paths['goalrun_dir'], 'baseline.json'))
+            return
+        legacy = Path(store.root) / '.testcases/goalrun'
+        for name in ('ledger.tsv', 'reqs.txt', 'baseline.json', 'signoff.tsv'):
+            if (legacy / name).exists():
+                shutil.copy2(legacy / name, Path(paths['goalrun_dir']) / name)
+        for name, dest in (('docs-review', 'docs_review_dir'), ('testcase', 'testcase_dir')):
+            source = Path(store.root) / '.testcases' / name
+            if source.exists():
+                shutil.copytree(source, paths[dest], dirs_exist_ok=True)
+        if migrating_cases:
+            staged_table = Path(paths['run_dir']) / 'migrated-testcases.md'
+            shutil.copy2(cases, staged_table)
+            store._safe(destination)
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            # Linking a finished payload is exclusive: even a late collision cannot overwrite.
+            os.link(staged_table, destination)
+            linked_table = os.stat(destination)
+            staged_table.unlink()
+
+    try:
+        store.create(args.run_id, args.goal, args.spec, populate=populate)
+    except BaseException:
+        # Do not leave a tracked table behind after a failed publication. Never remove a
+        # replacement from another editor, or a table belonging to a successfully published run.
+        if linked_table is not None and not os.path.exists(store._paths(args.run_id)['run_dir']):
+            try:
+                current = os.stat(destination, follow_symlinks=False)
+                if (current.st_dev, current.st_ino) == (linked_table.st_dev, linked_table.st_ino):
+                    os.unlink(destination)
+            except FileNotFoundError:
+                pass
+        raise
+
+
 def lifecycle(engine, argv):
     parser = argparse.ArgumentParser(description='Persistent goalrun lifecycle (JSON output)')
     parser.add_argument('action', choices=ACTIONS)
@@ -318,22 +365,7 @@ def lifecycle(engine, argv):
                 legacy = Path(store.root) / '.testcases/goalrun'
                 if not (legacy / 'baseline.json').is_file():
                     raise RunError('migration needs the existing legacy baseline; never take a new one mid-work')
-            manifest = store.create(a.run_id, a.goal, a.spec)
-            paths = manifest['paths']
-            if a.action == 'init':
-                engine.take_baseline(path=os.path.join(paths['goalrun_dir'], 'baseline.json'))
-            else:
-                for name in ('ledger.tsv', 'reqs.txt', 'baseline.json', 'signoff.tsv'):
-                    if (legacy / name).exists():
-                        shutil.copy2(legacy / name, Path(paths['goalrun_dir']) / name)
-                for name, dest in (('docs-review', 'docs_review_dir'), ('testcase', 'testcase_dir')):
-                    source = Path(store.root) / '.testcases' / name
-                    if source.exists():
-                        shutil.copytree(source, paths[dest], dirs_exist_ok=True)
-                cases = Path(store.root) / 'testcases.md'
-                if cases.exists():
-                    os.makedirs(os.path.dirname(paths['testcases']), exist_ok=True)
-                    shutil.copy2(cases, paths['testcases'])
+            initialize_run(store, engine, a)
             result = store.inspect(a.run_id)
         elif a.action == 'resume':
             existing = store.inspect(a.run_id)

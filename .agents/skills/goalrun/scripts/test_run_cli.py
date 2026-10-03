@@ -100,6 +100,21 @@ class RunCliTests(unittest.TestCase):
         (self.root / 'feature.txt').write_text('different source\n')
         self.assertTrue(self.inspect()['evidence_stale'])
 
+    def test_external_symlinked_spec_content_change_stales_whole_proof(self):
+        with tempfile.TemporaryDirectory() as outside:
+            spec = Path(outside) / 'spec.md'
+            spec.write_text('Original requirement\n')
+            (self.root / 'spec.md').symlink_to(spec)
+            self.cli('init', 'export', '--goal', 'Export CSV', '--spec', 'spec.md')
+            token = json.loads(self.cli('resume', 'export', '--owner', 'A').stdout)['token']
+            self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                        brk='feature.txt :: old :: broken')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            self.assertTrue(self.inspect()['last_evidence']['whole_ledger_verified'])
+            self.assertFalse(self.inspect()['evidence_stale'])
+            spec.write_text('Amended requirement\n')
+            self.assertTrue(self.inspect()['evidence_stale'])
+
     def test_evidence_changes_on_requirements_and_ledger_amendment(self):
         token = self.init()
         self.ledger()
@@ -140,6 +155,94 @@ class RunCliTests(unittest.TestCase):
         self.assertEqual((self.root / 'docs/testcases/export/testcases.md').read_text(), 'Existing TC-1\n')
         self.assertTrue((old / 'ledger.tsv').exists())
         self.cli(code=2)
+
+    def injected_cli(self, patch, *args, code=2):
+        bootstrap = (f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r}); "
+                     "import goalrun, run_cli; "
+                     f"sys.argv = {[str(SCRIPT), *args]!r}\n" + patch +
+                     "\nraise SystemExit(goalrun.main())\n")
+        out = subprocess.run([sys.executable, '-c', bootstrap], cwd=self.root,
+                             text=True, capture_output=True, timeout=15)
+        self.assertEqual(out.returncode, code, out.stdout + out.stderr)
+        return out
+
+    def test_failed_init_can_retry_without_disabling_legacy(self):
+        self.injected_cli("def fail(**kwargs):\n    raise OSError('baseline failed')\n"
+                          "goalrun.take_baseline = fail", 'init', 'export', '--goal', 'Export CSV')
+        self.assertFalse(self.folder().exists())
+        self.assertEqual(json.loads(self.cli('list').stdout), [])
+        self.cli('--baseline')
+        self.init()
+
+    def test_failed_migration_can_retry_and_preserves_legacy(self):
+        self.cli('--baseline')
+        old = self.root / '.testcases/goalrun/baseline.json'
+        original = old.read_bytes()
+        self.injected_cli("real_copy = run_cli.shutil.copy2\n"
+                          "def fail(*args, **kwargs):\n    real_copy(*args, **kwargs)\n"
+                          "    raise OSError('copy failed')\nrun_cli.shutil.copy2 = fail",
+                          'migrate', 'export', '--goal', 'Export CSV')
+        self.assertFalse(self.folder().exists())
+        self.assertEqual(json.loads(self.cli('list').stdout), [])
+        self.assertEqual(old.read_bytes(), original)
+        self.cli('migrate', 'export', '--goal', 'Export CSV')
+
+    def test_killed_init_does_not_publish_an_incomplete_run(self):
+        bootstrap = (f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r}); "
+                     "import goalrun; from pathlib import Path; import time\n"
+                     "def pause(**kwargs):\n    Path('.testcases/initializing').touch()\n"
+                     "    time.sleep(30)\ngoalrun.take_baseline = pause\n"
+                     f"sys.argv = {[str(SCRIPT), 'init', 'export', '--goal', 'Export CSV']!r}\n"
+                     "raise SystemExit(goalrun.main())\n")
+        proc = subprocess.Popen([sys.executable, '-c', bootstrap], cwd=self.root,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.root / '.testcases/initializing').exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue((self.root / '.testcases/initializing').exists())
+            self.assertEqual(json.loads(self.cli('list').stdout), [])
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)
+        self.assertFalse(self.folder().exists())
+        self.init()
+
+    def test_migration_refuses_existing_tracked_testcase_table(self):
+        self.cli('--baseline')
+        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
+        destination = self.root / 'docs/testcases/export/testcases.md'
+        destination.parent.mkdir(parents=True)
+        destination.write_text('Tracked TC-99\n')
+        self.cli('migrate', 'export', '--goal', 'Export CSV', code=2)
+        self.assertEqual(destination.read_text(), 'Tracked TC-99\n')
+        self.assertEqual((self.root / 'testcases.md').read_text(), 'Legacy TC-1\n')
+        self.assertFalse(self.folder().exists())
+        destination.unlink()
+        self.cli('migrate', 'export', '--goal', 'Export CSV')
+        self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
+
+    def test_migration_late_table_collision_is_not_overwritten(self):
+        self.cli('--baseline')
+        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
+        self.injected_cli("real_link = run_cli.os.link\n"
+                          "def collide(source, destination):\n"
+                          "    run_cli.Path(destination).write_text('Tracked TC-99\\n')\n"
+                          "    real_link(source, destination)\nrun_cli.os.link = collide",
+                          'migrate', 'export', '--goal', 'Export CSV')
+        self.assertFalse(self.folder().exists())
+        self.assertEqual((self.root / 'docs/testcases/export/testcases.md').read_text(),
+                         'Tracked TC-99\n')
+
+    def test_failed_publication_removes_only_its_migrated_table(self):
+        self.cli('--baseline')
+        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
+        self.injected_cli("def fail(*args):\n    raise OSError('publish failed')\n"
+                          "run_cli.os.rename = fail", 'migrate', 'export', '--goal', 'Export CSV')
+        self.assertFalse(self.folder().exists())
+        self.assertFalse((self.root / 'docs/testcases/export/testcases.md').exists())
+        self.assertEqual((self.root / 'testcases.md').read_text(), 'Legacy TC-1\n')
+        self.cli('migrate', 'export', '--goal', 'Export CSV')
 
     def test_partial_verify_is_not_whole_ledger_proof(self):
         token = self.init()

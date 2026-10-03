@@ -119,7 +119,8 @@ class Store:
         finally:
             os.close(fd)
 
-    def create(self, run_id, goal, spec=''):
+    def create(self, run_id, goal, spec='', populate=None):
+        """Publish atomically after populate(staged_paths) prepares any required payload."""
         paths = self._paths(run_id)
         if not isinstance(goal, str) or not goal.strip():
             raise RunError('a run needs a nonempty goal')
@@ -141,6 +142,12 @@ class Store:
                 os.mkdir(os.path.join(staging, name))
             self._atomic(os.path.join(staging, 'manifest.json'), manifest)
             self._atomic(os.path.join(staging, 'checkpoint.json'), checkpoint)
+            if populate is not None:
+                staged_paths = dict(paths)
+                for key, path in paths.items():
+                    if key != 'testcases':
+                        staged_paths[key] = os.path.join(staging, os.path.relpath(path, paths['run_dir']))
+                populate(staged_paths)
             # Cooperating creators hold the same lock; refuse rather than replace
             # any existing target, including an incomplete or symlinked run.
             if os.path.lexists(paths['run_dir']):

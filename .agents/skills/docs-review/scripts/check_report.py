@@ -9,7 +9,7 @@ VERDICTS_A = {"Covered", "Partial", "Missing", "Contradict", "Conflict", "Stale"
               "Unspecified", "Undecided"}
 VERDICTS_B = {"Stated", "Inferred", "Conflicting", "Absent"}
 NO_EVIDENCE_NEEDED = {"Missing", "Undecided", "Absent"}
-ID_RE = re.compile(r"^(REQ|DOC|Q)-(?:[A-Z0-9]+-)?\d{3}$|^Q-?\d+$", re.I)
+ID_RE = re.compile(r"[A-Za-z0-9][\w.-]*")
 
 
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
@@ -111,6 +111,19 @@ Searched the tree for: first, second, third — nothing outside the set.
     problems, counts = run(report.replace('REQ-A-', 'REQ-'))
     assert problems == [], problems
     assert sum(counts.values()) == 4, 'short imported REQ IDs silently disappeared'
+
+    for imported in ('R1', 'AUTH-7', 'REQ-1', 'REQ-1234'):
+        imported_report = report.replace('REQ-A-001', imported)
+        problems, counts = run(imported_report)
+        assert problems == [], problems
+        assert sum(counts.values()) == 4, f'{imported} silently disappeared'
+        fires(imported_report.replace(f'| {imported} | first | Covered | D1:1 | "x" |',
+                                      f'| {imported} | first | Covered | | |'),
+              'with no evidence or quote', f'{imported} without evidence')
+        fires(imported_report.replace('| REQ-A-003 | third | Undecided | | |',
+                                      f'| {imported} | third | Undecided | | |'),
+              f'duplicate ID {imported}', f'{imported} duplicate')
+    fires(report.replace('REQ-A-001', 'bad/id'), 'invalid requirement ID', 'malformed ID')
 
     # The checklist and the round log carry IDs and numbers but no verdict column.
     # Counting their rows is the bug this header selection exists to prevent.
@@ -307,13 +320,18 @@ def lint(path, verdicts=VERDICTS_A):
     docs, base = inventory(text_all), os.getcwd()
 
     for n, cells in rows(path):
-        if len(cells) < 3 or not ID_RE.match(cells[0]):
+        rid = re.split(r"\s*\[OBSOLETE", cells[0], maxsplit=1, flags=re.I)[0].strip()
+        if not ID_RE.fullmatch(rid) or not re.search(r'[A-Za-z]', rid):
+            problems.append(f"{path}:{n}: invalid requirement ID {rid!r}")
+            continue
+        if len(cells) < 3:
+            problems.append(f"{path}:{n}: {rid} has an incomplete verdict row")
             continue
         # a retired row keeps its id and says so; it has no verdict to lint
-        if "[OBSOLETE" in cells[0].upper() or (len(cells) > 1 and "[OBSOLETE" in cells[1].upper()):
-            seen[cells[0].split()[0]] += 1
+        if "[OBSOLETE" in cells[0].upper() or "[OBSOLETE" in cells[1].upper():
+            seen[rid] += 1
             continue
-        rid, verdict = cells[0], next((c for c in cells if c in verdicts), None)
+        verdict = next((c for c in cells if c in verdicts), None)
         seen[rid] += 1
         if verdict is None:
             problems.append(f"{path}:{n}: {rid} has no valid verdict (one of {sorted(verdicts)})")

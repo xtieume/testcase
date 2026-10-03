@@ -18,7 +18,8 @@ python3 "$GOALRUN" list
 ```
 
 `init` takes the baseline **before any edits**, creates an unowned run, and refuses duplicate
-IDs. Copy the top-level `token` from `resume` JSON into `TOKEN`; it authorizes this owner.
+IDs. The baseline and migration payload are staged before a run becomes visible; a failed
+preparation leaves the ID available for retry. Copy the top-level `token` from `resume` JSON into `TOKEN`; it authorizes this owner.
 `inspect` and `list` are read-only and never return an ownership token. Read the goal, spec,
 checkpoint, handoff, generation and evidence before continuing. Resume never resets the
 baseline, requirements, permanent IDs, failure counts or prior decisions.
@@ -131,5 +132,6 @@ python3 "$GOALRUN" resume export-v1 --owner controller-a
 
 `migrate` copies the existing legacy baseline, ledger, reqs, signatures, docs-review/testcase
 artifacts and root testcases.md into selected run paths, leaves originals untouched and never
-retakes the baseline. Reconcile pending legacy undo before migration. Once a named run exists,
+retakes the baseline. An existing destination testcase table is refused; reconcile its permanent
+IDs before retrying migration. Reconcile pending legacy undo before migration. Once a named run exists,
 select `--run` explicitly for engine commands.

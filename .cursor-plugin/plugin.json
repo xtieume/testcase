@@ -22,5 +22,6 @@
     "playwright",
     "browser-automation"
   ],
-  "skills": "./.agents/skills"
+  "skills": "./.agents/skills",
+  "displayName": "testcase"
 }

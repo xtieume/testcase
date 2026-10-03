@@ -12,3 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: goalrun self-checks
         run: python3 .agents/skills/goalrun/scripts/test_goalrun.py
+      - name: Plugin packaging checks
+        run: |
+          python3 scripts/sync_plugins.py --check
+          python3 tests/test_plugins.py

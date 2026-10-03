@@ -54,20 +54,8 @@ jobs:
 
       - name: Write version into the manifests
         run: |
-          python3 - "${{ steps.bump.outputs.version }}" <<'PY'
-          import json, sys
-
-          version = sys.argv[1]
-          for path in [".claude-plugin/plugin.json", ".zcode-plugin/plugin.json"]:
-              data = json.load(open(path))
-              data["version"] = version
-              open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-          for path in [".claude-plugin/marketplace.json", ".zcode-plugin/marketplace.json"]:
-              data = json.load(open(path))
-              for plugin in data["plugins"]:
-                  plugin["version"] = version
-              open(path, "w").write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
-          PY
+          python3 scripts/sync_plugins.py --version "${{ steps.bump.outputs.version }}"
+          python3 scripts/sync_plugins.py --check
 
       - name: Commit, tag and release
         env:
@@ -76,7 +64,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .claude-plugin .zcode-plugin
+          git add .*-plugin gemini-extension.json package.json
           git commit -m "chore: bump plugin version to $VERSION"
           git tag "v$VERSION"
           git push origin HEAD "v$VERSION"

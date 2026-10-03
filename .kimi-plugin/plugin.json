@@ -22,5 +22,6 @@
     "playwright",
     "browser-automation"
   ],
-  "skills": "./.agents/skills"
+  "skills": "./.agents/skills",
+  "skillInstructions": "Load skills with the native Skill tool. When a skill requests an independent implementer or reviewer, use Agent with subagent_type coder; use explore for read-only codebase discovery. Map general-purpose subagents to these supported types. Use TodoList for task tracking and AskUserQuestion for clarification when available."
 }

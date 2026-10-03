@@ -7,7 +7,7 @@
   "plugins": [
     {
       "name": "testcase",
-      "description": "Skills for Claude Code, ZCode, Cursor and Antigravity. Installs the whole .agents/skills catalog — each skill ending in an independent review pass. See the repository README for the current skill list.",
+      "description": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
       "version": "1.16.1",
       "source": "./",
       "author": {

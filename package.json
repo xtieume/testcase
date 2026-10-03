@@ -1,0 +1,21 @@
+{
+  "name": "testcase-skills",
+  "version": "1.16.1",
+  "description": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/xtieume/testcase.git"
+  },
+  "keywords": [
+    "pi-package",
+    "skills",
+    "testing",
+    "qa"
+  ],
+  "pi": {
+    "skills": [
+      "./.agents/skills"
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "name": "testcase",
+  "description": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
+  "version": "1.16.1",
+  "author": {
+    "name": "xtieume"
+  },
+  "homepage": "https://github.com/xtieume/testcase",
+  "repository": "https://github.com/xtieume/testcase",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "testing",
+    "test-cases",
+    "qa",
+    "quality-assurance",
+    "docs-review",
+    "documentation",
+    "notion",
+    "markdown",
+    "export",
+    "playwright",
+    "browser-automation"
+  ],
+  "skills": "./.agents/skills",
+  "hooks": {},
+  "interface": {
+    "displayName": "testcase",
+    "shortDescription": "Requirements, tests, and implementation with runnable proof",
+    "longDescription": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
+    "developerName": "xtieume",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Write test cases for spec.md.",
+      "Build this feature and verify every requirement."
+    ],
+    "websiteURL": "https://github.com/xtieume/testcase"
+  }
+}

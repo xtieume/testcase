@@ -21,6 +21,5 @@
     "export",
     "playwright",
     "browser-automation"
-  ],
-  "skills": "./.agents/skills"
+  ]
 }

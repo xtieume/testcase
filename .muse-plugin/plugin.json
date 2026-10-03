@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "name": "testcase",
+  "displayName": "testcase",
+  "version": "1.16.1",
+  "description": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "docs-review",
+        "path": ".agents/skills/docs-review/SKILL.md"
+      },
+      {
+        "id": "goalrun",
+        "path": ".agents/skills/goalrun/SKILL.md"
+      },
+      {
+        "id": "normalize",
+        "path": ".agents/skills/normalize/SKILL.md"
+      },
+      {
+        "id": "playwright-cdp",
+        "path": ".agents/skills/playwright-cdp/SKILL.md"
+      },
+      {
+        "id": "testcase",
+        "path": ".agents/skills/testcase/SKILL.md"
+      }
+    ],
+    "commands": [],
+    "hooks": [],
+    "mcpServers": [],
+    "reminders": []
+  }
+}

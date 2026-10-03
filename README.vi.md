@@ -10,6 +10,7 @@
 <p align="center">
   <a href=".claude-plugin/plugin.json"><img alt="Version" src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2Fxtieume%2Ftestcase%2Fmain%2F.claude-plugin%2Fplugin.json&query=%24.version&label=version&color=6c63ff&style=flat-square"></a>
   <img alt="Claude Code" src="https://img.shields.io/badge/Claude_Code-ready-d97757?style=flat-square">
+  <img alt="Codex" src="https://img.shields.io/badge/Codex-ready-412991?style=flat-square">
   <img alt="ZCode" src="https://img.shields.io/badge/ZCode-ready-informational?style=flat-square">
   <img alt="Cursor" src="https://img.shields.io/badge/Cursor-ready-black?style=flat-square">
   <img alt="Antigravity" src="https://img.shields.io/badge/Antigravity-ready-4285F4?style=flat-square">
@@ -91,26 +92,67 @@ zcode plugin marketplace add xtieume/testcase
 zcode plugin install testcase@testcase-marketplace
 ```
 
-**Cursor / Antigravity** — cả hai đọc trực tiếp `.agents/skills/`. Clone một lần, rồi symlink vào project hoặc copy ra toàn cục:
+**Codex app / CLI** — thêm marketplace của repo rồi cài plugin:
 
 ```bash
-git clone https://github.com/xtieume/testcase.git
-
-# mức project (cả hai editor)
-ln -s "$(pwd)/testcase/.agents/skills" .agents/skills
-
-# toàn cục
-cp -R testcase/.agents/skills/* ~/.cursor/skills/              # Cursor
-cp -R testcase/.agents/skills/* ~/.gemini/antigravity/skills/  # Antigravity
+codex plugin marketplace add xtieume/testcase
+codex plugin add testcase@testcase-marketplace
 ```
 
-**Mọi host, chỉ một skill** — copy đúng folder cần:
+Với bản clone local, dùng `codex plugin marketplace add ./testcase`.
+Trong app, chọn marketplace `testcase` ở Plugins. Mở phiên mới sau khi cài.
+Xem [hướng dẫn Codex](.codex/INSTALL.md) cho CLI cũ, Windows và cập nhật.
+Đây là marketplace của repo, tách biệt với thư mục plugin công khai của OpenAI.
+
+**Các host plugin khác** — dùng chung toàn bộ bộ skill:
+
+| Host | Cài đặt | Đóng gói |
+| ---- | ------- | -------- |
+| Cursor | Thêm URL GitHub vào Settings → Plugins nếu phiên bản hỗ trợ, hoặc dùng native skills bên dưới | `.cursor-plugin/plugin.json` |
+| Devin CLI | `devin plugins install xtieume/testcase` | `.devin-plugin/plugin.json` + `skills/` ở root |
+| Kimi Code | `/plugins install https://github.com/xtieume/testcase` | `.kimi-plugin/plugin.json` |
+| Hermes Agent | `hermes plugins install xtieume/testcase --enable` | `.hermes-plugin/` đăng ký từng skill |
+| Muse | Clone repo, rồi `muse plugins install ./testcase` | `.muse-plugin/` liệt kê từng skill |
+| Gemini CLI | `gemini extensions install https://github.com/xtieume/testcase` | `gemini-extension.json` + `skills/` ở root |
+| Pi | `pi install git:github.com/xtieume/testcase` | `package.json` → `pi.skills` |
+| Factory Droid | `droid plugin marketplace add https://github.com/xtieume/testcase`, rồi `droid plugin install testcase@testcase-marketplace` | Marketplace tương thích Claude |
+| GitHub Copilot CLI | `copilot plugin marketplace add xtieume/testcase`, rồi `copilot plugin install testcase@testcase-marketplace` | Marketplace tương thích Claude |
+| Qwen Code | `qwen extensions install xtieume/testcase` | Marketplace tương thích Claude |
+
+Trước khi các file này được publish, cài từ bản clone local nếu host hỗ trợ.
+Mở phiên mới sau khi cài. Workflow yêu cầu subagent độc lập cần host có công cụ
+ủy nhiệm; skill thu thập qua browser cần bước setup bên dưới. Cấu trúc đóng gói
+tham khảo [các adapter của Superpowers](https://github.com/obra/superpowers).
+
+**Cursor / Antigravity / OpenCode — native skills** — clone vào nơi cố định,
+rồi liên kết từng skill vào project cần dùng:
 
 ```bash
-cp -R .agents/skills/<name> ~/.claude/skills/<name>
+git clone https://github.com/xtieume/testcase.git /absolute/path/to/testcase
+mkdir -p .agents/skills
+for skill in /absolute/path/to/testcase/.agents/skills/*; do
+  ln -s "$skill" .agents/skills/
+done
 ```
 
-Skill kích hoạt bằng ngôn ngữ tự nhiên, hoặc gọi thẳng `/<name>`.
+`ln -s` giữ entry đã có và báo lỗi nếu trùng tên. Để cài toàn cục, tạo thư mục của
+host bên dưới rồi liên kết hoặc copy từng skill vào đó:
+
+| Host | Thư mục skill toàn cục |
+| ---- | --------------------- |
+| Codex | `~/.agents/skills/` |
+| Cursor | `~/.cursor/skills/` |
+| Antigravity | `~/.gemini/antigravity/skills/` |
+| OpenCode | `~/.config/opencode/skills/` |
+| Claude Code | `~/.claude/skills/` |
+
+Xem [hướng dẫn OpenCode](.opencode/INSTALL.md) để có lệnh đầy đủ. Trên Windows,
+copy folder thay cho symlink. Mỗi host chọn một cách cài, tránh nạp trùng bộ skill
+qua cả plugin lẫn native skills.
+
+**Chỉ một skill** — copy `.agents/skills/<name>/` vào thư mục tương ứng.
+Skill kích hoạt bằng ngôn ngữ tự nhiên. Cách gọi trực tiếp tùy host:
+`$testcase` trên Codex, `/<name>` nếu hỗ trợ, hoặc công cụ `skill` trên OpenCode.
 
 ## Danh sách skill
 
@@ -153,7 +195,7 @@ cd .agents/skills/playwright-cdp/scripts && npm install   # một lần
 
 ## Thêm skill mới
 
-Bỏ một folder vào `.agents/skills/<name>/` gồm `SKILL.md` (frontmatter `name` + `description`), kèm `references/` và `scripts/` nếu cần. Không phải sửa manifest: cả hai `plugin.json` trỏ vào thư mục chứ không phải danh sách. Thêm một dòng vào bảng bên trên. Version không sửa tay: merge vào `main` sẽ tự bump cả bốn manifest, tạo tag và publish release — commit `feat:` bump minor, có `!` hoặc `BREAKING CHANGE` bump major, còn lại bump patch.
+Bỏ một folder vào `.agents/skills/<name>/` gồm `SKILL.md` (frontmatter `name` + `description`), kèm `references/` và `scripts/` nếu cần. Host đọc thư mục sẽ tự nhận skill. Muse cần danh sách tường minh: chạy `python3 scripts/sync_plugins.py` sau khi thêm hoặc xóa skill; CI kiểm tra sai lệch. Thêm một dòng vào bảng bên trên. Version không sửa tay: merge vào `main` sẽ tự đồng bộ version cho mọi manifest plugin, marketplace, Gemini, Pi và Hermes, tạo tag và publish release — commit `feat:` bump minor, có `!` hoặc `BREAKING CHANGE` bump major, còn lại bump patch.
 
 ## Cấu trúc
 
@@ -161,6 +203,19 @@ Bỏ một folder vào `.agents/skills/<name>/` gồm `SKILL.md` (frontmatter `n
 .agents/skills/<name>/     SKILL.md + references/ + scripts/
 .claude-plugin/            manifest cho Claude Code
 .zcode-plugin/             manifest cho ZCode
+.codex-plugin/             metadata plugin Codex
+.agents/plugins/           marketplace repo cho Codex
+.cursor-plugin/            metadata plugin Cursor
+.devin-plugin/             metadata plugin Devin
+.kimi-plugin/              metadata plugin Kimi
+.hermes-plugin/            manifest Hermes + đăng ký native skills
+.muse-plugin/              manifest Muse + marketplace
+.codex/INSTALL.md          hướng dẫn cài Codex
+.opencode/INSTALL.md       hướng dẫn native skills OpenCode
+skills -> .agents/skills   bộ skill chung cho host đọc skills ở root
+gemini-extension.json      metadata extension Gemini CLI
+package.json               metadata package Pi
+scripts/sync_plugins.py    version release + danh sách skill Muse
 ```
 
 ## License

@@ -372,6 +372,17 @@ class RunCliTests(unittest.TestCase):
         self.cli('--run', 'export', '--token', b, '--verify')
         self.assertFalse(self.inspect()['evidence_stale'])
 
+    def test_session_logs_and_exports_do_not_invalidate_current_proof(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        (self.folder() / 'testcase/session.log').write_text('session wrote its completion log')
+        (self.folder() / 'testcase/out.csv').write_text('TC-001,REQ-A')
+        self.assertFalse(self.inspect()['evidence_stale'])
+        (self.folder() / 'goalrun/reqs.txt').write_text('REQ-A\nREQ-B\n')
+        self.assertTrue(self.inspect()['evidence_stale'])
+
 
 if __name__ == '__main__':
     unittest.main()

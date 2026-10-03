@@ -105,7 +105,8 @@ a document.
 
 | Req ID | Requirement (atomic) | Dimension | Source (spec section) |
 
-`Req ID` format `REQ-<area>-<3 digits>`. Keep IDs from the previous report in this same run, append
+`Req ID`: preserve existing spec IDs such as `REQ-001`; generate new IDs as
+`REQ-<area>-<3 digits>`. Keep IDs from the previous report in this same run, append
 new ones at the end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
 the traceability table included, where such a row carries no verdict and the lint lets it
 stand. Never renumber. Persist the active requirement IDs, one per line, in `$GOAL_DIR/reqs.txt`

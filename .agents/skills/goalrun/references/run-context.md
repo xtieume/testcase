@@ -93,7 +93,10 @@ Saved evidence contains per-check commands, outputs and exit codes, a run log an
 fingerprint and ownership epoch. `inspect` exposes `last_evidence` and `evidence_stale`. A new
 resumed controller must rerun the whole ledger before claiming completion, even with unchanged
 source; its new ownership epoch makes prior evidence stale. Changed source, tests, runtime, tool
-version, spec or run inputs also make old evidence stale; a previous proof is not current proof.
+version, spec or authoritative run inputs (requirements, ledger, baseline, signatures) also
+make old evidence stale; a previous proof is not current proof.
+Derived session logs, CSV exports and working review reports do not invalidate measurement
+evidence; requirements and tracked test case tables remain authoritative inputs.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
 derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
 `whole_ledger_verified: true`. Full proof first gates requirement coverage with lint. A ledger

@@ -52,13 +52,11 @@ def fingerprint(store, view, engine):
         for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             full = os.path.join(base, name)
             files[os.path.relpath(full, store.root)] = engine._mark(full)
-    for base, dirs, names in os.walk(view['paths']['run_dir']):
-        dirs[:] = [d for d in dirs if d not in ('evidence', 'undo')]
-        for name in names:
-            if name in ('checkpoint.json', 'manifest.json'):
-                continue
-            full = store._safe(os.path.join(base, name))
-            files[os.path.relpath(full, store.root)] = engine._mark(full)
+    # Fingerprint authoritative inputs, not derived session logs/CSV/review exports.
+    # Source/tests/tracked case tables are covered by the workspace walk above.
+    for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv'):
+        full = store._safe(os.path.join(view['paths']['goalrun_dir'], name))
+        files['run-input:' + name] = engine._mark(full) if os.path.exists(full) else 'absent'
     # Local spec paths outside the workspace are read-only inputs too.
     spec = view['manifest']['spec']
     if spec:

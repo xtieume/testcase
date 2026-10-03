@@ -9,7 +9,7 @@ VERDICTS_A = {"Covered", "Partial", "Missing", "Contradict", "Conflict", "Stale"
               "Unspecified", "Undecided"}
 VERDICTS_B = {"Stated", "Inferred", "Conflicting", "Absent"}
 NO_EVIDENCE_NEEDED = {"Missing", "Undecided", "Absent"}
-ID_RE = re.compile(r"^(REQ|DOC|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
+ID_RE = re.compile(r"^(REQ|DOC|Q)-(?:[A-Z0-9]+-)?\d{3}$|^Q-?\d+$", re.I)
 
 
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
@@ -106,6 +106,11 @@ Searched the tree for: first, second, third — nothing outside the set.
     assert problems == [], f"clean report should lint clean, got {problems}"
     assert counts == Counter({"Covered": 1, "Missing": 1, "Undecided": 1,
                               "Unspecified": 1}), counts
+
+    # Imported spec IDs must survive session handoff without forced renumbering.
+    problems, counts = run(report.replace('REQ-A-', 'REQ-'))
+    assert problems == [], problems
+    assert sum(counts.values()) == 4, 'short imported REQ IDs silently disappeared'
 
     # The checklist and the round log carry IDs and numbers but no verdict column.
     # Counting their rows is the bug this header selection exists to prevent.

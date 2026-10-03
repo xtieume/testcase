@@ -70,7 +70,7 @@ Five diagrams of the pipeline, and of how `goalrun` decides a row and proves a c
 > [!TIP]
 > **On Claude Code, start with `/goal`.** `/goal` sets a condition that is checked after every turn, and Claude keeps working until it holds — so the run doesn't stop halfway to ask whether to continue:
 > ```
-> /goal /goalrun build the export feature — done when goalrun.py exits 0 on the whole ledger
+> /goal /goalrun build the export feature — done when whole-ledger --verify exits 0 with current evidence
 > ```
 
 > [!TIP]

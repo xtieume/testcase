@@ -11,7 +11,7 @@ Legacy work without named runs reads `.testcases/goalrun/ledger.tsv` — one row
 `check`       a shell command, or `MANUAL:<owner>` when a human must decide. Never empty.
               A MANUAL row is decided by a person and cannot also name a deliverable.
 `deliverable` optional path this row must have produced; `—`, `-` or empty means none.
-`break`       the command that plants the defect `check` exists to catch (`--verify`).
+`break`       the guarded file edit that plants the defect `check` exists to catch (`--verify`).
               A row without one has never gone red; `--lint-ledger` says so unless the
               ledger waives it with a comment line `# verify-ok: <id> — <reason>` — the
               legitimate reason being that the test was written first and its red phase
@@ -21,10 +21,10 @@ Extra columns are ignored.
 Verdict per row:
   PASS  check exited 0 and (if named) the deliverable's content differs from the baseline
   FAIL  check exited non-zero, timed out, or the deliverable was not shipped
-  WAIT  MANUAL row without a valid signature in `.testcases/goalrun/signoff.tsv`
+  WAIT  MANUAL row without a valid signature in the selected run's signoff.tsv
 
 Modes (mutually exclusive):
-  --baseline          record the content of every file in the tree, in
+  --baseline          legacy only: record the content of every file in the tree, in
                        `.testcases/goalrun/baseline.json`. Taken once, before the first
                        edit, and before the ledger exists; refused when one is present
                        (--reset replaces it). A deliverable ships when it differs from
@@ -33,13 +33,15 @@ Modes (mutually exclusive):
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
   --verify [A,B]      for each row: make the edit its `break` describes, run the row's
                        `check`, demand red, and put the file back byte for byte
-  --lint-ledger       problems with the ledger itself; with --requirements FILE it also
-                       names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
+  --lint-ledger       problems with the ledger and missing requirements; named runs
+                       read their own reqs.txt; legacy uses --requirements FILE (waive: `# no-row-ok: <id> — <why>`)
 
 Only one goalrun runs checks in a tree at a time (`.testcases/goalrun.lock`): a check racing
 another build goes red for reasons that are not the code.
 
-Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
+Named completion requires a successful whole-ledger --verify with current evidence.
+Ordinary checks measure; subset checks prove only a phase.
+Exit 0 operation succeeded / checks pass, 1 not done, 2 misuse or broken ledger.
 """
 import argparse, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
     signal, subprocess, sys, tempfile, time

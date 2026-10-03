@@ -1,6 +1,8 @@
 # Mode B — Investigation Without a Spec
 
 Read this when the user gives documents and a question but no spec to audit against.
+Keep the persistent run selected in `SKILL.md`; use its `DOCS_REVIEW_DIR` and pass
+the selected paths and delegated role to reviewers.
 
 ## The trap
 
@@ -57,7 +59,7 @@ Lead with the direct answer to the original question, then the sub-question tabl
 `## What the documents do not say` — the `Absent` and `Conflicting` rows collected together.
 That section is the deliverable the user cannot get from reading the docs themselves.
 
-Write it to `.testcases/docs-review/docs-review.md` (unless the user names a path), not only to
+Write it to `$DOCS_REVIEW_DIR/docs-review.md` (unless the user names a path), not only to
 chat, and match the language of the question unless the user asks otherwise. Same rule as Mode A:
 the report is a working artifact — the directory is excluded via `.git/info/exclude` and the
 report is never committed.
@@ -65,5 +67,5 @@ report is never committed.
 Then lint it:
 
 ```bash
-python3 scripts/check_report.py .testcases/docs-review/docs-review.md --mode b
+python3 scripts/check_report.py "$DOCS_REVIEW_DIR/docs-review.md" --mode b
 ```

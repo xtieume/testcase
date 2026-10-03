@@ -70,7 +70,7 @@ Năm sơ đồ về chuỗi đó, và về cách `goalrun` quyết định một
 > [!TIP]
 > **Trên Claude Code, mở đầu bằng `/goal`.** `/goal` đặt một điều kiện được kiểm sau mỗi lượt, và Claude cứ làm tiếp tới khi điều kiện đạt — nên phiên chạy không dừng giữa chừng để hỏi có làm tiếp không:
 > ```
-> /goal /goalrun build tính năng export — xong khi goalrun.py exit 0 trên toàn bộ ledger
+> /goal /goalrun build tính năng export — xong khi --verify toàn ledger exit 0 và bằng chứng còn hiệu lực
 > ```
 
 > [!TIP]

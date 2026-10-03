@@ -4,10 +4,10 @@
 Counting rows by hand is the step a model gets wrong, so it is done here instead.
 So is deciding whether the table is actually risk-covering or just happy-path heavy.
 
-    python3 summarize.py testcases.md
-    python3 summarize.py testcases.md --requirements reqs.txt
-    python3 summarize.py testcases.md --csv .testcases/testcase/out.csv
-    python3 summarize.py --diff .testcases/testcase/previous.md testcases.md
+    python3 summarize.py "$TESTCASES"
+    python3 summarize.py "$TESTCASES" --requirements "$GOAL_DIR/reqs.txt"
+    python3 summarize.py "$TESTCASES" --csv "$TESTCASE_DIR/out.csv"
+    python3 summarize.py --diff "$TESTCASE_DIR/previous.md" "$TESTCASES"
     python3 summarize.py --selfcheck
 """
 

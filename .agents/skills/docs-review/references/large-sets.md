@@ -4,7 +4,9 @@ Read this when the measurement in `SKILL.md` step 1 says the set is large. The s
 workflow does not degrade gracefully at this size: it produces `Missing` verdicts that are
 really search failures, and review rounds that return nothing because the reviewer silently
 sampled. Both read exactly like a clean audit. This file replaces steps 2–4 of `SKILL.md`
-with a sharded version; steps 1, 5 and 6 stay as written.
+with a sharded version; steps 1, 5 and 6 stay as written. Keep the selected run and
+`DOCS_REVIEW_DIR` from `SKILL.md`; indexers and shard reviewers receive the run context
+and assigned paths without taking ownership.
 
 ## 1. Index pass — build the document map first
 
@@ -18,7 +20,7 @@ subagents (roughly 10 documents each) and have each return one row per document:
 * **Values asserted** — every number, limit, threshold, state name, role name, time, format,
   and ID pattern the document states. Copy them verbatim with their section.
 
-Write the map to `.testcases/docs-review/docs-index.md` — a working artifact like the report:
+Write the map to `$DOCS_REVIEW_DIR/docs-index.md` — a working artifact like the report:
 never in the docs tree, never committed. It is an input to every later step and to the conflict
 sweep.
 
@@ -50,7 +52,7 @@ unchanged), then dispatch one subagent per shard. Each shard subagent gets:
 Each shard returns two things:
 
 1. Its verdict rows, in the standard `SKILL.md` step 3 format, written to its own file
-   (`.testcases/docs-review/shard-<chapter>.md`, alongside the index). Never have shards edit
+   (`$DOCS_REVIEW_DIR/shard-<chapter>.md`, alongside the index). Never have shards edit
    one shared table. A shard that read a document `full` also returns the reverse
    sweep for it — `DOC-` rows for claims with no spec backing. A `searched` shard cannot: say so
    rather than implying the document holds none.

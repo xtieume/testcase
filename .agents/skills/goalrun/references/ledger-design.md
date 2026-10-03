@@ -1,6 +1,7 @@
 # Writing a ledger
 
-Read at Plan step 5, when the rows are being written.
+Read when writing ledger rows. First select the run as described in `run-context.md`;
+`GOAL_DIR` is its inspected `paths.goalrun_dir`, and all engine examples use its RUN/TOKEN.
 
 ## The shape of a row
 
@@ -9,7 +10,7 @@ field may contain a tab.
 
 Write it with a file tool, never through `printf`/`echo` in a shell: single quotes turn `&&`
 into `\&\&`, and under `sh -c` that runs the first command alone, exit 0, runner never called.
-Read the check column back before the first run — `cut -f3 .testcases/goalrun/ledger.tsv` —
+Read the check column back before the first run — `cut -f3 "$GOAL_DIR/ledger.tsv"` —
 and the lint refuses `\&\&` or `\|\|` outright.
 
 | Column | For |
@@ -21,7 +22,7 @@ and the lint refuses `\&\&` or `\|\|` outright.
 | `break` | The edit that plants the exact defect `check` exists to catch — `path :: what it says :: what it should say`, or a bare path to delete the file. Made and put back by `--verify`. Waivable only with a reason (below). |
 
 **Verdict.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes and the row
-names a deliverable, that path must exist and its **content** must differ from what `--baseline`
+names a deliverable, that path must exist and its **content** must differ from what this run's init baseline
 recorded — a file the baseline never saw is new and counts, a directory counts if anything under
 it was added, removed or changed, `touch` counts for nothing, absolute paths and `..` never
 count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
@@ -31,24 +32,26 @@ name: nothing can differ from a baseline that already contains it.
 
 ```tsv
 # id	what	check	deliverable	break
-EXPORT	REQ-EXP-001 CSV export writes one row per order	python3 -m unittest -q tests.test_export.TC_EXP_001	src/export.py	printf 'def export(orders):\n    return []\n' > src/export.py
-ROUND	REQ-EXP-002 money rounds half-up	python3 -m unittest -q tests.test_export.TC_EXP_004	src/export.py	sed 's/ROUND_HALF_UP/ROUND_HALF_EVEN/' src/export.py > t && mv t src/export.py
-DOCS	REQ-DOC-001 the --export flag is documented	python3 -m unittest -q tests.test_docs.TC_DOC_001	docs/cli.md	grep -v -- '--export' docs/cli.md > t && mv t docs/cli.md
-LINT	no debug prints left in src	! grep -rn 'print(' src/	—	printf 'print(1)\n' >> src/export.py
+EXPORT	REQ-EXP-001 CSV export writes one row per order	python3 -m unittest -q tests.test_export.TC_EXP_001	src/export.py	src/export.py :: return rows :: return rows[:1]
+ROUND	REQ-EXP-002 money rounds half-up	python3 -m unittest -q tests.test_export.TC_EXP_004	src/export.py	src/export.py :: ROUND_HALF_UP :: ROUND_HALF_EVEN
+DOCS	REQ-DOC-001 the --export flag is documented	python3 -m unittest -q tests.test_docs.TC_DOC_001	docs/cli.md	docs/cli.md :: --export :: --removed-export
+LINT	no debug prints left in src	! grep -rn 'print(' src/	—	src/export.py :: import csv :: import csv; print(1)
 UX	REQ-UX-004 the CSV opens cleanly in Excel	MANUAL:tuananh	—	—
 ```
 
-Each behavioural row names one test. `DOCS` is a claim about text and is still a test —
+The example assumes the named source fragments each occur once; choose a fragment from
+your actual implementation when writing a break. Each behavioural row names one test. `DOCS` is a claim about text and is still a test —
 `tests/test_docs.py` reads the file and asserts — so a reviewer sees it in the diff and CI runs
 it on every push. `LINT` is the exception that proves the shape: a hygiene rule belonging to no
 requirement, so no `REQ-` and no test.
 
 ```bash
-python3 "$GOALRUN" --baseline        # first of all, before the first edit — no ledger needed
-python3 "$GOALRUN" --lint-ledger --requirements .testcases/goalrun/reqs.txt
-python3 "$GOALRUN"                   # pre-flight, then per phase with --only
-python3 "$GOALRUN" --verify          # VERIFIED / HOLLOW / STUCK / BREAK FAILED, plus the sweep
-python3 "$GOALRUN" --sign UX --who tuananh --note "opened in Excel 16, columns intact"
+python3 "$GOALRUN" init "$RUN" --goal "Ship CSV export" --spec spec.md  # before edits
+python3 "$GOALRUN" resume "$RUN" --owner controller-a   # save top-level token as TOKEN
+python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --lint-ledger  # run reqs.txt automatically
+python3 "$GOALRUN" --run "$RUN" --token "$TOKEN"          # pre-flight; --only per phase
+python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify # final whole-ledger proof
+python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --sign UX --who tuananh --note "opened in Excel 16"
 ```
 
 ## Where the rows come from
@@ -59,7 +62,7 @@ python3 "$GOALRUN" --sign UX --who tuananh --note "opened in Excel 16, columns i
 | How it is proven | `testcase` | `TC-` traced to a `REQ-`, plus the runnable tests its step 7 writes |
 | Whether it holds | `goalrun` | one row per `REQ-`, whose `check` runs those tests |
 
-Carry the `REQ-` id into `what`: that string is what `--lint-ledger --requirements` matches. The
+Carry the `REQ-` id into `what`: that string is what the named run's `--lint-ledger` matches. The
 match is textual, so `REQ-DOC-002 deferred` satisfies the gate while measuring nothing — which
 is why step 6 audits the ledger with `docs-review`'s loop as well. A `TC-` marked
 `Automatable: N` becomes `MANUAL:<owner>`; ask who, never invent one.
@@ -129,8 +132,9 @@ would cost before planting anything; read that line before deciding whether to p
 
 `--verify` prints the ledger table, then per row makes the edit, runs the check, and writes the
 file back byte for byte. It runs once, at the end, in place of the final plain run. The bytes
-go to `.testcases/goalrun/undo/` before the check starts, so an interrupted verify restores on
-its way out and a killed one is put back by the next run, which says which rows it repaired.
+go to `$GOAL_DIR/undo/` before planting. An interrupted verify restores on its way out.
+Before named operations, all runs' journals are recovered under the workspace lock by comparing
+original/planted fingerprints. Conflicting edits refuse recovery and retain the journal.
 
 - **Only a file in the tree.** An absolute path, or one climbing out through `..`, is refused.
 - **Only text.** A binary file has nothing to substitute in; delete it instead, or pick a
@@ -182,18 +186,21 @@ clean", "performance looks fine", "the migration is safe".
 returns to `WAIT — signature is for an older wording`.
 
 The lint catches: no rows; `MANUAL` without an owner; mostly-`MANUAL` ledgers; deliverables with
-no baseline; stale signatures and waivers; rows with no `break`; with `--requirements`,
+no baseline; stale signatures and waivers; rows with no `break`; and, using the named run's reqs.txt,
 requirements no row measures. It does not catch a fake check or a break that cannot fire.
 
 ## Flags and exit codes
 
 `--blast [SECONDS]` adds the sweep; `--no-blast` says out loud that it is not wanted.
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
-`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--baseline` records the tree once, skipping build
-output (`obj/`, `bin/`, `target/`, `dist/`) and the usual caches; it is refused while
-one exists, and `--baseline --reset` replaces it — which reads every edit so far as pre-existing. `--sign ID --who WHO [--note ...]`. `--requirements
-PATH` is read by `--lint-ledger` only. `--ledger PATH` is for testing the script; the skill uses
-the catalog path.
+`PHASE OK` / `PHASE NOT OK`, never `DONE`; `--verify A,B` is also a phase verdict.
+Named runs take their baseline once through `init`, preserve it on resume, and refuse
+`--baseline`, `--reset`, `--ledger` and `--requirements` overrides. Lint automatically reads
+that run's reqs.txt. `--sign ID --who WHO [--note ...]` also requires RUN/TOKEN.
+Only a successful bare whole-ledger verify records `whole_ledger_verified`; inspect freshness
+before relying on it. Legacy `--baseline [--reset]`, `--ledger PATH` and
+`--lint-ledger --requirements PATH` remain available only while no named run exists;
+use explicit `migrate` to preserve unfinished legacy work without resetting its baseline.
 
 | Exit | Means |
 | ---- | ----- |
@@ -201,6 +208,6 @@ the catalog path.
 | 1 | something `FAIL` or `WAIT`; a `HOLLOW`, `STUCK`, `ALREADY RED`, `BREAK FAILED`, `BLAST`, `NOTHING VERIFIED` or `SWEEP STOPPED` result; lint found problems |
 | 2 | misuse or broken ledger — no ledger, empty check, duplicate id, empty requirements file, `--blast` without `--verify`, unknown `--only`/`--verify` id, an argument to `--baseline`, a second `--baseline` without `--reset`, `--reset` without `--baseline`, deliverable without baseline, `MANUAL` row naming a deliverable, bad `--sign`, `--requirements` without `--lint-ledger`, another goalrun already running checks in this tree |
 
-`check` and `break` run with the caller's shell and permissions. POSIX only (`sh -c`, process
+`check` runs with the caller's shell and permissions; `break` is a guarded file edit. POSIX only (`sh -c`, process
 groups, `flock`); no version control required. A ledger is an executable file — read every row
 before running it, as you would a `Makefile`.

@@ -76,6 +76,30 @@ Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định mộ
 > [!TIP]
 > **Nghĩ là đã xong rồi?** Hỏi *"cái này xong thật chưa?"* — `goalrun` kiểm lại công việc theo ledger và chỉ ra chỗ nào còn đỏ.
 
+## Tiếp tục công việc qua nhiều agent
+
+Run có tên gắn với công việc, giữ baseline, đường dẫn artifact, số lần thất bại và ghi chú
+bàn giao khi đổi agent hoặc host trong cùng workspace. Khởi tạo trước khi sửa file:
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # lưu token từ JSON vào TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build \
+  --next "Implement TC-EXP-004" --note "Tests red; continue from spec.md"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" inspect export-v1
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # nhận token mới
+```
+
+Dùng đường dẫn do `inspect` trả về: test case được lưu trong repo tại
+`docs/testcases/<id>/testcases.md`, trạng thái làm việc ở `.testcases/runs/<id>/`.
+`docs-review` và `testcase` cũng dùng run này khi chạy riêng. Quyền sở hữu không tự hết hạn;
+chỉ tiếp quản bằng `--expected-generation` vừa đọc sau khi agent và check trước đã dừng.
+Input thay đổi làm bằng chứng cũ hết hiệu lực; báo xong cần `--verify` mới trên toàn ledger.
+Xem [run context](.agents/skills/goalrun/references/run-context.md) để biết cách bàn giao,
+kiểm tra bằng chứng, giao việc cho subagent, chuyển workspace và migrate trạng thái cũ.
+
 ## Cài đặt
 
 **Claude Code** — cài qua marketplace, lấy toàn bộ skill trong repo:
@@ -151,6 +175,7 @@ copy folder thay cho symlink. Mỗi host chọn một cách cài, tránh nạp t
 qua cả plugin lẫn native skills.
 
 **Chỉ một skill** — copy `.agents/skills/<name>/` vào thư mục tương ứng.
+Khi dùng `docs-review/` hoặc `testcase/`, copy thêm `goalrun/` để giữ trạng thái run.
 Skill kích hoạt bằng ngôn ngữ tự nhiên. Cách gọi trực tiếp tùy host:
 `$testcase` trên Codex, `/<name>` nếu hỗ trợ, hoặc công cụ `skill` trên OpenCode.
 

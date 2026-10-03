@@ -76,6 +76,30 @@ Four diagrams of the pipeline, and of how `goalrun` decides a row and proves a c
 > [!TIP]
 > **Already think it's finished?** Ask *"is this actually done?"* — `goalrun` audits the work against its ledger and tells you what's still red.
 
+## Continue across agents
+
+A named run belongs to the work and preserves its baseline, selected artifacts, failure counts
+and handoff across agents or hosts in the same workspace. Start before edits:
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy JSON token into TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build \
+  --next "Implement TC-EXP-004" --note "Tests red; continue from spec.md"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" inspect export-v1
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # receives a new token
+```
+
+Use paths returned by `inspect`; test cases ship at `docs/testcases/<id>/testcases.md`, while
+working state stays under `.testcases/runs/<id>/`. `docs-review` and `testcase` use the same
+run contract even standalone. Ownership never expires; takeover requires the inspected
+`--expected-generation` after the previous agent and checks have stopped. Changed inputs
+make saved proof stale; completion needs a current whole-ledger `--verify`. See
+[run context](.agents/skills/goalrun/references/run-context.md) for evidence, child delegation,
+workspace transfer and explicit legacy migration.
+
 ## Install
 
 **Claude Code** — marketplace install, gets every skill in the repo:
@@ -152,6 +176,7 @@ folders instead of symlinking. Install once per host; avoid loading the same
 catalog through both a plugin and native skill links.
 
 **One skill only** — copy `.agents/skills/<name>/` into the relevant directory.
+Include `goalrun/` alongside `docs-review/` or `testcase/` for their persistent run context.
 Skills trigger on natural language. Explicit invocation is host-specific:
 `$testcase` on Codex, `/<name>` where supported, or OpenCode's `skill` tool.
 

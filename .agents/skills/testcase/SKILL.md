@@ -22,8 +22,25 @@ Never stop at the happy paths.
 | "write up this bug" | `references/bug-report.md` — the judgement your tracker's form cannot check |
 | "implement the automatable ones" | Step 7 only, against an existing table |
 
-Deliverable is always `testcases.md` plus whatever ships as runnable tests. The run is not
-finished until `summarize.py` exits clean (step 6).
+Deliverable is the selected run's `paths.testcases` (`docs/testcases/<id>/testcases.md`) plus
+whatever ships as runnable tests. The run is not finished until `summarize.py` exits clean (step 6).
+
+## Select the persistent run
+
+Before outputs, read `../goalrun/references/run-context.md`. Use an explicitly selected
+existing run or initialize a standalone testcase run with `goalrun.py init <id> --goal ...
+--spec <path>` before edits, then `resume <id> --owner <label>`. From inspect JSON, set
+`TESTCASES=paths.testcases`, `TESTCASE_DIR=paths.testcase_dir`, `GOAL_DIR=paths.goalrun_dir`
+using the actual path values. Never use the newest table/report as implicit context.
+Preserve the baseline, permanent IDs, spec decisions and failure counts on continuation.
+
+The controller owns the token and checkpoints phase, next action and handoff after meaningful
+steps; release before another controller resumes. A child receives run ID, canonical
+workspace, schema version, spec, exact path selections and delegated ownership role. It
+writes only its assigned files and never resumes or takes over. These selections override
+fixed output defaults in this skill's references. Record and propagate explicit user paths.
+Engine failures are already counted; checkpoint `--failure` records only inline/delegated
+failures the engine has not recorded. Never double-count the same red.
 
 ## Files in this skill
 
@@ -58,20 +75,17 @@ Requirement is a design (Figma link, mockup, screenshot)? Read `references/desig
 
 ### 3. Generate pass-1 test cases
 
-Write to `testcases.md` at the repo root unless the user names a path.
+Write to `$TESTCASES` from the selected run, unless the user explicitly names another path.
 
-**The test cases are a deliverable — they belong in the repo**, alongside the runnable tests step 7 writes from them. Everything else is a working artifact under `.testcases/testcase/` (CSV export, review-mode findings): never commit it, never put it in the docs tree.
+**The test cases are a deliverable — they belong in the repo**, alongside the runnable tests
+step 7 writes. CSV, review findings, previous-table snapshots and requested coverage maps go
+under `$TESTCASE_DIR`; keep `.testcases/` excluded locally and never commit those artifacts.
+Create selected parent directories as needed. Without git, working artifacts are untracked
+by convention. Persist the step-1 requirement IDs to `$GOAL_DIR/reqs.txt` for this same run;
+reuse existing IDs and preserve requirements outside this invocation's scope. A focused
+case-writing task must not replace the run's full requirement list with its subset.
 
-```bash
-root=$(git rev-parse --show-toplevel) && gitdir=$(git rev-parse --git-dir)
-mkdir -p "$root/.testcases/testcase"
-grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
-  || echo '/.testcases/' >> "$gitdir/info/exclude"
-```
-
-`.git/info/exclude` is local-only — no diff, `.gitignore` untouched. Not a git repo: create the directory anyway and say the output is untracked-by-convention.
-
-The coverage map stays in the reply; persist only on request, to `.testcases/testcase/coverage-map.md`.
+The coverage map stays in the reply; persist only on request, to `$TESTCASE_DIR/coverage-map.md`.
 
 | ID | Req | Category | Test Case | Preconditions | Steps | Expected Result | Distinguishes from | Priority | Automatable |
 | -- | --- | -------- | --------- | ------------- | ----- | --------------- | ------------------ | -------- | ----------- |
@@ -117,7 +131,8 @@ No duplicate cases to inflate the count. One distinct behavior or risk per case.
 
 **The core purpose of this skill. Never skip it.**
 
-Spawn subagents (`Agent`/`Task`, `general-purpose`) and give each **only**: the requirement text, the test case table, and the path to `references/coverage-map.md` (+ `i18n-jp.md` if used).
+Spawn subagents (`Agent`/`Task`, `general-purpose`) and give each **only**: the requirement text, the test case table, the path to `references/coverage-map.md` (+ `i18n-jp.md` if used), and run ID, canonical
+workspace, schema version, selected paths and review role.
 
 **Not your pass-1 reasoning** — sharing your analysis makes the reviewer rubber-stamp your blind spots. It must rebuild the coverage map from the requirement and map the cases onto it.
 
@@ -154,10 +169,10 @@ Nothing found → say so plainly: "No additional high-value test cases identifie
 Do not count rows by hand.
 
 ```bash
-python3 scripts/summarize.py testcases.md                                      # counts + lint
-python3 scripts/summarize.py testcases.md --requirements reqs.txt              # requirements with no case
-python3 scripts/summarize.py testcases.md --csv .testcases/testcase/out.csv    # TestRail/Excel export
-python3 scripts/summarize.py --diff .testcases/testcase/previous.md testcases.md
+python3 scripts/summarize.py "$TESTCASES"                                      # counts + lint
+python3 scripts/summarize.py "$TESTCASES" --requirements "$GOAL_DIR/reqs.txt"   # missing cases
+python3 scripts/summarize.py "$TESTCASES" --csv "$TESTCASE_DIR/out.csv"        # export
+python3 scripts/summarize.py --diff "$TESTCASE_DIR/previous.md" "$TESTCASES"
 ```
 
 Fix every reported problem, re-run until clean.
@@ -173,7 +188,7 @@ Fix every reported problem, re-run until clean.
 
 No reason = lint error. Stale (requirement gained risk cases, or has no live case) = reported for removal. Rule 6, made checkable.
 
-**Re-running against an updated requirement.** Copy the current table to `.testcases/testcase/previous.md` first, `--diff` afterwards: reports added/changed/newly-`[OBSOLETE]`, **fails** on an ID deleted outright — the mistake that silently breaks downstream tools.
+**Re-running against an updated requirement.** Copy the current table to `$TESTCASE_DIR/previous.md` first, `--diff` afterwards: reports added/changed/newly-`[OBSOLETE]`, **fails** on an ID deleted outright — the mistake that silently breaks downstream tools.
 
 ### 7. Implement the automatable cases
 
@@ -181,7 +196,8 @@ The table is the spec; the runnable tests are the other half of the deliverable.
 
 Use the test framework already in the repo — its runner, its helpers, its fixtures — and put the files where that repo already puts tests. No new dependency, no second harness alongside the existing one. No framework at all: say so and stop here rather than picking one unasked.
 
-**When the work also has to be driven to done**, hand over to the `goalrun` skill: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
+**When the work also has to be driven to done**, hand over to the `goalrun` skill in the same run; checkpoint and release if changing
+controllers, preserving the baseline and selected paths: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
 
 **Each test names its case ID**, e.g. `test('TC-DROPDOWN-004 — rejects a 101-character name', ...)`. That ID is the only thing tying the code back to the table; without it the step-6 traceability ends at the file boundary.
 

@@ -13,6 +13,24 @@ You are a senior analyst auditing documentation. Not summarizing it:
 Absence of a statement is a finding. "Looks fine" from a skim is the failure this skill exists
 to prevent.
 
+## Select the persistent run
+
+Before writing outputs, read `../goalrun/references/run-context.md`. Use an explicitly named
+existing run or initialize a standalone review run with `goalrun.py init <id> --goal ...
+--spec <path>` before edits, then `resume <id> --owner <label>`. Inspect the run; use its
+`paths.docs_review_dir` as `DOCS_REVIEW_DIR` and `paths.goalrun_dir` as `GOAL_DIR`.
+Do not select the newest report or reuse another run's shared artifacts. Keep the baseline,
+REQ/DOC IDs, decisions and failure counts when continuing the same work.
+
+The controller owns the resume token, checkpoints each meaningful step with phase, next
+action and handoff note, then releases when handing off. Decisions belong in the spec.
+A delegated review child receives the run ID, canonical workspace, schema version, spec,
+exact input/output selections and read-only or delegated-writer role. It never resumes or
+takes over the run. These artifact selections also override fixed default paths in this
+skill's references; an explicitly user-selected output is recorded and passed to children.
+Engine failures are already counted; checkpoint `--failure` records only inline/delegated
+failures the engine has not recorded. Never double-count the same red.
+
 ## Files in this skill
 
 Read each one **when the workflow tells you to** — not upfront.
@@ -62,8 +80,8 @@ refuses an inventory without that line. A set nobody checked this way is what th
 then rediscovers one requirement per round, for as many rounds as you let it — and no reviewer
 says "your set is wrong" unless it was handed that question.
 
-**Check for a previous report** (`.testcases/docs-review/*.md`, or the file the user names) in
-the same step. If one exists, load its `REQ-` and `DOC-` IDs — they are permanent, and this is
+**Check for a previous report** in the selected `DOCS_REVIEW_DIR` (or the explicit file
+the user names) in the same step. If one exists, load its `REQ-` and `DOC-` IDs — they are permanent, and this is
 the only moment you can preserve them.
 
 **Measure the set** — do not eyeball it:
@@ -87,10 +105,11 @@ a document.
 
 | Req ID | Requirement (atomic) | Dimension | Source (spec section) |
 
-`Req ID` format `REQ-<area>-<3 digits>`. Keep IDs from a previous run, append new ones at the
-end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
+`Req ID` format `REQ-<area>-<3 digits>`. Keep IDs from the previous report in this same run, append
+new ones at the end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
 the traceability table included, where such a row carries no verdict and the lint lets it
-stand. Never renumber.
+stand. Never renumber. Persist the active requirement IDs, one per line, in `$GOAL_DIR/reqs.txt`
+for testcase and goalrun to consume in this same run.
 
 ### 3. Map documents onto the checklist
 
@@ -149,6 +168,7 @@ you have run.
      contents)
    * the report **with the `## Round findings` section removed**
    * the path to `references/dimensions.md`
+   * run ID, canonical workspace, schema version, selected input/output paths and review role
 
    Not the source tree — the reviewer holds the same two oracles you do (rule 6). The one
    exception is rule 6's own: when the code *is* the spec, it is the spec text above.
@@ -237,7 +257,7 @@ rounds inline — re-deriving the checklist from the spec alone, before looking 
 Do not check the table by hand.
 
 ```bash
-python3 scripts/check_report.py .testcases/docs-review/docs-review.md
+python3 scripts/check_report.py "$DOCS_REVIEW_DIR/docs-review.md"
 ```
 
 Fix everything it reports (duplicate IDs, invalid verdicts, missing citations, empty quotes),
@@ -256,27 +276,18 @@ Give the user, in this order:
 is stale the moment they change. Never write it into the docs tree under audit, never `git add`
 or commit it.
 
-Everything this skill writes goes under `.testcases/docs-review/` at the repo root — one excluded
-root, one subdirectory per skill. Create it and exclude it locally:
-
-```bash
-root=$(git rev-parse --show-toplevel) && gitdir=$(git rev-parse --git-dir)
-mkdir -p "$root/.testcases/docs-review"
-grep -qxF '/.testcases/' "$gitdir/info/exclude" 2>/dev/null \
-  || echo '/.testcases/' >> "$gitdir/info/exclude"
-```
-
-`.git/info/exclude` is local-only — it leaves the project's `.gitignore` untouched, so the
-exclusion produces no diff. Not a git repo, or the commands fail: create the directory and say
-the report is untracked-by-convention. If the user names a path, use theirs and say once whether
-it is excluded.
+Reports and review artifacts go under the selected run's `DOCS_REVIEW_DIR`; the requirement
+list goes to `$GOAL_DIR/reqs.txt`. Keep `.testcases/` excluded locally, for example through
+`.git/info/exclude`; do not commit working reports. Without git, create the selected directory
+and state that reports are untracked by convention. User-selected output paths take precedence;
+record the selection and whether it is excluded. Fix mode changes the actual documents.
 
 **Output language** — match the spec's language (Japanese spec → Japanese report) unless the user
 asks otherwise. Same rule in Mode B, keyed to the question's language.
 
 **If the gaps turn into work that has to be driven to completion**, the `goalrun` skill measures
 it: keep the `REQ-` ids — they become its ledger rows, one per requirement, and its
-`--lint-ledger --requirements` fails on any requirement the ledger forgot.
+`--run <id> --token <token> --lint-ledger` automatically reads that run's reqs.txt and fails on any requirement the ledger forgot.
 
 ### 7. Fix mode — only if asked
 

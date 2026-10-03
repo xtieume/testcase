@@ -49,6 +49,6 @@ Files: goalrun, docs-review and testcase `SKILL.md`, goalrun run-context referen
 ### Task 4: Review and PR
 
 - [x] Independently review correctness, scope, recovery races and skill guidance; fix findings with regression tests.
-- [ ] Commit and push feature branch; create PR against main with final behavior and validation.
+- [x] Commit and push feature branch; create PR against main with final behavior and validation. PR: https://github.com/xtieume/testcase/pull/28
 
 Validation: 43 run-store/CLI tests, 110 legacy engine checks, three packaging tests, Node document checks and plugin metadata synchronization. Independent code review and before/after consuming-agent pressure tests completed; findings were fixed with regression tests.

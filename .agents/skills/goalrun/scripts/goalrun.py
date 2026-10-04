@@ -440,6 +440,20 @@ def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
             authoritative.add(parent)
             parent = os.path.dirname(parent)
 
+    legacy_candidates = BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
+    if baseline_exclusions is None:
+        # A workspace can sit inside a parent worktree without its own .git.
+        # Resolve that context once, rather than spawning Git for every file.
+        try:
+            context = subprocess.run(['git', '-C', os.path.abspath(cwd or '.'),
+                                      'rev-parse', '--is-inside-work-tree'],
+                                     capture_output=True, timeout=10)
+        except FileNotFoundError:
+            pass
+        else:
+            if context.returncode == 0 and context.stdout.strip() == b'true':
+                legacy_candidates = BASELINE_SKIP
+
     def excluded_at_baseline(relative):
         if relative in authoritative:
             return False
@@ -448,11 +462,8 @@ def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
                        for boundary in baseline_exclusions)
         # Older baselines have no record of omitted output trees. A late tracked
         # override cannot prove such a target was absent at initialization.
-        candidates = BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
-        if os.path.lexists(os.path.join(cwd or '.', '.git')):
-            candidates = BASELINE_SKIP
         parts = relative.split(os.sep)
-        return any(part in candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+        return any(part in legacy_candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
                parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
 
     if norm != os.curdir and excluded_at_baseline(norm):

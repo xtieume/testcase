@@ -180,6 +180,48 @@ class InputProvenanceTests(unittest.TestCase):
         self.cli('--run', 'export', '--token', token, '--verify')
         self.assertFalse(self.inspect()['proof_stale'])
 
+    def test_legacy_baseline_in_git_subdirectory_rejects_late_tracked_outputs(self):
+        self.repository()
+        repository = self.root
+        for name, deliverable in (('schema', 'build/schema.json'), ('folder', 'build')):
+            with self.subTest(deliverable=deliverable):
+                self.root = repository / ('app-' + name)
+                self.root.mkdir()
+                (self.root / 'feature.txt').write_text('old\n')
+                self.git('add', 'feature.txt')
+                self.assertFalse((self.root / '.git').exists())
+                self.assertEqual(self.git('rev-parse', '--is-inside-work-tree').strip(), 'true')
+                path = self.root / 'build/schema.json'
+                path.parent.mkdir()
+                path.write_text('preexisting output')
+                token = self.exclusion_ledger(deliverable)
+                baseline = self.folder() / 'goalrun/baseline.json'
+                data = json.loads(baseline.read_text())
+                self.assertNotIn('build/schema.json', data['files'])
+                self.assertIn('build', data['excluded'])
+                data.pop('excluded')  # Exercise an existing baseline in the older format.
+                baseline.write_text(json.dumps(data))
+                original_baseline = baseline.read_bytes()
+                self.git('add', '-f', 'build/schema.json')
+                self.cli('--run', 'export', '--token', token, '--verify', code=1)
+                self.assertTrue(self.inspect()['proof_stale'])
+                self.assertEqual(path.read_text(), 'preexisting output')
+                self.assertEqual(baseline.read_bytes(), original_baseline)
+
+    def test_legacy_non_git_workspace_accepts_new_build_named_source(self):
+        token = self.exclusion_ledger('build/schema.json')
+        baseline = self.folder() / 'goalrun/baseline.json'
+        data = json.loads(baseline.read_text())
+        data.pop('excluded')
+        baseline.write_text(json.dumps(data))
+        original_baseline = baseline.read_bytes()
+        path = self.root / 'build/schema.json'
+        path.parent.mkdir()
+        path.write_text('new ordinary source')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['proof_stale'])
+        self.assertEqual(baseline.read_bytes(), original_baseline)
+
     def test_new_ordinary_source_and_original_tracked_output_remain_deliverable(self):
         self.repository()
         path = self.root / 'build/source.txt'

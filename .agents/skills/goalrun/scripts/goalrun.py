@@ -400,7 +400,9 @@ def take_baseline(cwd=None, path=None, reset=False):
                      f'`--baseline --reset` if that is really what you want')
     root = cwd or '.'
     files = _tree_hashes(root)
-    data = {'taken': int(time.time()), 'files': files}
+    from run_cli import source_exclusions
+    data = {'taken': int(time.time()), 'files': files,
+            'excluded': source_exclusions(root, sys.modules[__name__])}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1, sort_keys=True)
@@ -417,7 +419,7 @@ def read_baseline(path=None, cwd=None):
         return json.load(f)
 
 
-def not_shipped(path, baseline_files, cwd=None):
+def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
     """'' when the deliverable exists and differs from the baseline, else the reason.
 
     An authoritative file the baseline never saw is new since then, so it shipped.
@@ -429,9 +431,34 @@ def not_shipped(path, baseline_files, cwd=None):
     full = os.path.join(cwd or '.', norm)
     if not os.path.lexists(full):
         return 'does not exist'
+    authoritative = set(baseline_files)
+    for relative in baseline_files:
+        parent = os.path.dirname(relative)
+        while parent:
+            authoritative.add(parent)
+            parent = os.path.dirname(parent)
+
+    def excluded_at_baseline(relative):
+        if relative in authoritative:
+            return False
+        if baseline_exclusions is not None:
+            return any(relative == boundary or relative.startswith(boundary + os.sep)
+                       for boundary in baseline_exclusions)
+        # Older baselines have no record of omitted output trees. A late tracked
+        # override cannot prove such a target was absent at initialization.
+        candidates = BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
+        if os.path.lexists(os.path.join(cwd or '.', '.git')):
+            candidates = BASELINE_SKIP
+        parts = relative.split(os.sep)
+        return any(part in candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+               parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
+
+    if norm != os.curdir and excluded_at_baseline(norm):
+        return 'excluded at baseline; later tracking or ignore edits cannot establish a new deliverable'
     from run_cli import source_entries
     selected = {os.path.normpath(relative): (source, directory)
-                for relative, source, directory in source_entries(cwd or '.', sys.modules[__name__])}
+                for relative, source, directory in source_entries(cwd or '.', sys.modules[__name__])
+                if not excluded_at_baseline(os.path.normpath(relative))}
     if norm != os.curdir and norm not in selected:
         return 'excluded generated, cache or private path; use an authoritative deliverable'
     if os.path.isdir(full) and not os.path.islink(full):
@@ -463,7 +490,7 @@ def load_signatures(path=None):
     return sigs
 
 
-def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
+def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baseline_exclusions=None):
     """Resolve one row to (status, note); status is PASS, FAIL or WAIT."""
     if row.check.startswith('MANUAL:'):
         owner = owner_of(row) or 'unassigned'
@@ -479,20 +506,20 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
     if not ok:
         return 'FAIL', note
     if row.deliverable:
-        why = not_shipped(row.deliverable, baseline_files or {}, cwd)
+        why = not_shipped(row.deliverable, baseline_files or {}, cwd, baseline_exclusions)
         if why:
             return 'FAIL', f'deliverable not shipped: {row.deliverable} — {why}'
     return 'PASS', note
 
 
-def report(rows, signatures, baseline_files, timeout, cwd=None, times=None):
+def report(rows, signatures, baseline_files, timeout, cwd=None, times=None, baseline_exclusions=None):
     """Print the table. Return [(status, row)]. `times`, if given, collects how long each
     distinct check took, which is what lets a caller price the work it is about to do."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
         began = time.monotonic()
-        status, note = decide(row, signatures, baseline_files, timeout, cwd)
+        status, note = decide(row, signatures, baseline_files, timeout, cwd, baseline_exclusions)
         if times is not None and not row.check.startswith('MANUAL:'):
             times.setdefault(row.check, time.monotonic() - began)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
@@ -874,7 +901,7 @@ def _dur(seconds):
 
 
 def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
-           signatures=None, baseline_files=None):
+           signatures=None, baseline_files=None, baseline_exclusions=None):
     """Run the ledger, then plant each row's break, prove its check goes red under it, and
     put the file back. Return True if every row passed and every break was caught.
 
@@ -891,7 +918,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # does not re-run every check to learn what the run already printed
     scan = everything if blast else rows
     cost = {}
-    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost)
+    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost, baseline_exclusions)
     already = {r.id for st, r in results if st != 'PASS'}
     print()
     live = [r for r in rows
@@ -1195,7 +1222,8 @@ def _run_checks(a, rows, baseline):
         budget = max(0, a.blast or 0)
         ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
                     waived=waived, signatures=load_signatures(),
-                    baseline_files=baseline['files'] if baseline else {})
+                    baseline_files=baseline['files'] if baseline else {},
+                    baseline_exclusions=baseline.get('excluded') if baseline else None)
         print()
         if SESSION is not None and a.verify:
             print('PHASE OK — selected rows verified' if ok else 'PHASE NOT OK — selected rows unproven')
@@ -1212,7 +1240,8 @@ def _run_checks(a, rows, baseline):
         raise Misuse(f'rows {", ".join(shipping)} name deliverables but no baseline is '
                      f'recorded — run --baseline first')
 
-    results = report(chosen, load_signatures(), baseline['files'] if baseline else {}, a.timeout)
+    results = report(chosen, load_signatures(), baseline['files'] if baseline else {}, a.timeout,
+                     baseline_exclusions=baseline.get('excluded') if baseline else None)
     passed = sum(1 for s, _ in results if s == 'PASS')
     print()
     if a.only is not None:

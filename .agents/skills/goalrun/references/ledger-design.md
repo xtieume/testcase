@@ -32,7 +32,11 @@ Ordinary ignored files are authoritative inputs. Explicit deliverables in exclud
 cache or private paths fail instead of being counted as new files. Choose an ordinary source
 deliverable, or track the output/cache target before initializing the run baseline; do not
 reset an existing baseline as a workaround. Directory comparisons use the workspace baseline
-selection, including tracked overrides, so excluded generated siblings never count as shipped.
+selection, including original tracked overrides, so excluded generated siblings never count as shipped.
+The baseline saves omitted file/subtree boundaries: later `git add -f` or ignore-rule changes do not
+reclassify those paths as new work. Files already recorded in the baseline remain authoritative.
+New source belongs outside saved exclusion boundaries; an excluded subtree stays excluded. Older
+baselines without this provenance conservatively reject unrecorded generated/cache-name targets.
 
 ## An example
 

@@ -217,6 +217,30 @@ def source_entries(root, engine, seen=frozenset()):
                 yield os.path.join(relative, child), path, child_directory
 
 
+def source_exclusions(root, engine):
+    """Snapshot omitted paths at initialization without reading generated file contents.
+
+    Omitted directories are boundaries: do not traverse dependency/output trees.
+    Selected parents containing tracked overrides still expose omitted siblings.
+    """
+    selected = {os.path.normpath(relative) for relative, _, _ in source_entries(root, engine)}
+    excluded = []
+    for base, dirs, names in os.walk(root):
+        descend = []
+        for name in dirs:
+            relative = os.path.normpath(os.path.relpath(os.path.join(base, name), root))
+            if relative not in selected:
+                excluded.append(relative)
+            else:
+                descend.append(name)
+        dirs[:] = descend
+        for name in names:
+            relative = os.path.normpath(os.path.relpath(os.path.join(base, name), root))
+            if relative not in selected:
+                excluded.append(relative)
+    return sorted(excluded)
+
+
 def git_index(root):
     """Semantic staged entries and persistent flags, independent of stat-cache refresh."""
     try:

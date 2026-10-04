@@ -108,10 +108,94 @@ class InputProvenanceTests(unittest.TestCase):
         ledger.write_text(ledger.read_text().replace('\t-\t', '\tbuild\t'))
         out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
         self.assertIn('unchanged since baseline', out.stdout)
+        self.git('add', '-f', 'build/schema.json')
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
         (path.parent / 'schema.json').write_text('changed output')
         self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
         path.write_text('changed source')
         self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+
+    def exclusion_ledger(self, deliverable, run_id='export'):
+        token = self.init(run_id)
+        self.ledger(run_id, command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        ledger = self.folder(run_id) / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('\t-\t', f'\t{deliverable}\t'))
+        return token
+
+    def test_late_tracking_cannot_ship_preexisting_excluded_files_or_directories(self):
+        self.repository()
+        for run_id, deliverable, tracked in (('schema', 'build/schema.json', 'build/schema.json'),
+                                              ('cache', '.coverage', '.coverage'),
+                                              ('folder', 'dist', 'dist/schema.json')):
+            with self.subTest(deliverable=deliverable):
+                if deliverable == 'dist':
+                    (self.root / '.gitignore').write_text((self.root / '.gitignore').read_text() + 'dist/\n')
+                path = self.root / tracked
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('preexisting output')
+                token = self.exclusion_ledger(deliverable, run_id)
+                self.cli('--run', run_id, '--token', token, '--only', 'REQ-A', code=1)
+                self.git('add', '-f', tracked)
+                out = self.cli('--run', run_id, '--token', token, '--verify', code=1)
+                self.assertIn('excluded', out.stdout)
+                self.assertTrue(self.inspect(run_id)['proof_stale'])
+
+    def test_ignore_rule_change_cannot_ship_preexisting_excluded_file(self):
+        self.repository()
+        path = self.root / 'build/schema.json'
+        path.parent.mkdir()
+        path.write_text('preexisting output')
+        token = self.exclusion_ledger('build/schema.json')
+        (self.root / '.gitignore').write_text('.testcases/\n')
+        self.cli('--run', 'export', '--token', token, '--verify', code=1)
+        self.assertTrue(self.inspect()['proof_stale'])
+
+    def test_legacy_baseline_cannot_reclassify_unrecorded_generated_target_by_staging(self):
+        self.repository()
+        path = self.root / 'build/schema.json'
+        path.parent.mkdir()
+        path.write_text('preexisting output')
+        token = self.exclusion_ledger('build/schema.json')
+        baseline = self.folder() / 'goalrun/baseline.json'
+        data = json.loads(baseline.read_text())
+        data.pop('excluded', None)  # A saved baseline from before exclusion provenance existed.
+        baseline.write_text(json.dumps(data))
+        self.git('add', '-f', 'build/schema.json')
+        self.cli('--run', 'export', '--token', token, '--verify', code=1)
+        self.assertTrue(self.inspect()['proof_stale'])
+
+    def test_legacy_directory_with_original_tracked_source_remains_deliverable(self):
+        self.repository()
+        path = self.root / 'build/source.txt'
+        path.parent.mkdir()
+        path.write_text('original tracked source')
+        self.git('add', '-f', 'build/source.txt')
+        token = self.exclusion_ledger('build')
+        baseline = self.folder() / 'goalrun/baseline.json'
+        data = json.loads(baseline.read_text())
+        data.pop('excluded', None)
+        baseline.write_text(json.dumps(data))
+        path.write_text('changed tracked source')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['proof_stale'])
+
+    def test_new_ordinary_source_and_original_tracked_output_remain_deliverable(self):
+        self.repository()
+        path = self.root / 'build/source.txt'
+        path.parent.mkdir()
+        path.write_text('original tracked source')
+        self.git('add', '-f', 'build/source.txt')
+        token = self.exclusion_ledger('build/source.txt')
+        path.write_text('changed tracked source')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('build/source.txt', 'src/new.py'))
+        source = self.root / 'src/new.py'
+        source.parent.mkdir()
+        source.write_text('new source')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['proof_stale'])
 
     def test_staging_existing_worktree_bytes_invalidates_whole_proof(self):
         self.repository()

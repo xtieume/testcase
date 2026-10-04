@@ -710,7 +710,8 @@ def restore(undo):
     """Put back exactly the bytes that were there."""
     full, was = undo
     if SESSION is not None:
-        SESSION.guard_restore(full, was)
+        SESSION.restore(full, was)
+        return
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'wb') as fh:
         fh.write(was)

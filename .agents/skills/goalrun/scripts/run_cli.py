@@ -41,6 +41,31 @@ def workspace_lock(engine):
         engine.drop_lock(lock)
 
 
+def input_mark(path, engine, seen=frozenset()):
+    """Track link identity and the input it reads, including directory links and cycles."""
+    mark = engine._mark(path)
+    if not os.path.islink(path):
+        return mark
+    target = os.path.realpath(path)
+    if target in seen:
+        return [mark, 'cycle']
+    if os.path.isfile(target):
+        return [mark, engine._mark(target)]
+    if not os.path.isdir(target):
+        return [mark, 'unavailable']
+    contents = {}
+    for base, dirs, names in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
+        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            full = os.path.join(base, name)
+            contents[os.path.relpath(full, target)] = input_mark(full, engine, seen | {target})
+    return [mark, contents]
+
+
+def redacted_argv(argv, token):
+    return [arg.replace(token, '[redacted]') if token else arg for arg in argv]
+
+
 def fingerprint(store, view, engine):
     # Same exclusions as the original baseline. Include ignored run inputs explicitly.
     files = {'runtime': sys.version + '|' + sys.executable + '|' + os.environ.get('PATH', '')}
@@ -51,7 +76,7 @@ def fingerprint(store, view, engine):
         dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
         for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             full = os.path.join(base, name)
-            files[os.path.relpath(full, store.root)] = engine._mark(full)
+            files[os.path.relpath(full, store.root)] = input_mark(full, engine)
     # Fingerprint authoritative inputs, not derived session logs/CSV/review exports.
     # Source/tests/tracked case tables are covered by the workspace walk above.
     for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv'):
@@ -67,6 +92,9 @@ def fingerprint(store, view, engine):
 
 def evidence_view(store, view, engine):
     evidence = view['checkpoint'].get('last_evidence')
+    if evidence is not None:
+        evidence = dict(evidence)
+        evidence['argv'] = redacted_argv(evidence.get('argv', []), view['checkpoint'].get('token'))
     view['last_evidence'] = evidence
     view['evidence_stale'] = (evidence is None or
                               evidence.get('ownership_epoch') != view['checkpoint']['ownership_epoch'] or
@@ -74,6 +102,8 @@ def evidence_view(store, view, engine):
     # Inspection/listing cannot confer writer privileges.
     view['checkpoint'] = dict(view['checkpoint'])
     view['checkpoint'].pop('token', None)
+    if evidence is not None:
+        view['checkpoint']['last_evidence'] = evidence
     return view
 
 
@@ -87,11 +117,48 @@ def prepare_undo(store, run_id, row_id, path, original, planted):
     full = store._safe(os.path.join(store.root, path))
     if os.path.islink(full) or os.path.realpath(full) != os.path.abspath(full):
         raise RunError('verify cannot journal a symlinked source path')
+    if os.stat(full).st_nlink != 1:
+        raise RunError('verify cannot mutate a hardlinked source file; use an independent copy')
     record = {'version': 1, 'run_id': run_id, 'row_id': row_id,
               'path': os.path.relpath(full, store.root),
               'original': base64.b64encode(original).decode(),
+              'mode': os.stat(full).st_mode & 0o7777,
               'planted_hash': None if planted is None else digest(planted)}
     atomic_json(store, journal_path(store, run_id, row_id), record)
+
+
+def guard_original(store, full, original, record):
+    store._safe(full)
+    current = Path(full).read_bytes() if os.path.exists(full) else None
+    if current == original or (current is None and record['planted_hash'] is None) or \
+            (current is not None and digest(current) == record['planted_hash']):
+        return
+    raise RunError(f'recovery conflict at {full}: source changed during verify; journal retained')
+
+
+def restore_original(store, full, original, journal):
+    """A killed write changes only an ignored temporary file, never the source bytes."""
+    record = store._read(journal)
+    guard_original(store, full, original, record)
+    temporary = store._safe(str(journal) + '.restore')
+    mode = record.get('mode')
+    if mode is None:
+        mode = os.stat(full).st_mode & 0o7777 if os.path.exists(full) else 0o644
+    if type(mode) is not int or not 0 <= mode <= 0o7777:
+        raise RunError('invalid recovery file mode')
+    try:
+        with open(temporary, 'wb') as stream:
+            stream.write(original)
+            os.fchmod(stream.fileno(), mode)
+            stream.flush()
+            os.fsync(stream.fileno())
+        guard_original(store, full, original, record)
+        os.makedirs(os.path.dirname(full), exist_ok=True)
+        os.replace(temporary, full)
+        store._sync_dir(os.path.dirname(full))
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def recover(store, engine):
@@ -118,11 +185,14 @@ def recover(store, engine):
                 pass  # crash before planting or after restoration
             elif (current is None and record['planted_hash'] is None) or \
                     (current is not None and digest(current) == record['planted_hash']):
-                engine.restore((full, original))
+                restore_original(store, full, original, str(path))
                 print(f'recovered {run_id}/{record["row_id"]}: {rel}', file=sys.stderr)
             else:
                 raise RunError(f'recovery conflict at {rel} in {run_id}: source changed after verify; '
                                'reconcile it with the journal before continuing')
+            temporary = store._safe(str(path) + '.restore')
+            if os.path.exists(temporary):
+                os.unlink(temporary)
             path.unlink()
     # Legacy undo bytes have no planted fingerprint. Never blindly overwrite edits.
     legacy = Path(store.root) / '.testcases/goalrun/undo'
@@ -172,22 +242,12 @@ class Session:
         self.active_row = row_id
         prepare_undo(self.store, self.run_id, row_id, path, original, planted)
 
-    def guard_restore(self, full, original):
+    def restore(self, full, original):
         path = journal_path(self.store, self.run_id, self.active_row)
-        record = self.store._read(path)
-        self.store._safe(full)
-        if os.path.islink(full) or os.path.realpath(full) != os.path.abspath(full):
-            raise RunError('restore target became symlinked; reconcile pending journal')
-        current = Path(full).read_bytes() if os.path.exists(full) else None
-        if current == original:
-            return
-        if (current is None and record['planted_hash'] is None) or \
-                (current is not None and digest(current) == record['planted_hash']):
-            return
-        raise RunError(f'recovery conflict at {full}: source changed during verify; journal retained')
+        restore_original(self.store, full, original, path)
 
     def restored(self, row_id):
-        # Compare-and-restore guard runs before engine restoration too.
+        # Atomic compare-and-restore completed before clearing the journal.
         path = journal_path(self.store, self.run_id, row_id)
         if os.path.exists(path):
             os.unlink(path)
@@ -200,7 +260,7 @@ class Session:
                 cp['failures'][row_id] = cp['failures'].get(row_id, 0) + 1
         after = fingerprint(self.store, view, self.engine)
         result = {'id': self.evidence_id, 'at': time.time(), 'exit_code': code,
-                  'argv': [a for a in sys.argv[1:] if a != self.token],
+                  'argv': redacted_argv(sys.argv[1:], self.token),
                   'fingerprint': after, 'input_fingerprint': self.before,
                   'inputs_changed': self.before != after, 'rows': self.rows,
                   'ownership_epoch': cp['ownership_epoch'],

@@ -95,7 +95,8 @@ fingerprint and ownership epoch. `inspect` exposes `last_evidence` and `evidence
 resumed controller must rerun the whole ledger before claiming completion, even with unchanged
 source; its new ownership epoch makes prior evidence stale. Changed source, tests, runtime, tool
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures) also
-make old evidence stale; a previous proof is not current proof.
+make old evidence stale; a previous proof is not current proof. Workspace symlinks include
+both link identity and resolved contents; directory links are followed with cycle detection.
 Derived session logs, CSV exports and working review reports do not invalidate measurement
 evidence; requirements and tracked test case tables remain authoritative inputs.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
@@ -109,7 +110,9 @@ The CLI holds a run lock across ownership checks and writes, and a global worksp
 across source-sensitive operations. Before lifecycle writes or named engine operations it
 recovers **all runs'** pending verify journals under that global lock. Restoration compares
 current bytes to the original or planted fingerprint; conflicting external edits refuse
-recovery and retain the journal for reconciliation. After a parent crash, an orphan check
+recovery and retain the journal for reconciliation. Restoration writes and syncs a temporary
+file, then atomically replaces the target before clearing the journal. Symlinked or hardlinked
+source targets are refused before planting a defect. After a parent crash, an orphan check
 process retains the workspace lock until it stops. `inspect` can still read state.
 Direct artifact edits by cooperating agents follow the owner's delegation contract; these
 locks do not enforce OS access control, and external editors/builds do not participate.

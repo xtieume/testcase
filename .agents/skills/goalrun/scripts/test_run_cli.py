@@ -115,6 +115,53 @@ class RunCliTests(unittest.TestCase):
             spec.write_text('Amended requirement\n')
             self.assertTrue(self.inspect()['evidence_stale'])
 
+    def test_workspace_symlink_target_change_stales_whole_proof(self):
+        with tempfile.TemporaryDirectory() as outside:
+            data = Path(outside) / 'input.txt'
+            data.write_text('accepted\n')
+            (self.root / 'input.txt').symlink_to(data)
+            token = self.init()
+            self.ledger(command="python3 -c \"assert open('input.txt').read() == 'accepted\\n'; assert open('feature.txt').read() == 'old\\n'\"",
+                        brk='feature.txt :: old :: broken')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            self.assertFalse(self.inspect()['evidence_stale'])
+            data.write_text('amended\n')
+            self.assertTrue(self.inspect()['evidence_stale'])
+
+    def test_equals_form_token_is_redacted_from_read_only_evidence(self):
+        token = self.init()
+        self.ledger()
+        self.cli('--run', 'export', f'--token={token}', '--only', 'REQ-A')
+        self.assertNotIn(token, self.cli('inspect', 'export').stdout)
+        self.assertNotIn(token, self.cli('list').stdout)
+        for evidence in (self.folder() / 'evidence').glob('*.json'):
+            self.assertNotIn(token, evidence.read_text())
+
+    def test_symlinked_directory_inputs_track_contents_and_stop_cycles(self):
+        with tempfile.TemporaryDirectory() as outside:
+            folder = Path(outside)
+            (folder / 'input.txt').write_text('accepted\n')
+            (folder / 'cycle').symlink_to(folder, target_is_directory=True)
+            (self.root / 'shared').symlink_to(folder, target_is_directory=True)
+            token = self.init()
+            self.ledger(command="python3 -c \"assert open('shared/input.txt').read() == 'accepted\\n'; assert open('feature.txt').read() == 'old\\n'\"",
+                        brk='feature.txt :: old :: broken')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            self.assertFalse(self.inspect()['evidence_stale'])
+            (folder / 'input.txt').write_text('amended\n')
+            self.assertTrue(self.inspect()['evidence_stale'])
+
+    def test_abbreviated_and_historical_equals_tokens_are_redacted(self):
+        token = self.init()
+        self.ledger()
+        self.cli('--run', 'export', f'--tok={token}', '--only', 'REQ-A')
+        self.assertNotIn(token, self.cli('inspect', 'export').stdout)
+        checkpoint = self.folder() / 'checkpoint.json'
+        data = json.loads(checkpoint.read_text())
+        data['last_evidence']['argv'] = ['--token=' + token]
+        checkpoint.write_text(json.dumps(data))
+        self.assertNotIn(token, self.cli('inspect', 'export').stdout)
+
     def test_evidence_changes_on_requirements_and_ledger_amendment(self):
         token = self.init()
         self.ledger()
@@ -336,6 +383,74 @@ class RunCliTests(unittest.TestCase):
             time.sleep(0.02)
         self.assertEqual(out.returncode, 0, out.stderr)
         self.assertEqual((self.root / 'feature.txt').read_bytes(), b'old\n')
+
+    def test_killed_restore_keeps_source_recoverable(self):
+        original, planted = b'A' * (1 << 20), b'B' * (1 << 20)
+        (self.root / 'feature.txt').write_bytes(original)
+        os.chmod(self.root / 'feature.txt', 0o751)
+        token = self.init()
+        bootstrap = f"""import sys
+sys.path.insert(0, {str(SCRIPT.parent)!r})
+import argparse, builtins, time
+from pathlib import Path
+import goalrun, run_cli
+from run_store import Store
+store = Store()
+with store.lock('export'), run_cli.workspace_lock(goalrun) as lock:
+    view = store.require('export', {token!r})
+    session = run_cli.Session(store, 'export', {token!r}, goalrun, argparse.Namespace(verify=''), lock.fileno())
+    original, planted = b'A' * (1 << 20), b'B' * (1 << 20)
+    with run_cli.bind(goalrun, view, session):
+        session.prepare('REQ-A', 'feature.txt', original, planted)
+        Path('feature.txt').write_bytes(planted)
+        real_open = builtins.open
+        class SlowWrite:
+            def __init__(self, stream): self.stream = stream
+            def __getattr__(self, name): return getattr(self.stream, name)
+            def __enter__(self): return self
+            def __exit__(self, *args): return self.stream.__exit__(*args)
+            def write(self, data):
+                half = len(data) // 2
+                self.stream.write(data[:half])
+                self.stream.flush()
+                Path('.testcases/restore-paused').touch()
+                time.sleep(30)
+                self.stream.write(data[half:])
+                return len(data)
+        def slow_open(path, mode='r', *args, **kwargs):
+            stream = real_open(path, mode, *args, **kwargs)
+            if mode == 'wb' and (str(path).endswith('feature.txt') or str(path).endswith('.restore')):
+                return SlowWrite(stream)
+            return stream
+        builtins.open = slow_open
+        goalrun.restore((str(Path('feature.txt').resolve()), original))
+"""
+        proc = subprocess.Popen([sys.executable, '-c', bootstrap], cwd=self.root,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            deadline = time.monotonic() + 5
+            while not (self.root / '.testcases/restore-paused').exists() and proc.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue((self.root / '.testcases/restore-paused').exists())
+        finally:
+            proc.kill()
+            proc.wait(timeout=5)
+        current = (self.root / 'feature.txt').read_bytes()
+        self.assertTrue(current in (original, planted), 'restore left partial source bytes')
+        self.cli('resume', 'export', '--owner', 'B', '--expected-generation', '1')
+        self.assertEqual((self.root / 'feature.txt').read_bytes(), original)
+        self.assertEqual((self.root / 'feature.txt').stat().st_mode & 0o777, 0o751)
+        self.assertFalse(list((self.folder() / 'goalrun/undo').iterdir()))
+
+    def test_verify_refuses_hardlinked_sources_before_planting(self):
+        os.link(self.root / 'feature.txt', self.root / 'alias.txt')
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        out = self.cli('--run', 'export', '--token', token, '--verify', code=2)
+        self.assertIn('hardlinked source', out.stderr)
+        self.assertEqual((self.root / 'feature.txt').read_bytes(), b'old\n')
+        self.assertEqual((self.root / 'alias.txt').read_bytes(), b'old\n')
 
     def test_checks_in_different_runs_share_workspace_lock(self):
         a, b = self.init('export'), self.init('login')

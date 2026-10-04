@@ -324,6 +324,8 @@ def test_baseline_records_the_whole_tree_before_any_ledger_exists():
         os.makedirs(os.path.join(tmp, 'obj'))
         open(os.path.join(tmp, 'src/a.txt'), 'w').write('v1\n')
         open(os.path.join(tmp, 'obj/out.bin'), 'w').write('build output\n')
+        open(os.path.join(tmp, '.gitignore'), 'w').write('obj/\n')
+        subprocess.run(['git', 'init', '-q'], cwd=tmp, check=True)
         out = run_cli(tmp, '--baseline')                 # no ledger anywhere
         assert out.returncode == 0, out
         data = json.load(open(os.path.join(tmp, goalrun.BASELINE)))

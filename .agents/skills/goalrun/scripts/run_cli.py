@@ -65,7 +65,7 @@ def input_mark(path, engine, seen=frozenset()):
         return [mark, 'unavailable']
     contents = {}
     for base, dirs, names in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
+        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}]
         for name in names + dirs:
             full = os.path.join(base, name)
             contents[os.path.relpath(full, target)] = input_mark(full, engine, seen | {target})
@@ -142,38 +142,64 @@ def tracked_paths(root):
             p.split('/')[0] not in {'.git', '.testcases'}]
 
 
+def source_paths(root, engine):
+    """Git inputs include new source; without Git, prune only dependency/cache state."""
+    caches = engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
+    def generated(relative):
+        parts = Path(relative).parts
+        return any(part in caches for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+               parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
+
+    try:
+        result = subprocess.run(['git', '-C', os.path.abspath(root), 'ls-files',
+                                 '--cached', '--others', '--exclude-standard', '-z'],
+                                capture_output=True, timeout=10)
+    except FileNotFoundError:
+        result = None
+    if result is not None and result.returncode == 0:
+        tracked = set(tracked_paths(root))
+        paths = set(p for p in os.fsdecode(result.stdout).split('\0') if p)
+        return sorted(p for p in paths if p.split('/')[0] not in {'.git', '.testcases'} and
+                      (p in tracked or not generated(p)))
+    if result is not None and os.path.lexists(os.path.join(root, '.git')):
+        raise RunError('cannot enumerate workspace inputs; restore the Git index before verifying')
+    paths = []
+    for base, dirs, names in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in caches]
+        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+            relative = os.path.relpath(os.path.join(base, name), root)
+            if not generated(relative):
+                paths.append(relative)
+    return sorted(paths)
+
+
 def fingerprint(store, view, engine):
-    # Same exclusions as the original baseline. Include ignored run inputs explicitly.
-    files = {'runtime': runtime_mark(store, view, engine),
-             'workspace-mode': os.stat(store.root).st_mode & 0o7777}
+    # Synthetic metadata and workspace paths have separate collision-free namespaces.
+    metadata = {'runtime': runtime_mark(store, view, engine),
+                'workspace-mode': os.stat(store.root).st_mode & 0o7777}
     for label, path in (('engine', engine.__file__), ('cli', __file__),
                         ('store', sys.modules[Store.__module__].__file__)):
-        files[label] = engine._mark(path)
-    for base, dirs, names in os.walk(store.root):
-        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
-        for name in names + dirs:
-            if name == '.coverage' or name.startswith('.coverage.') or name in ('coverage.xml', 'junit.xml'):
-                continue
-            full = os.path.join(base, name)
-            files[os.path.relpath(full, store.root)] = input_mark(full, engine)
-    for relative in tracked_paths(store.root):
+        metadata[label] = engine._mark(path)
+    files = {}
+    for relative in source_paths(store.root, engine):
         full = os.path.join(store.root, relative)
         files[relative] = input_mark(full, engine)
         parent = os.path.dirname(full)
         while parent != store.root:
             files[os.path.relpath(parent, store.root)] = input_mark(parent, engine)
             parent = os.path.dirname(parent)
-    # Fingerprint authoritative inputs, not derived session logs/CSV/review exports.
-    # Source/tests/tracked case tables are covered by the workspace walk above.
+    inputs = {}
     for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv'):
         full = store._safe(os.path.join(view['paths']['goalrun_dir'], name))
-        files['run-input:' + name] = engine._mark(full) if os.path.exists(full) else 'absent'
+        inputs[name] = engine._mark(full) if os.path.exists(full) else 'absent'
     # Local spec paths outside the workspace are read-only inputs too.
     spec = view['manifest']['spec']
+    spec_mark = None
     if spec:
         full = spec if os.path.isabs(spec) else os.path.join(store.root, spec)
-        files['spec:' + spec] = engine._mark(os.path.realpath(full)) if os.path.isfile(full) else 'unavailable'
-    return digest(json.dumps(files, sort_keys=True).encode())
+        spec_mark = input_mark(full, engine)
+    return digest(json.dumps({'metadata': metadata, 'workspace': files,
+                              'run-inputs': inputs, 'spec': [spec, spec_mark]}, sort_keys=True).encode())
 
 
 def latest_proof(checkpoint):
@@ -511,7 +537,9 @@ def named_engine(engine, args):
         require_baseline(view, engine)
         session = Session(store, args.run, args.token, engine, args, lock.fileno())
         log_path = os.path.join(session.evidence_dir, session.evidence_id + '.log')
-        with bind(engine, view, session), open(log_path, 'w', encoding='utf-8') as log:
+        with bind(engine, view, session), os.fdopen(
+                os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600),
+                'w', encoding='utf-8') as log:
             args.ledger = engine.LEDGER
             if args.lint_ledger:
                 args.requirements = os.path.join(engine.GOAL_DIR, 'reqs.txt')

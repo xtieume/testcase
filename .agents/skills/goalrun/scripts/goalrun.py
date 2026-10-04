@@ -314,15 +314,9 @@ def take_baseline(cwd=None, path=None, reset=False):
                      f'against. Retaking it would read every deliverable as unchanged; '
                      f'`--baseline --reset` if that is really what you want')
     root = cwd or '.'
-    files = {}
-    for base, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in BASELINE_SKIP]
-        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            p = os.path.join(base, name)
-            files[os.path.normpath(os.path.relpath(p, root))] = _mark(p)
-    from run_cli import tracked_paths
-    for relative in tracked_paths(root):
-        files[os.path.normpath(relative)] = _mark(os.path.join(root, relative))
+    from run_cli import source_paths
+    files = {os.path.normpath(relative): _mark(os.path.join(root, relative))
+             for relative in source_paths(root, sys.modules[__name__])}
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
@@ -558,7 +552,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         if req in waived['no-row-ok']:
             continue
         # whole-token match, so REQ-1 is not satisfied by a row that names REQ-10
-        pat = re.compile(rf'(?<![\w-]){re.escape(req)}(?![\w-])')
+        pat = re.compile(rf'(?<![\w.-]){re.escape(req)}(?![\w.-])')
         if not any(pat.search(r.id) or pat.search(r.what) for r in rows):
             problems.append(f'{req}: no row measures it — a requirement with no row is a '
                             f'permanent pass; add a row, or waive it in the ledger with '

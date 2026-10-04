@@ -913,6 +913,55 @@ with run_cli.workspace_lock(goalrun) as lock:
                              env=dict(os.environ, PYTHONPATH=str(SCRIPT.parent)), capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
 
+    def test_runtime_directory_cannot_overwrite_environment_fingerprint(self):
+        (self.root / 'runtime').mkdir()
+        token = self.init()
+        self.ledger(command="python3 -c \"import os; assert os.environ['FEATURE_FLAG']=='accepted'; assert open('feature.txt').read()=='old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        env = dict(os.environ, FEATURE_FLAG='accepted')
+        out = subprocess.run([sys.executable, str(SCRIPT), '--run', 'export', '--token', token,
+                              '--verify'], cwd=self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        env['FEATURE_FLAG'] = 'changed'
+        out = subprocess.run([sys.executable, str(SCRIPT), 'inspect', 'export'], cwd=self.root,
+                             env=env, capture_output=True, text=True)
+        self.assertTrue(json.loads(out.stdout)['proof_stale'])
+
+    def test_new_untracked_source_in_bin_stales_proof(self):
+        source = self.root / 'src/bin/tool.rs'
+        source.parent.mkdir(parents=True)
+        source.write_text('original')
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        source.write_text('changed')
+        self.assertTrue(self.inspect()['proof_stale'])
+        baseline = json.loads((self.folder() / 'goalrun/baseline.json').read_text())
+        self.assertIn('src/bin/tool.rs', baseline['files'])
+
+    def test_session_logs_are_private_under_normal_umask(self):
+        token = self.init()
+        self.ledger()
+        out = subprocess.run([sys.executable, str(SCRIPT), '--run', 'export', '--token', token,
+                              '--only', 'REQ-A'], cwd=self.root, capture_output=True,
+                             preexec_fn=lambda: os.umask(0o022))
+        self.assertEqual(out.returncode, 0, out.stderr)
+        for log in (self.folder() / 'evidence').glob('*.log'):
+            self.assertEqual(log.stat().st_mode & 0o7777, 0o600)
+
+    def test_dotted_child_requirement_cannot_cover_parent(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('REQ-A', 'AUTH.1.2'))
+        (self.folder() / 'goalrun/reqs.txt').write_text('AUTH.1\n')
+        out = self.cli('--run', 'export', '--token', token, '--verify', code=1)
+        self.assertIn('AUTH.1', out.stdout)
+        self.assertFalse(self.inspect()['last_evidence']['whole_ledger_verified'])
+
 
 if __name__ == '__main__':
     unittest.main()

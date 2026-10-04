@@ -39,10 +39,10 @@ def rows(path):
             continue
         cells = _cells(line)
         if header is None:
-            header = {c.lower() for c in cells}
+            header = [c.lower() for c in cells]
             continue
-        if header & VERDICT_HEADERS:
-            yield n, cells
+        if set(header) & VERDICT_HEADERS:
+            yield n, cells, header
 
 
 def selfcheck():
@@ -124,6 +124,13 @@ Searched the tree for: first, second, third — nothing outside the set.
                                       f'| {imported} | third | Undecided | | |'),
               f'duplicate ID {imported}', f'{imported} duplicate')
     fires(report.replace('REQ-A-001', 'bad/id'), 'invalid requirement ID', 'malformed ID')
+
+    fires(report.replace('REQ-A-003', 'Undecided').replace('| Undecided | third | Undecided |',
+                                                          '| Undecided | third | TYPO |'),
+          'has no valid verdict', 'ID equals a verdict')
+    fires(report.replace('| REQ-A-003 | third | Undecided |',
+                         '| REQ-A-003 | Undecided | TYPO |'),
+          'has no valid verdict', 'requirement text equals a verdict')
 
     # The checklist and the round log carry IDs and numbers but no verdict column.
     # Counting their rows is the bug this header selection exists to prevent.
@@ -207,6 +214,16 @@ Searched the tree for: first, second, third — nothing outside the set.
     problems, counts = run(mode_b, VERDICTS_B)
     assert problems == [], f"clean mode B report should lint clean, got {problems}"
     assert sum(counts.values()) == 3, counts
+
+    confidence_report = mode_b.replace('| Q ID | Sub-question | Answer | Evidence | Quote |',
+                                       '| Q ID | Sub-question | Answer | Confidence | Evidence | Quote |')
+    confidence_report = confidence_report.replace('| first | Stated |', '| first | The doc states x | Stated |')
+    confidence_report = confidence_report.replace('| second | Absent |', '| second | No answer | Absent |')
+    confidence_report = confidence_report.replace('| third | Inferred |', '| third | Derived answer | Inferred |')
+    problems, counts = run(confidence_report, VERDICTS_B)
+    assert problems == [] and sum(counts.values()) == 3, problems
+    problems, _ = run(confidence_report.replace('| The doc states x | Stated |', '| Stated | TYPO |'), VERDICTS_B)
+    assert any('has no valid verdict' in problem for problem in problems), problems
 
     os.chdir(here)
     shutil.rmtree(work, ignore_errors=True)
@@ -319,7 +336,7 @@ def lint(path, verdicts=VERDICTS_A):
     text_all = open(path, encoding="utf-8").read()
     docs, base = inventory(text_all), os.getcwd()
 
-    for n, cells in rows(path):
+    for n, cells, header in rows(path):
         rid = re.split(r"\s*\[OBSOLETE", cells[0], maxsplit=1, flags=re.I)[0].strip()
         if not ID_RE.fullmatch(rid) or not re.search(r'[A-Za-z]', rid):
             problems.append(f"{path}:{n}: invalid requirement ID {rid!r}")
@@ -331,13 +348,14 @@ def lint(path, verdicts=VERDICTS_A):
         if "[OBSOLETE" in cells[0].upper() or "[OBSOLETE" in cells[1].upper():
             seen[rid] += 1
             continue
-        verdict = next((c for c in cells if c in verdicts), None)
+        column = next(header.index(name) for name in ('verdict', 'confidence', 'answer') if name in header)
+        verdict = cells[column] if column < len(cells) and cells[column] in verdicts else None
         seen[rid] += 1
         if verdict is None:
             problems.append(f"{path}:{n}: {rid} has no valid verdict (one of {sorted(verdicts)})")
             continue
         counts[verdict] += 1
-        rest = " ".join(cells[cells.index(verdict) + 1:])
+        rest = " ".join(cells[column + 1:])
         if verdict not in NO_EVIDENCE_NEEDED:
             if not rest.strip():
                 problems.append(f"{path}:{n}: {rid} is '{verdict}' with no evidence or quote")
@@ -347,7 +365,7 @@ def lint(path, verdicts=VERDICTS_A):
                 problems.append(f"{path}:{n}: {rid} is '{verdict}' citing no line or section "
                                 f"(D1:12, D1 §2.3) — a file name is not a citation")
             else:
-                after = cells[cells.index(verdict) + 1:]
+                after = cells[column + 1:]
                 why = check_citation(rid, after[0] if after else "",
                                      after[1] if len(after) > 1 else "", docs, base)
                 if why:

@@ -97,6 +97,7 @@ source; its new ownership epoch makes prior evidence stale. Changed source, test
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
+File and directory permission modes also participate, so removing executable access stales proof.
 Derived session logs, CSV exports and working review reports do not invalidate measurement
 evidence; requirements and tracked test case tables remain authoritative inputs.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
@@ -110,8 +111,8 @@ The CLI holds a run lock across ownership checks and writes, and a global worksp
 across source-sensitive operations. Before lifecycle writes or named engine operations it
 recovers **all runs'** pending verify journals under that global lock. Restoration compares
 current bytes to the original or planted fingerprint; conflicting external edits refuse
-recovery and retain the journal for reconciliation. Restoration writes and syncs a temporary
-file, then atomically replaces the target before clearing the journal. Symlinked or hardlinked
+recovery and retain the journal for reconciliation. Planting and restoration write and sync a
+temporary file, then atomically replace the target; recovery clears the journal only after restoration. Symlinked or hardlinked
 source targets are refused before planting a defect. After a parent crash, an orphan check
 process retains the workspace lock until it stops. `inspect` can still read state.
 Direct artifact edits by cooperating agents follow the owner's delegation contract; these
@@ -136,5 +137,7 @@ python3 "$GOALRUN" resume export-v1 --owner controller-a
 `migrate` copies the existing legacy baseline, ledger, reqs, signatures, docs-review/testcase
 artifacts and root testcases.md into selected run paths, leaves originals untouched and never
 retakes the baseline. An existing destination testcase table is refused; reconcile its permanent
-IDs before retrying migration. Reconcile pending legacy undo before migration. Once a named run exists,
+IDs before retrying migration. A pending publication journal recovers a tracked table left by
+a killed migration; intervening edits are preserved and require reconciliation. Reconcile
+pending legacy undo before migration. Once a named run exists,
 select `--run` explicitly for engine commands.

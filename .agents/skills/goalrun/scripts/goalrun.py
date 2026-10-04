@@ -701,8 +701,11 @@ def plant(brk, cwd=None, row_id=None):
     planted = text.replace(old, new).encode('utf-8')
     if SESSION is not None:
         SESSION.prepare(row_id, path, was, planted)
-    with open(full, 'wb') as fh:
-        fh.write(planted)
+    if SESSION is not None:
+        SESSION.plant(full, planted)
+    else:
+        with open(full, 'wb') as fh:
+            fh.write(planted)
     return (full, was), None
 
 

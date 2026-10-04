@@ -44,22 +44,23 @@ def workspace_lock(engine):
 def input_mark(path, engine, seen=frozenset()):
     """Track link identity and the input it reads, including directory links and cycles."""
     mark = engine._mark(path)
+    mode = os.lstat(path).st_mode & 0o7777 if os.path.lexists(path) else None
     if not os.path.islink(path):
-        return mark
+        return [mark, mode]
     target = os.path.realpath(path)
     if target in seen:
         return [mark, 'cycle']
     if os.path.isfile(target):
-        return [mark, engine._mark(target)]
+        return [mark, input_mark(target, engine, seen)]
     if not os.path.isdir(target):
         return [mark, 'unavailable']
     contents = {}
     for base, dirs, names in os.walk(target):
         dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
-        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+        for name in names + dirs:
             full = os.path.join(base, name)
             contents[os.path.relpath(full, target)] = input_mark(full, engine, seen | {target})
-    return [mark, contents]
+    return [mark, os.stat(target).st_mode & 0o7777, contents]
 
 
 def redacted_argv(argv, token):
@@ -68,13 +69,14 @@ def redacted_argv(argv, token):
 
 def fingerprint(store, view, engine):
     # Same exclusions as the original baseline. Include ignored run inputs explicitly.
-    files = {'runtime': sys.version + '|' + sys.executable + '|' + os.environ.get('PATH', '')}
+    files = {'runtime': sys.version + '|' + sys.executable + '|' + os.environ.get('PATH', ''),
+             'workspace-mode': os.stat(store.root).st_mode & 0o7777}
     for label, path in (('engine', engine.__file__), ('cli', __file__),
                         ('store', sys.modules[Store.__module__].__file__)):
         files[label] = engine._mark(path)
     for base, dirs, names in os.walk(store.root):
         dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP]
-        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+        for name in names + dirs:
             full = os.path.join(base, name)
             files[os.path.relpath(full, store.root)] = input_mark(full, engine)
     # Fingerprint authoritative inputs, not derived session logs/CSV/review exports.
@@ -136,11 +138,10 @@ def guard_original(store, full, original, record):
     raise RunError(f'recovery conflict at {full}: source changed during verify; journal retained')
 
 
-def restore_original(store, full, original, journal):
+def atomic_source_write(store, full, data, journal, record, operation, guard):
     """A killed write changes only an ignored temporary file, never the source bytes."""
-    record = store._read(journal)
-    guard_original(store, full, original, record)
-    temporary = store._safe(str(journal) + '.restore')
+    guard()
+    temporary = store._safe(str(journal) + '.' + operation)
     mode = record.get('mode')
     if mode is None:
         mode = os.stat(full).st_mode & 0o7777 if os.path.exists(full) else 0o644
@@ -148,11 +149,11 @@ def restore_original(store, full, original, journal):
         raise RunError('invalid recovery file mode')
     try:
         with open(temporary, 'wb') as stream:
-            stream.write(original)
+            stream.write(data)
             os.fchmod(stream.fileno(), mode)
             stream.flush()
             os.fsync(stream.fileno())
-        guard_original(store, full, original, record)
+        guard()
         os.makedirs(os.path.dirname(full), exist_ok=True)
         os.replace(temporary, full)
         store._sync_dir(os.path.dirname(full))
@@ -161,8 +162,56 @@ def restore_original(store, full, original, journal):
             os.unlink(temporary)
 
 
+def restore_original(store, full, original, journal):
+    record = store._read(journal)
+    atomic_source_write(store, full, original, journal, record, 'restore',
+                        lambda: guard_original(store, full, original, record))
+
+
+def publication_path(store, run_id):
+    return store._safe(os.path.join(store.runs, '.' + store._id(run_id) + '-publication.json'))
+
+
+def recover_publications(store):
+    """Recover the tracked-table link and private staging after interrupted migration."""
+    store._safe(store.runs)
+    for journal in sorted(Path(store.runs).glob('.*-publication.json')):
+        record = store._read(str(journal))
+        run_id = record.get('run_id')
+        paths = store._paths(run_id)
+        staging = store._safe(record['staging'])
+        destination = store._safe(record['destination'])
+        if record.get('version') != 1 or str(journal) != publication_path(store, run_id) or \
+                Path(staging).parent != Path(store.runs) or \
+                not Path(staging).name.startswith('.' + run_id + '-') or \
+                destination != paths['testcases']:
+            raise RunError('invalid pending migration publication')
+        published = os.path.exists(paths['run_dir'])
+        if not published and os.path.exists(staging):
+            manifest = store._read(os.path.join(staging, 'manifest.json'))
+            if manifest.get('run_id') != run_id or manifest.get('workspace') != store.root:
+                raise RunError('migration staging identity changed; journal retained')
+        if published:
+            store.inspect(run_id)
+            table = Path(paths['run_dir']) / 'migrated-testcases.md'
+        else:
+            table = Path(destination)
+        if os.path.lexists(table):
+            store._safe(table)
+            current = os.stat(table, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (record['device'], record['inode']) or \
+                    digest(table.read_bytes()) != record['hash']:
+                raise RunError('migration publication conflict; preserve the table and reconcile the journal')
+            table.unlink()
+        if not published and os.path.exists(staging):
+            shutil.rmtree(staging)
+        journal.unlink()
+        store._sync_dir(store.runs)
+
+
 def recover(store, engine):
     """Called under the workspace lock, across ALL runs before source is trusted."""
+    recover_publications(store)
     for summary in store.list():
         run_id = summary['run_id']
         directory = store._safe(os.path.join(store._paths(run_id)['goalrun_dir'], 'undo'))
@@ -190,9 +239,10 @@ def recover(store, engine):
             else:
                 raise RunError(f'recovery conflict at {rel} in {run_id}: source changed after verify; '
                                'reconcile it with the journal before continuing')
-            temporary = store._safe(str(path) + '.restore')
-            if os.path.exists(temporary):
-                os.unlink(temporary)
+            for suffix in ('.restore', '.plant'):
+                temporary = store._safe(str(path) + suffix)
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
             path.unlink()
     # Legacy undo bytes have no planted fingerprint. Never blindly overwrite edits.
     legacy = Path(store.root) / '.testcases/goalrun/undo'
@@ -241,6 +291,18 @@ class Session:
     def prepare(self, row_id, path, original, planted):
         self.active_row = row_id
         prepare_undo(self.store, self.run_id, row_id, path, original, planted)
+
+    def plant(self, full, planted):
+        path = journal_path(self.store, self.run_id, self.active_row)
+        record = self.store._read(path)
+        original = base64.b64decode(record['original'], validate=True)
+
+        def guard():
+            self.store._safe(full)
+            if Path(full).read_bytes() != original:
+                raise RunError('source changed before planting; journal retained')
+
+        atomic_source_write(self.store, full, planted, path, record, 'plant', guard)
 
     def restore(self, full, original):
         path = journal_path(self.store, self.run_id, self.active_row)
@@ -353,10 +415,8 @@ def initialize_run(store, engine, args):
     migrating_cases = args.action == 'migrate' and cases.exists()
     if migrating_cases and os.path.lexists(destination):
         raise RunError('migration testcase destination already exists; reconcile its permanent IDs first')
-    linked_table = None
 
     def populate(paths):
-        nonlocal linked_table
         if args.action == 'init':
             engine.take_baseline(path=os.path.join(paths['goalrun_dir'], 'baseline.json'))
             return
@@ -373,24 +433,22 @@ def initialize_run(store, engine, args):
             shutil.copy2(cases, staged_table)
             store._safe(destination)
             os.makedirs(os.path.dirname(destination), exist_ok=True)
-            # Linking a finished payload is exclusive: even a late collision cannot overwrite.
+            identity = staged_table.stat()
+            atomic_json(store, publication_path(store, args.run_id), {
+                'version': 1, 'run_id': args.run_id, 'staging': paths['run_dir'],
+                'destination': destination, 'device': identity.st_dev, 'inode': identity.st_ino,
+                'hash': digest(staged_table.read_bytes()),
+            })
+            # Record ownership before linking, so SIGKILL cleanup is recoverable.
             os.link(staged_table, destination)
-            linked_table = os.stat(destination)
-            staged_table.unlink()
+            store._sync_dir(os.path.dirname(destination))
 
     try:
         store.create(args.run_id, args.goal, args.spec, populate=populate)
     except BaseException:
-        # Do not leave a tracked table behind after a failed publication. Never remove a
-        # replacement from another editor, or a table belonging to a successfully published run.
-        if linked_table is not None and not os.path.exists(store._paths(args.run_id)['run_dir']):
-            try:
-                current = os.stat(destination, follow_symlinks=False)
-                if (current.st_dev, current.st_ino) == (linked_table.st_dev, linked_table.st_ino):
-                    os.unlink(destination)
-            except FileNotFoundError:
-                pass
+        recover_publications(store)
         raise
+    recover_publications(store)
 
 
 def lifecycle(engine, argv):

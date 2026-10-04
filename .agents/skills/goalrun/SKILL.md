@@ -109,6 +109,13 @@ row.**
    the same evidence a break manufactures later — so that row may waive its break:
    `# verify-ok: <id> — test-first, seen red on <date>`. A row measuring code that already
    existed gets no such waiver: nobody ever watched those tests fail.
+   The first engine command binds each existing waiver to its row in
+   `$GOAL_DIR/verify-waivers.json`. If wording, check, deliverable or break changes, witness
+   the revised test red and replace the reason with a new observation, for example
+   `# verify-ok: <id> — test-first, seen red on <date> for revised JSON check`.
+   The refreshed reason must contain `test-first` followed by `seen red` and must not reuse
+   an earlier reason for that ID. Measurement, verification and handoff preserve bindings;
+   keeping the old line or deleting and restoring it does not refresh consent.
 
    A row over work that was finished before this run began names no `deliverable` — nothing
    this run produces can differ from the baseline there. What it ships, if anything, is the
@@ -290,7 +297,8 @@ The next controller inspects and resumes; silence never expires ownership. See
    A break is written from the requirement by someone who has not seen the check; written from
    the check it only proves the two agree.
 8. **Three reds on one row is a handoff.**
-9. **Subjective criteria need a human signature**, bound to the wording.
+9. **Subjective criteria need a human signature**, bound to the wording and current MANUAL owner.
+   Changing either requires a fresh answer from the current owner and a new `--sign`.
 10. **A ledger you alone wrote is unreviewed.** Requirements from `docs-review`, behaviour
     from
     `testcase`, and the ledger itself audited by `docs-review`'s loop before the first run.

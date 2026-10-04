@@ -106,7 +106,7 @@ flowchart TD
     KIND{"check có dạng MANUAL:owner?"}
 
     SIG{"Đã ký trong signoff.tsv?"}
-    HASH{"Chữ ký khớp với câu chữ hiện tại?"}
+    HASH{"Chữ ký khớp với câu chữ và MANUAL owner hiện tại?"}
     WAIT["WAIT — đang chờ người chủ row đó"]
 
     RUN["Chạy check"]
@@ -123,7 +123,7 @@ flowchart TD
     KIND -->|"có"| SIG
     SIG -->|"chưa"| WAIT
     SIG -->|"rồi"| HASH
-    HASH -->|"không, câu chữ đã đổi"| WAIT
+    HASH -->|"không, câu chữ hoặc owner đã đổi"| WAIT
     HASH -->|"khớp"| PASS
 
     KIND -->|"không"| RUN
@@ -218,6 +218,12 @@ flowchart TD
     style STOPL fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
+
+Row manual cần chữ ký của owner hiện tại cho đúng câu chữ hiện tại. Waiver test-first được
+ràng buộc với mọi trường của row trong `verify-waivers.json`. Sau khi sửa row có waiver,
+chứng kiến test đã sửa chạy đỏ rồi thay lý do waiver bằng một ghi nhận
+`test-first ... seen red ...` chưa từng dùng cho ID đó, mô tả lần đỏ mới.
+Chạy verify lại hoặc bàn giao không làm mới dòng waiver giữ nguyên.
 
 Các verdict mô tả kết quả script quan sát được. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` và `SWEEP STOPPED` đều exit 1: một lần chạy

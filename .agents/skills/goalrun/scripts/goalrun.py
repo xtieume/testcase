@@ -128,6 +128,93 @@ def waivers(path):
     return out
 
 
+
+WAIVER_BINDINGS = 'verify-waivers.json'
+
+
+def waiver_hash(row):
+    """Bind an observation to every semantic field, including its check and break."""
+    return hashlib.sha256(json.dumps(list(row), ensure_ascii=False).encode()).hexdigest()
+
+
+def _waiver_bindings(path):
+    full = os.path.join(os.path.dirname(path), WAIVER_BINDINGS)
+    if not os.path.exists(full):
+        return full, {'version': 1, 'bindings': {}}
+    try:
+        with open(full, encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('version') != 1 or not isinstance(data.get('bindings'), dict):
+            raise ValueError('unknown binding schema')
+        for binding in data['bindings'].values():
+            if not isinstance(binding, dict) or not isinstance(binding.get('row_hash'), str) or \
+                    not isinstance(binding.get('reason'), str) or \
+                    not isinstance(binding.get('used_reasons'), list) or \
+                    not all(isinstance(reason, str) for reason in binding['used_reasons']):
+                raise ValueError('invalid binding')
+    except (ValueError, AttributeError, TypeError) as e:
+        raise Misuse(f'invalid waiver bindings at {full}: {e}')
+    return full, data
+
+
+def bind_waivers(path, rows=None):
+    """Adopt legacy observations once; refresh only an explicit new red observation.
+
+    Retain prior observations even when their row or comment disappears, so deleting and
+    reintroducing an ID or an already-used reason cannot make stale consent fresh.
+    Named commands call this before taking their input fingerprint.
+    """
+    rows = load(path) if rows is None else rows
+    full, data = _waiver_bindings(path)
+    reasons = waivers(path)['verify-ok']
+    changed = False
+    for row in rows:
+        if row.id not in reasons or row.brk or row.check.startswith('MANUAL:'):
+            continue
+        reason = reasons[row.id]
+        prior = data['bindings'].get(row.id)
+        fresh = (prior is not None and reason not in prior['used_reasons'] and
+                 re.search(r'\btest-first\b.*\bseen red\b', reason, re.IGNORECASE))
+        if prior is None or fresh:
+            used = prior['used_reasons'] + [reason] if prior else [reason]
+            data['bindings'][row.id] = {'row_hash': waiver_hash(row), 'reason': reason,
+                                        'used_reasons': used}
+            changed = True
+    if changed:
+        os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix='.verify-waivers-', dir=os.path.dirname(full) or '.')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, sort_keys=True)
+                f.write('\n')
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, full)
+            directory = os.open(os.path.dirname(full) or '.', os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def authorized_waivers(path, rows=None):
+    """Keep lint diagnostics for malformed waiver targets; exclude stale observations."""
+    rows = load(path) if rows is None else rows
+    _, data = _waiver_bindings(path)
+    out = waivers(path)
+    for row in rows:
+        if row.id not in out['verify-ok'] or row.brk or row.check.startswith('MANUAL:'):
+            continue
+        prior = data['bindings'].get(row.id)
+        if prior is None or prior['row_hash'] != waiver_hash(row) or \
+                prior['reason'] != out['verify-ok'][row.id]:
+            del out['verify-ok'][row.id]
+    return out
+
+
 def read_requirements(path):
     """Requirement ids, one per line. `#` comments and `ID: description` both fine."""
     ids, seen = [], set()
@@ -370,6 +457,8 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
         sig = signatures.get(row.id)
         if not sig:
             return 'WAIT', f'awaiting {owner}'
+        if ' '.join(sig['who'].split()) != owner_of(row):
+            return 'WAIT', f'awaiting {owner} — signature is from a different owner'
         if sig['what_hash'] != what_hash(row.what):
             return 'WAIT', f'awaiting {owner} — signature is for an older wording'
         return 'PASS', f'signed by {sig["who"]} on {sig["date"]} — {sig["note"]}'
@@ -1030,6 +1119,7 @@ def run(a, locked=False):
         return 0
 
     rows = load(a.ledger)
+    bind_waivers(a.ledger, rows)
 
     if a.sign:
         lock = None if locked else hold_lock()
@@ -1044,7 +1134,7 @@ def run(a, locked=False):
     baseline = read_baseline()
 
     if a.lint_ledger:
-        waived = waivers(a.ledger)
+        waived = authorized_waivers(a.ledger, rows)
         reqs = read_requirements(a.requirements) if a.requirements else None
         problems = lint(rows, load_signatures(), has_baseline=baseline is not None,
                         waived=waived, requirements=reqs)
@@ -1074,6 +1164,15 @@ def run(a, locked=False):
 
 def _run_checks(a, rows, baseline):
     if a.verify is not None:
+        waived = authorized_waivers(a.ledger, rows)['verify-ok']
+        supplied = waivers(a.ledger)['verify-ok']
+        selected = select(rows, a.verify) if a.verify else rows
+        stale = [r.id for r in selected if not r.brk and not r.check.startswith('MANUAL:')
+                 and r.id in supplied and r.id not in waived]
+        if stale:
+            print(f'STALE WAIVER {", ".join(stale)} — witness the revised test red, then '
+                  'replace its verify-ok reason with a new test-first, seen red observation')
+            return 1
         if SESSION is None:
             undo_a_killed_run()
         # the sweep costs a check per row per row, which on a slow check is most of the run,
@@ -1082,7 +1181,7 @@ def _run_checks(a, rows, baseline):
         blast = a.blast is not None and a.blast != -1
         budget = max(0, a.blast or 0)
         ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
-                    waived=waivers(a.ledger)['verify-ok'], signatures=load_signatures(),
+                    waived=waived, signatures=load_signatures(),
                     baseline_files=baseline['files'] if baseline else {})
         print()
         if SESSION is not None and a.verify:

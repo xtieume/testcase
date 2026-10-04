@@ -214,7 +214,7 @@ def fingerprint(store, view, engine):
             files[os.path.relpath(parent, store.root)] = input_mark(parent, engine)
             parent = os.path.dirname(parent)
     inputs = {}
-    for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv'):
+    for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv', engine.WAIVER_BINDINGS):
         full = store._safe(os.path.join(view['paths']['goalrun_dir'], name))
         inputs[name] = engine._mark(full) if os.path.exists(full) else 'absent'
     # Local spec paths outside the workspace are read-only inputs too.
@@ -560,6 +560,9 @@ def named_engine(engine, args):
         view = store.require(args.run, args.token)
         recover(store, engine)
         require_baseline(view, engine)
+        ledger = os.path.join(view['paths']['goalrun_dir'], 'ledger.tsv')
+        if os.path.exists(ledger):
+            engine.bind_waivers(ledger)
         session = Session(store, args.run, args.token, engine, args, lock.fileno())
         log_path = os.path.join(session.evidence_dir, session.evidence_id + '.log')
         with bind(engine, view, session), os.fdopen(
@@ -575,7 +578,7 @@ def named_engine(engine, args):
                         rows = engine.load(engine.LEDGER)
                         reqs = engine.read_requirements(os.path.join(engine.GOAL_DIR, 'reqs.txt'))
                         problems = engine.lint(rows, engine.load_signatures(),
-                                               has_baseline=True, waived=engine.waivers(engine.LEDGER),
+                                               has_baseline=True, waived=engine.authorized_waivers(engine.LEDGER, rows),
                                                requirements=reqs)
                         if problems:
                             for problem in problems:
@@ -608,7 +611,7 @@ def initialize_run(store, engine, args):
             engine.take_baseline(path=os.path.join(paths['goalrun_dir'], 'baseline.json'))
             return
         legacy = Path(store.root) / '.testcases/goalrun'
-        for name in ('ledger.tsv', 'reqs.txt', 'baseline.json', 'signoff.tsv'):
+        for name in ('ledger.tsv', 'reqs.txt', 'baseline.json', 'signoff.tsv', engine.WAIVER_BINDINGS):
             if (legacy / name).exists():
                 shutil.copy2(legacy / name, Path(paths['goalrun_dir']) / name)
         for name, dest in (('docs-review', 'docs_review_dir'), ('testcase', 'testcase_dir')):

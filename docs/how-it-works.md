@@ -106,7 +106,7 @@ flowchart TD
     KIND{"check is MANUAL:owner?"}
 
     SIG{"Signed in signoff.tsv?"}
-    HASH{"Signature matches the current wording?"}
+    HASH{"Signature matches the current wording and MANUAL owner?"}
     WAIT["WAIT — awaiting that owner"]
 
     RUN["Run the check"]
@@ -123,7 +123,7 @@ flowchart TD
     KIND -->|"yes"| SIG
     SIG -->|"no"| WAIT
     SIG -->|"yes"| HASH
-    HASH -->|"no, wording changed"| WAIT
+    HASH -->|"no, wording or owner changed"| WAIT
     HASH -->|"yes"| PASS
 
     KIND -->|"no"| RUN
@@ -219,6 +219,12 @@ flowchart TD
     style STOPL fill:#f8d7da,stroke:#a3303b,color:#3b1015
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
+
+Signed manual rows require the current owner's signature for the current wording. A test-first
+waiver binds to all current row fields in `verify-waivers.json`. After changing a waived row,
+witness its revised test red and replace the waiver reason with a never-used
+`test-first ... seen red ...` observation describing that red. Reverification or handoff
+cannot renew an unchanged waiver line.
 
 Verdicts describe what the script observed. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that

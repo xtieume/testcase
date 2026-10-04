@@ -29,7 +29,7 @@ Use the exact absolute paths in the selected run's JSON `paths`:
 | Key | Use |
 | --- | --- |
 | `run_dir` | `.testcases/runs/<id>/`: manifest, checkpoint and evidence |
-| `goalrun_dir` | ledger.tsv, reqs.txt, baseline.json, signoff.tsv and guarded undo/ |
+| `goalrun_dir` | ledger.tsv, reqs.txt, baseline.json, signoff.tsv, verify-waivers.json and guarded undo/ |
 | `docs_review_dir` | this run's reports and review artifacts |
 | `testcase_dir` | this run's CSV, previous table, coverage map and review artifacts |
 | `testcases` | tracked `docs/testcases/<id>/testcases.md` deliverable |
@@ -96,7 +96,7 @@ fingerprint and ownership epoch. `inspect` exposes `last_evidence`/`evidence_sta
 preserve a current proof; a later failed check invalidates it until whole verification passes again. A new
 resumed controller must rerun the whole ledger before claiming completion, even with unchanged
 source; its new ownership epoch makes prior evidence stale. Changed source, tests, runtime, tool
-version, spec or authoritative run inputs (requirements, ledger, baseline, signatures) also
+version, spec or authoritative run inputs (requirements, ledger, baseline, signatures, waiver bindings) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
 Tracked and new, unignored files remain authoritative under names such as `src/bin`;
@@ -124,7 +124,12 @@ The fingerprint is a freshness check, not proof that the requirements or tests w
 derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
 `last_proof.whole_ledger_verified: true`; completion also requires `proof_stale: false`. Full proof first gates requirement coverage with lint. A ledger
 consisting only of signed MANUAL rows (including multiple decisions) or explicit test-first waivers
-can pass without mutation; the manual-row ratio gate still applies to mixed ledgers;
+can pass without mutation. Manual signatures must match the current wording and owner.
+Test-first waivers are bound to their current row in verify-waivers.json before the session
+fingerprint is taken. After row edits, witness the revised test red and replace the waiver's
+reason with a never-used `test-first ... seen red ...` observation describing the new red.
+Unchanged lines, measurement, removed rows and handoffs cannot refresh a stale waiver;
+the manual-row ratio gate still applies to mixed ledgers;
 unwaived checks without breaks fail lint. `--only` and `--verify <ids>` give phase verdicts and
 cannot justify completion. A selected check without a break is recorded as `SKIPPED` and
 fails subset verification; its preliminary measurement is not proof. After a subset repair,
@@ -160,7 +165,7 @@ python3 "$GOALRUN" migrate export-v1 --goal "Ship CSV export" --spec spec.md
 python3 "$GOALRUN" resume export-v1 --owner controller-a
 ```
 
-`migrate` copies the existing legacy baseline, ledger, reqs, signatures, docs-review/testcase
+`migrate` copies the existing legacy baseline, ledger, reqs, signatures, waiver bindings, docs-review/testcase
 artifacts and root testcases.md into selected run paths, leaves originals untouched and never
 retakes the baseline. An existing destination testcase table is refused; reconcile its permanent
 IDs before retrying migration. A pending publication journal recovers a tracked table left by

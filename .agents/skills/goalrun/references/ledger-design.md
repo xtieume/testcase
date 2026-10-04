@@ -80,6 +80,13 @@ path, reversibility) are the rows a ledger forgets.
 
 No reason, no waiver. A waiver naming a row or requirement that is not in the ledger reads as an
 accepted gap when it is only a line nobody deleted, so the lint reports it.
+The first engine command durably binds existing `verify-ok` observations to all five row
+fields in `$GOAL_DIR/verify-waivers.json`. Changing wording, check, deliverable or break
+invalidates the observation. After witnessing the revised test red, replace the reason with
+a new `test-first ... seen red ...` observation, including the date and what changed.
+Use a reason never previously used for that ID; an old line cannot authorize a revised row.
+Bindings survive removed rows, handoff and legacy migration. Preserve this file with the
+ledger; measurement and verification do not renew stale observations.
 
 ## Writing a `break`
 
@@ -182,8 +189,10 @@ Legitimate when the decision belongs to someone else — wording, a design, a le
 command produces that answer. Laziness when you could have written the check: "the code is
 clean", "performance looks fine", "the migration is safe".
 
-`--sign` accepts only the named owner and stores a hash of `what`; change the wording and the row
-returns to `WAIT — signature is for an older wording`.
+`--sign` accepts only the named owner and stores that signer plus a hash of `what`.
+Verification requires both the wording hash and the current `MANUAL:<owner>` to match.
+Changing wording or owner returns the row to `WAIT`; obtain the current owner's fresh answer
+and record it with `--sign`.
 
 The lint catches: no rows; `MANUAL` without an owner; mostly-`MANUAL` ledgers; deliverables with
 no baseline; stale signatures and waivers; rows with no `break`; and, using the named run's reqs.txt,

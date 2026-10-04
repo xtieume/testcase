@@ -43,6 +43,7 @@ Named completion requires a successful whole-ledger --verify with current eviden
 Ordinary checks measure; subset checks prove only a phase.
 Exit 0 operation succeeded / checks pass, 1 not done, 2 misuse or broken ledger.
 """
+import stat
 import argparse, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
     signal, subprocess, sys, tempfile, time
 
@@ -286,6 +287,8 @@ def _mark(path):
     also moves the mtime buys nothing."""
     try:
         st = os.lstat(path)
+        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+            return f'type:{stat.S_IFMT(st.st_mode)}:{st.st_mode & 0o7777}:{st.st_rdev}'
         if not os.path.islink(path) and st.st_size > BIG_FILE:
             return f'big:{st.st_size}:{st.st_mtime_ns}'
     except OSError:
@@ -495,6 +498,8 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         except Misuse as e:
             misshapen.append(f'{r.id} ({e})')
             continue
+        if old_text is None and re.match(r'^(?:sed|rm|cp|mv|echo|printf|perl|python[0-9.]*|sh|bash|node)\s', path):
+            misshapen.append(f'{r.id} (shell command instead of a path)')
         if old_text is not None and not old_text:
             misshapen.append(f'{r.id} (nothing to find in {path})')
     if misshapen:
@@ -686,7 +691,9 @@ def plant(brk, cwd=None, row_id=None):
     if old is None:
         if SESSION is not None:
             SESSION.prepare(row_id, path, was, None)
-        os.remove(full)
+            SESSION.delete(full)
+        else:
+            os.remove(full)
         return (full, was), None
     try:
         text = was.decode('utf-8')
@@ -816,9 +823,17 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     for row in rows:
         if not row.brk:
             print(f'skip {row.id} — no break column')
+            if SESSION is not None and row.id not in already:
+                valid_waiver = not ids and row.id in waived
+                SESSION.record_row(row, 'VERIFIED' if valid_waiver else 'SKIPPED',
+                                   'test-first waiver' if valid_waiver else 'no break column')
+                if not valid_waiver:
+                    all_ok = False
             continue
         if row.check.startswith('MANUAL:'):
             print(f'skip {row.id} — MANUAL row')
+            if SESSION is not None and row.id not in already:
+                SESSION.record_row(row, 'VERIFIED', 'current human signature')
             continue
         if row.id in already:
             all_ok = False

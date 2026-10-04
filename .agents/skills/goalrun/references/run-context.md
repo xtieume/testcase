@@ -98,23 +98,34 @@ version, spec or authoritative run inputs (requirements, ledger, baseline, signa
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
 File and directory permission modes also participate, so removing executable access stales proof.
+Runtime inputs include a digest of environment values (excluding terminal/shell bookkeeping),
+resolved executables in ledger checks, and installed Python/local dependency file identities.
+Changing feature flags, Python paths, runner binaries or installed package files requires new proof.
+Environment values themselves are never saved by the fingerprint.
 Derived session logs, CSV exports and working review reports do not invalidate measurement
-evidence; requirements and tracked test case tables remain authoritative inputs.
+evidence; requirements and tracked test case tables remain authoritative inputs. Standard coverage
+outputs (`.coverage`, `.coverage.*`, `coverage.xml`, `junit.xml`) are excluded too. Other generated
+outputs should live in the existing excluded build/cache directories. FIFOs and devices are
+recorded by file type and permissions without opening them.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
 derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
 `whole_ledger_verified: true`. Full proof first gates requirement coverage with lint. A ledger
 consisting only of signed MANUAL rows or explicit test-first waivers can pass without mutation;
 unwaived checks without breaks fail lint. `--only` and `--verify <ids>` give phase verdicts and
-cannot justify completion. After a subset repair, rerun the whole ledger before claiming done.
+cannot justify completion. A selected check without a break is recorded as `SKIPPED` and
+fails subset verification; its preliminary measurement is not proof. After a subset repair,
+rerun the whole ledger before claiming done.
 
 The CLI holds a run lock across ownership checks and writes, and a global workspace lock
-across source-sensitive operations. Before lifecycle writes or named engine operations it
+across source-sensitive operations, including checking whether legacy mode is still eligible. Before lifecycle writes or named engine operations it
 recovers **all runs'** pending verify journals under that global lock. Restoration compares
 current bytes to the original or planted fingerprint; conflicting external edits refuse
 recovery and retain the journal for reconciliation. Planting and restoration write and sync a
 temporary file, then atomically replace the target; recovery clears the journal only after restoration. Symlinked or hardlinked
 source targets are refused before planting a defect. After a parent crash, an orphan check
-process retains the workspace lock until it stops. `inspect` can still read state.
+process retains the workspace lock until it stops. Normal completion explicitly unlocks the
+shared descriptor, so surviving background processes do not keep the lock. Deletion breaks
+also compare the current source with the journal before unlinking. `inspect` can still read state.
 Direct artifact edits by cooperating agents follow the owner's delegation contract; these
 locks do not enforce OS access control, and external editors/builds do not participate.
 

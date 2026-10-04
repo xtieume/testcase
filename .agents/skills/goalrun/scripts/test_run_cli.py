@@ -664,5 +664,148 @@ with store.lock('export'), run_cli.workspace_lock(goalrun) as lock:
         self.assertTrue(self.inspect()['evidence_stale'])
 
 
+    def test_coverage_output_does_not_invalidate_proof(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"from pathlib import Path; Path('.coverage').write_text('derived'); assert Path('feature.txt').read_text() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['evidence_stale'])
+
+    def test_fifo_output_does_not_hang_fingerprint(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"import os; os.mkfifo('pipe')\"")
+        out = subprocess.run([sys.executable, str(SCRIPT), '--run', 'export', '--token', token,
+                              '--only', 'REQ-A'], cwd=self.root, capture_output=True, timeout=3)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        self.inspect()
+
+    def test_environment_change_stales_proof_without_disclosing_values(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"import os; assert os.environ['FEATURE_FLAG']=='accepted'; assert open('feature.txt').read()=='old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        env = dict(os.environ, FEATURE_FLAG='accepted')
+        out = subprocess.run([sys.executable, str(SCRIPT), '--run', 'export', '--token', token,
+                              '--verify'], cwd=self.root, env=env, capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        env['FEATURE_FLAG'] = 'changed-secret-value'
+        out = subprocess.run([sys.executable, str(SCRIPT), 'inspect', 'export'], cwd=self.root,
+                             env=env, capture_output=True, text=True)
+        self.assertTrue(json.loads(out.stdout)['evidence_stale'])
+        self.assertNotIn('changed-secret-value', out.stdout)
+
+    def test_legacy_eligibility_is_checked_with_workspace_lock(self):
+        import contextlib
+        from unittest.mock import patch
+        import run_cli
+        import goalrun
+        from run_store import RunError
+        entered = []
+        @contextlib.contextmanager
+        def lock(engine):
+            entered.append(True)
+            yield None
+        def listing(store):
+            self.assertTrue(entered, 'legacy eligibility checked outside workspace lock')
+            return [{'id': 'new-run'}]
+        with patch.object(run_cli, 'workspace_lock', lock), patch.object(run_cli.Store, 'list', listing):
+            with self.assertRaises(RunError):
+                run_cli.named_engine(goalrun, type('Args', (), {'run': None, 'token': None})())
+
+    def test_delete_break_preserves_edit_after_journaling(self):
+        token = self.init()
+        snippet = f"""
+import argparse
+from pathlib import Path
+import run_cli, goalrun
+from run_store import Store, RunError
+store = Store()
+with run_cli.workspace_lock(goalrun) as lock:
+    session = run_cli.Session(store, 'export', {token!r}, goalrun, argparse.Namespace(verify=''), lock.fileno())
+    prepare = session.prepare
+    def edit(*args):
+        prepare(*args)
+        Path('feature.txt').write_text('user edit')
+    session.prepare = edit
+    goalrun.SESSION = session
+    try:
+        goalrun.plant('feature.txt', row_id='REQ-A')
+    except RunError:
+        assert Path('feature.txt').read_text() == 'user edit'
+    else:
+        raise AssertionError('deletion discarded intervening edit')
+"""
+        out = subprocess.run([sys.executable, '-c', snippet], cwd=self.root,
+                             env=dict(os.environ, PYTHONPATH=str(SCRIPT.parent)), capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+
+    def test_subset_verify_records_unproven_row_as_skipped(self):
+        token = self.init()
+        self.ledger()
+        self.cli('--run', 'export', '--token', token, '--verify', 'REQ-A', code=1)
+        info = self.inspect()
+        self.assertEqual(info['last_evidence']['rows']['REQ-A']['status'], 'SKIPPED')
+        self.assertEqual(info['checkpoint']['failures']['REQ-A'], 1)
+
+    def test_finished_background_check_releases_workspace_lock(self):
+        token = self.init()
+        self.ledger(command='sleep 20 & echo $! > .testcases/background-pid')
+        try:
+            self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+            self.cli('checkpoint', 'export', '--token', token, '--phase', 'after-background', '--next', 'Continue')
+        finally:
+            pid = self.root / '.testcases/background-pid'
+            if pid.exists():
+                try:
+                    os.kill(int(pid.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_external_runner_update_stales_proof(self):
+        with tempfile.TemporaryDirectory() as outside:
+            runner = Path(outside) / 'project-check'
+            runner.write_text("#!/bin/sh\n[ \"$(cat feature.txt)\" = old ]\n")
+            runner.chmod(0o755)
+            token = self.init()
+            self.ledger(command='project-check', brk='feature.txt :: old :: broken')
+            env = dict(os.environ, PATH=outside + os.pathsep + os.environ['PATH'])
+            out = subprocess.run([sys.executable, str(SCRIPT), '--run', 'export', '--token', token,
+                                  '--verify'], cwd=self.root, env=env, capture_output=True, text=True)
+            self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+            runner.write_text('#!/bin/sh\nexit 1\n')
+            out = subprocess.run([sys.executable, str(SCRIPT), 'inspect', 'export'], cwd=self.root,
+                                 env=env, capture_output=True, text=True)
+            self.assertTrue(json.loads(out.stdout)['evidence_stale'])
+
+    def test_installed_dependency_change_stales_proof(self):
+        package = self.root / 'node_modules/example'
+        package.mkdir(parents=True)
+        implementation = package / 'index.js'
+        implementation.write_text('accepted')
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['evidence_stale'])
+        implementation.write_text('changed')
+        self.assertTrue(self.inspect()['evidence_stale'])
+
+    def test_mixed_subset_verify_cannot_hide_a_skipped_row(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        with (self.folder() / 'goalrun/ledger.tsv').open('a') as stream:
+            stream.write('REQ-B\tSecond behavior\ttrue\t-\t\n')
+        self.cli('--run', 'export', '--token', token, '--verify', 'REQ-A,REQ-B', code=1)
+        rows = self.inspect()['last_evidence']['rows']
+        self.assertEqual(rows['REQ-A']['status'], 'VERIFIED')
+        self.assertEqual(rows['REQ-B']['status'], 'SKIPPED')
+
+    def test_init_with_existing_fifo_does_not_hang(self):
+        os.mkfifo(self.root / 'pipe')
+        out = subprocess.run([sys.executable, str(SCRIPT), 'init', 'export', '--goal', 'Export'],
+                             cwd=self.root, capture_output=True, timeout=3)
+        self.assertEqual(out.returncode, 0, out.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()

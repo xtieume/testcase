@@ -649,7 +649,8 @@ def named_engine(engine, args):
         view = store.require(args.run, args.token)
         recover(store, engine)
         require_baseline(view, engine)
-        ledger = os.path.join(view['paths']['goalrun_dir'], 'ledger.tsv')
+        ledger = store._safe(os.path.join(view['paths']['goalrun_dir'], 'ledger.tsv'))
+        store._safe(os.path.join(view['paths']['goalrun_dir'], engine.WAIVER_BINDINGS))
         if os.path.exists(ledger):
             engine.bind_waivers(ledger)
         session = Session(store, args.run, args.token, engine, args, lock.fileno())
@@ -701,6 +702,10 @@ def initialize_run(store, engine, args):
             return
         legacy = Path(store.root) / '.testcases/goalrun'
         for name in ('ledger.tsv', 'reqs.txt', 'baseline.json', 'signoff.tsv', engine.WAIVER_BINDINGS):
+            if name == engine.WAIVER_BINDINGS:
+                store._safe(legacy / name)
+                if (legacy / name).is_symlink():
+                    raise RunError(f'waiver binding path is symlinked: {legacy / name}')
             if (legacy / name).exists():
                 shutil.copy2(legacy / name, Path(paths['goalrun_dir']) / name)
         for name, dest in (('docs-review', 'docs_review_dir'), ('testcase', 'testcase_dir')):

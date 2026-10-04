@@ -170,6 +170,97 @@ class RunAuthorizationTests(unittest.TestCase):
         self.ledger(what='Exports XML', waiver=OLD_WAIVER)
         self.verify(token, code=1)
 
+    def test_named_waiver_sidecar_symlinks_are_refused_before_bootstrap(self):
+        with tempfile.TemporaryDirectory() as outside:
+            for kind in ('external', 'dangling', 'crossrun'):
+                with self.subTest(kind=kind):
+                    token = self.init(kind)
+                    self.ledger(folder=self.folder(kind))
+                    if kind == 'crossrun':
+                        self.init('target')
+                        target = self.folder('target') / 'verify-waivers.json'
+                    else:
+                        target = Path(outside) / (kind + '.json')
+                    original = '{"version": 1, "bindings": {}}\n'
+                    if kind != 'dangling':
+                        target.write_text(original)
+                    sidecar = self.folder(kind) / 'verify-waivers.json'
+                    sidecar.symlink_to(target)
+                    self.verify(token, run=kind, code=2)
+                    self.assertTrue(sidecar.is_symlink())
+                    self.assertEqual(sidecar.readlink(), target)
+                    if kind == 'dangling':
+                        self.assertFalse(target.exists())
+                    else:
+                        self.assertEqual(target.read_text(), original)
+
+    def test_legacy_waiver_sidecar_symlinks_are_refused_without_replacement(self):
+        self.cli('--baseline')
+        folder = self.root / '.testcases/goalrun'
+        self.ledger(folder=folder)
+        with tempfile.TemporaryDirectory() as outside:
+            for kind in ('existing', 'dangling'):
+                with self.subTest(kind=kind):
+                    target = Path(outside) / (kind + '.json')
+                    original = '{"version": 1, "bindings": {}}\n'
+                    if kind == 'existing':
+                        target.write_text(original)
+                    sidecar = folder / 'verify-waivers.json'
+                    if sidecar.exists() or sidecar.is_symlink():
+                        sidecar.unlink()
+                    sidecar.symlink_to(target)
+                    self.cli('--lint-ledger', code=2)
+                    self.assertTrue(sidecar.is_symlink())
+                    self.assertEqual(sidecar.readlink(), target)
+                    if kind == 'dangling':
+                        self.assertFalse(target.exists())
+                    else:
+                        self.assertEqual(target.read_text(), original)
+
+    def test_migration_refuses_legacy_waiver_sidecar_symlinks(self):
+        self.cli('--baseline')
+        folder = self.root / '.testcases/goalrun'
+        self.ledger(folder=folder)
+        with tempfile.TemporaryDirectory() as outside:
+            for kind in ('existing', 'dangling'):
+                with self.subTest(kind=kind):
+                    target = Path(outside) / (kind + '.json')
+                    original = '{"version": 1, "bindings": {}}\n'
+                    if kind == 'existing':
+                        target.write_text(original)
+                    sidecar = folder / 'verify-waivers.json'
+                    if sidecar.exists() or sidecar.is_symlink():
+                        sidecar.unlink()
+                    sidecar.symlink_to(target)
+                    self.cli('migrate', kind, '--goal', 'Export CSV', code=2)
+                    self.assertFalse(self.folder(kind).exists())
+                    self.assertTrue(sidecar.is_symlink())
+                    self.assertEqual(sidecar.readlink(), target)
+                    if kind == 'dangling':
+                        self.assertFalse(target.exists())
+                    else:
+                        self.assertEqual(target.read_text(), original)
+
+    def test_self_referential_waiver_sidecar_is_refused_without_replacement(self):
+        token = self.init()
+        self.ledger()
+        sidecar = self.folder() / 'verify-waivers.json'
+        sidecar.symlink_to(sidecar.name)
+        self.verify(token, code=2)
+        self.assertTrue(sidecar.is_symlink())
+        self.assertEqual(sidecar.readlink(), Path(sidecar.name))
+
+    def test_migration_refuses_self_referential_waiver_sidecar(self):
+        self.cli('--baseline')
+        folder = self.root / '.testcases/goalrun'
+        self.ledger(folder=folder)
+        sidecar = folder / 'verify-waivers.json'
+        sidecar.symlink_to(sidecar.name)
+        self.cli('migrate', 'export', '--goal', 'Export CSV', code=2)
+        self.assertFalse(self.folder().exists())
+        self.assertTrue(sidecar.is_symlink())
+        self.assertEqual(sidecar.readlink(), Path(sidecar.name))
+
     def test_named_runs_bind_their_own_waivers(self):
         a = self.init('export')
         self.ledger()

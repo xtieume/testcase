@@ -139,6 +139,9 @@ def waiver_hash(row):
 
 def _waiver_bindings(path):
     full = os.path.join(os.path.dirname(path), WAIVER_BINDINGS)
+    absolute = os.path.abspath(full)
+    if os.path.islink(full) or os.path.realpath(absolute) != absolute:
+        raise Misuse(f'waiver binding path is symlinked: {full}')
     if not os.path.exists(full):
         return full, {'version': 1, 'bindings': {}}
     try:

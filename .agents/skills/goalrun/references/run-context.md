@@ -122,7 +122,8 @@ rerun the whole ledger before claiming done.
 The CLI holds a run lock across ownership checks and writes, and a global workspace lock
 across source-sensitive operations, including checking whether legacy mode is still eligible. Before lifecycle writes or named engine operations it
 recovers **all runs'** pending verify journals under that global lock. Restoration compares
-current bytes to the original or planted fingerprint; conflicting external edits refuse
+current bytes and saved permission modes to the original or planted fingerprint; conflicting
+external edits (including chmod while a defect is planted) refuse
 recovery and retain the journal for reconciliation. Planting and restoration write and sync a
 temporary file, then atomically replace the target; recovery clears the journal only after restoration. Symlinked or hardlinked
 source targets are refused before planting a defect. After a parent crash, an orphan check

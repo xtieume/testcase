@@ -239,6 +239,11 @@ def prepare_undo(store, run_id, row_id, path, original, planted):
 
 def guard_original(store, full, original, record):
     store._safe(full)
+    if os.path.exists(full):
+        metadata = os.stat(full)
+        if not stat.S_ISREG(metadata.st_mode) or (record.get('mode') is not None and
+                metadata.st_mode & 0o7777 != record['mode']):
+            raise RunError(f'recovery conflict at {full}: source type or permissions changed; journal retained')
     current = Path(full).read_bytes() if os.path.exists(full) else None
     if current == original or (current is None and record['planted_hash'] is None) or \
             (current is not None and digest(current) == record['planted_hash']):
@@ -337,6 +342,7 @@ def recover(store, engine):
                 original = base64.b64decode(record['original'], validate=True)
             except (KeyError, ValueError, TypeError) as exc:
                 raise RunError(f'invalid recovery bytes: {path}') from exc
+            guard_original(store, full, original, record)
             current = Path(full).read_bytes() if os.path.exists(full) else None
             if current == original:
                 pass  # crash before planting or after restoration
@@ -407,7 +413,9 @@ class Session:
 
         def guard():
             self.store._safe(full)
-            if Path(full).read_bytes() != original:
+            metadata = os.stat(full)
+            if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o7777 != record['mode'] or \
+                    Path(full).read_bytes() != original:
                 raise RunError('source changed before planting; journal retained')
 
         atomic_source_write(self.store, full, planted, path, record, 'plant', guard)

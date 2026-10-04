@@ -824,6 +824,11 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
     incomplete = []
     for row in rows:
+        if row.check.startswith('MANUAL:'):
+            print(f'skip {row.id} — MANUAL row')
+            if SESSION is not None and row.id not in already:
+                SESSION.record_row(row, 'VERIFIED', 'current human signature')
+            continue
         if not row.brk:
             print(f'skip {row.id} — no break column')
             if SESSION is not None and row.id not in already:
@@ -832,11 +837,6 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                                    'test-first waiver' if valid_waiver else 'no break column')
                 if not valid_waiver:
                     all_ok = False
-            continue
-        if row.check.startswith('MANUAL:'):
-            print(f'skip {row.id} — MANUAL row')
-            if SESSION is not None and row.id not in already:
-                SESSION.record_row(row, 'VERIFIED', 'current human signature')
             continue
         if row.id in already:
             all_ok = False

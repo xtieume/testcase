@@ -856,6 +856,63 @@ with run_cli.workspace_lock(goalrun) as lock:
         self.cli('--run', 'export', '--token', token, '--only', 'UNKNOWN', code=2)
         self.assertFalse(self.inspect()['proof_stale'])
 
+    def test_mixed_signed_manual_and_automated_ledger_can_complete(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        with (self.folder() / 'goalrun/ledger.tsv').open('a') as stream:
+            stream.write('REQ-B\tHuman acceptance\tMANUAL:alice\t-\t\n')
+        (self.folder() / 'goalrun/reqs.txt').write_text('REQ-A\nREQ-B\n')
+        self.cli('--run', 'export', '--token', token, '--sign', 'REQ-B', '--who', 'alice', '--note', 'Accepted')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        info = self.inspect()
+        self.assertFalse(info['proof_stale'])
+        self.assertTrue(info['last_proof']['whole_ledger_verified'])
+        self.assertEqual(info['last_evidence']['rows']['REQ-B']['status'], 'VERIFIED')
+        self.assertNotIn('REQ-B', info['checkpoint']['failures'])
+
+    def test_permission_edit_while_planted_is_a_recovery_conflict(self):
+        (self.root / 'feature.txt').chmod(0o751)
+        token = self.init()
+        self.ledger(command="python3 -c \"import os; broken=open('feature.txt').read()!='old\\n'; os.chmod('feature.txt', 0o640) if broken else None; assert not broken\"",
+                    brk='feature.txt :: old :: broken')
+        out = self.cli('--run', 'export', '--token', token, '--verify', code=2)
+        self.assertIn('conflict', out.stderr)
+        self.assertEqual((self.root / 'feature.txt').read_text(), 'broken\n')
+        self.assertEqual((self.root / 'feature.txt').stat().st_mode & 0o7777, 0o640)
+        self.assertTrue(list((self.folder() / 'goalrun/undo').glob('*.json')))
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=2)
+        self.assertEqual((self.root / 'feature.txt').stat().st_mode & 0o7777, 0o640)
+        # Explicit reconciliation permits recovery, without discarding the conflict first.
+        (self.root / 'feature.txt').chmod(0o751)
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+        self.assertEqual((self.root / 'feature.txt').read_text(), 'old\n')
+
+    def test_permission_edit_before_planting_is_preserved(self):
+        (self.root / 'feature.txt').chmod(0o751)
+        token = self.init()
+        snippet = f"""
+import argparse
+from pathlib import Path
+import run_cli, goalrun
+from run_store import Store, RunError
+store = Store()
+with run_cli.workspace_lock(goalrun) as lock:
+    session = run_cli.Session(store, 'export', {token!r}, goalrun, argparse.Namespace(verify=''), lock.fileno())
+    session.prepare('REQ-A', 'feature.txt', b'old\\n', b'broken\\n')
+    Path('feature.txt').chmod(0o640)
+    try:
+        session.plant(str(Path('feature.txt').resolve()), b'broken\\n')
+    except RunError:
+        assert Path('feature.txt').read_bytes() == b'old\\n'
+        assert Path('feature.txt').stat().st_mode & 0o7777 == 0o640
+    else:
+        raise AssertionError('plant discarded intervening chmod')
+"""
+        out = subprocess.run([sys.executable, '-c', snippet], cwd=self.root,
+                             env=dict(os.environ, PYTHONPATH=str(SCRIPT.parent)), capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -270,7 +270,8 @@ the controller retains the token and records their results.
 Ordinary workspace inputs include Git-ignored files and empty directories. Init captures
 ordinary files in the original baseline, so an unchanged ignored deliverable cannot count as
 new work. Private state, dependencies, caches and ignored build directories are excluded;
-tracked files override output and cache exclusions. Git HEAD and semantic staged index changes
+tracked files override output and cache exclusions. Explicit deliverables in excluded paths
+are rejected. Git HEAD and semantic staged index changes
 stale proof, while Git status and index stat-cache refreshes preserve it.
 
 A new owner must verify again. Source, spec, tests or authoritative run inputs changing also

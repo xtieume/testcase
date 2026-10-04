@@ -269,6 +269,7 @@ nhận đường dẫn đã chọn và vai trò được giao; controller giữ 
 các file thông thường vào baseline ban đầu, nên deliverable bị ignore nhưng không đổi chưa
 được tính là công việc mới. Trạng thái riêng, dependency, cache và thư mục build bị ignore
 được loại trừ; file được Git theo dõi vẫn được tính dù nằm trong thư mục output hoặc cache.
+Deliverable chỉ rõ đường dẫn bị loại trừ sẽ bị từ chối.
 Thay đổi Git HEAD hay nội dung, mode, conflict và cờ của index làm proof hết hiệu lực;
 Git status và thao tác làm mới stat-cache của index giữ nguyên hiệu lực proof.
 

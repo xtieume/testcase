@@ -420,18 +420,28 @@ def read_baseline(path=None, cwd=None):
 def not_shipped(path, baseline_files, cwd=None):
     """'' when the deliverable exists and differs from the baseline, else the reason.
 
-    A file the baseline never saw is new since then, so it shipped. A directory shipped when
-    anything under it was added, removed or changed."""
+    An authoritative file the baseline never saw is new since then, so it shipped.
+    Excluded outputs cannot be deliverables. A directory shipped when an authoritative
+    file under it was added, removed or changed."""
     norm = os.path.normpath(path)
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
     full = os.path.join(cwd or '.', norm)
     if not os.path.lexists(full):
         return 'does not exist'
+    from run_cli import source_entries
+    selected = {os.path.normpath(relative): (source, directory)
+                for relative, source, directory in source_entries(cwd or '.', sys.modules[__name__])}
+    if norm != os.curdir and norm not in selected:
+        return 'excluded generated, cache or private path; use an authoritative deliverable'
     if os.path.isdir(full) and not os.path.islink(full):
-        now = {os.path.normpath(os.path.join(norm, rel)): h for rel, h in _tree_hashes(full).items()}
-        then = dict(baseline_files) if norm == os.curdir else {k: v for k, v in baseline_files.items()
-                if k == norm or k.startswith(norm + os.sep)}
+        def inside(relative):
+            return norm == os.curdir or relative == norm or relative.startswith(norm + os.sep)
+        # Keep the workspace root's exclusions and tracked overrides. Walking
+        # only the deliverable directory loses ignored-output ancestor context.
+        now = {relative: _mark(source) for relative, (source, directory) in selected.items()
+               if not directory and inside(relative)}
+        then = {relative: mark for relative, mark in baseline_files.items() if inside(relative)}
         return '' if now != then else 'unchanged since baseline'
     return '' if _mark(full) != baseline_files.get(norm) else 'unchanged since baseline'
 

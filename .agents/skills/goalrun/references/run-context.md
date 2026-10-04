@@ -116,6 +116,9 @@ repository/submodule HEAD and semantic index changes also stale proof. Staged ob
 modes, conflict stages and persistent index flags participate; Git status and index stat-cache
 refreshes preserve proof. Directory deliverables compare the same authoritative file selection
 recorded in the baseline, so unchanged ignored ordinary files cannot count as newly shipped.
+Explicit deliverables in excluded output/cache/private paths are rejected; choose an ordinary
+authoritative path, or track the output/cache target before initializing its run baseline.
+Do not reset an existing run baseline to work around an excluded deliverable.
 Environment values themselves are never saved by the fingerprint. Evidence JSON and session
 logs are created with private `0600` file permissions, independent of the caller’s umask.
 Derived session logs, CSV exports and working review reports do not invalidate measurement

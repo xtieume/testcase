@@ -67,6 +67,52 @@ class InputProvenanceTests(unittest.TestCase):
         (self.root / 'schema.json').write_text('{"version": 2}')
         self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
 
+    def test_excluded_file_deliverables_are_rejected_instead_of_counted_as_new(self):
+        self.repository()
+        for run_id, deliverable in (('built', 'build/schema.json'), ('cache', '.coverage')):
+            with self.subTest(deliverable=deliverable):
+                path = self.root / deliverable
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('preexisting output')
+                token = self.init(run_id)
+                self.ledger(run_id)
+                ledger = self.folder(run_id) / 'goalrun/ledger.tsv'
+                ledger.write_text(ledger.read_text().replace('\t-\t', f'\t{deliverable}\t'))
+                out = self.cli('--run', run_id, '--token', token, '--only', 'REQ-A', code=1)
+                self.assertIn('excluded', out.stdout)
+                path.write_text('changed output')
+                self.cli('--run', run_id, '--token', token, '--only', 'REQ-A', code=1)
+
+    def test_excluded_directory_deliverable_is_rejected_instead_of_counted_as_new(self):
+        self.repository()
+        path = self.root / 'build/schema.json'
+        path.parent.mkdir()
+        path.write_text('preexisting output')
+        token = self.init()
+        self.ledger()
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('\t-\t', '\tbuild\t'))
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertIn('excluded', out.stdout)
+
+    def test_tracked_output_directory_ignores_untracked_generated_siblings_when_shipping(self):
+        self.repository()
+        path = self.root / 'build/source.txt'
+        path.parent.mkdir()
+        path.write_text('tracked source')
+        self.git('add', '-f', 'build/source.txt')
+        (path.parent / 'schema.json').write_text('preexisting output')
+        token = self.init()
+        self.ledger()
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('\t-\t', '\tbuild\t'))
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertIn('unchanged since baseline', out.stdout)
+        (path.parent / 'schema.json').write_text('changed output')
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        path.write_text('changed source')
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+
     def test_staging_existing_worktree_bytes_invalidates_whole_proof(self):
         self.repository()
         (self.root / 'staged.txt').write_text('baseline')

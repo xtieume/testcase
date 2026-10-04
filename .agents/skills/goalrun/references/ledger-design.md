@@ -23,10 +23,16 @@ and the lint refuses `\&\&` or `\|\|` outright.
 
 **Verdict.** `MANUAL` → `WAIT` until signed. Otherwise the check runs; if it passes and the row
 names a deliverable, that path must exist and its **content** must differ from what this run's init baseline
-recorded — a file the baseline never saw is new and counts, a directory counts if anything under
-it was added, removed or changed, `touch` counts for nothing, absolute paths and `..` never
-count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
+recorded — an authoritative file the baseline never saw is new and counts. A directory counts
+if an authoritative file under it was added, removed or changed. `touch` counts for nothing;
+absolute paths and `..` never count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
 name: nothing can differ from a baseline that already contains it.
+
+Ordinary ignored files are authoritative inputs. Explicit deliverables in excluded generated,
+cache or private paths fail instead of being counted as new files. Choose an ordinary source
+deliverable, or track the output/cache target before initializing the run baseline; do not
+reset an existing baseline as a workaround. Directory comparisons use the workspace baseline
+selection, including tracked overrides, so excluded generated siblings never count as shipped.
 
 ## An example
 
@@ -150,8 +156,8 @@ original/planted fingerprints. Conflicting edits refuse recovery and retain the 
   the break, and a check that writes to any of them leaves what it wrote.
 - **A check runs in your tree**, as it does on a plain run, so a check that litters litters
   where it already did.
-- **A directory deliverable** ships when anything under it changes — a check that writes a
-  log into it counts, so keep generated output out of a directory a row names.
+- **A directory deliverable** ships when an authoritative file under it changes. Keep check
+  output in excluded build/cache paths so an ordinary output file cannot masquerade as shipped work.
 
 ## The sweep
 

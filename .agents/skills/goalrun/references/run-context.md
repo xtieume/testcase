@@ -99,6 +99,14 @@ source; its new ownership epoch makes prior evidence stale. Changed source, test
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures, waiver bindings) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
+
+Each observed check and finalized row updates the checkpoint before the next check starts.
+Interrupted sessions expose `last_evidence.state: "unfinished"` with a null exit code;
+finished sessions expose `state: "completed"`. A witnessed failing measurement invalidates
+proof and counts once per row in that session, even after SIGKILL or ownership takeover.
+Check evidence identifies the row and phase (`measurement`, `mutation`, or `blast`), so an
+expected failure under a planted defect does not count as a production regression.
+
 Ordinary workspace files participate even when Git ignores them, including `.env` and
 pre-existing schema deliverables; empty directories participate in proof freshness too.
 Init records the same file selection in the original baseline. Known dependency, cache and

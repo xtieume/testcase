@@ -428,9 +428,10 @@ class RunCliTests(unittest.TestCase):
                 except ProcessLookupError:
                     pass
         # Wait until the shell has reaped the killed check and closed its lock descriptor.
+        generation = str(self.inspect()['checkpoint']['generation'])
         for _ in range(100):
             out = subprocess.run([sys.executable, str(SCRIPT), 'resume', 'export', '--owner', 'agent-B',
-                                  '--expected-generation', '1'], cwd=self.root, capture_output=True, text=True)
+                                  '--expected-generation', generation], cwd=self.root, capture_output=True, text=True)
             if out.returncode == 0:
                 break
             time.sleep(0.02)

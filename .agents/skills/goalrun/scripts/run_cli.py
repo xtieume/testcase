@@ -557,14 +557,54 @@ class Session:
         self.before = fingerprint(store, self.view, engine)
 
     def record_row(self, row, status, note):
-        self.rows[row.id] = {'status': status, 'note': note}
+        self.rows[row.id] = {'status': status, 'note': note,
+                             'phase': 'measurement' if status in ('PASS', 'FAIL', 'WAIT') else 'verification'}
+        self.publish(self.result())
 
-    def record_check(self, command, exit_code, output, timed_out):
-        entry = {'command': command, 'exit_code': exit_code, 'timed_out': timed_out, 'output': output}
+    def record_check(self, command, exit_code, output, timed_out, row_id=None, phase='measurement'):
+        entry = {'command': command, 'exit_code': exit_code, 'timed_out': timed_out, 'output': output,
+                 'row_id': row_id, 'phase': phase, 'mutation_row_id': self.active_row}
         self.checks.append(entry)
-        # Each command survives interruption even if no final result was written.
+        if phase == 'measurement' and row_id is not None and (exit_code != 0 or timed_out):
+            tail = [line.strip() for line in output.splitlines() if line.strip()]
+            self.rows[row_id] = {'status': 'FAIL', 'phase': phase,
+                                 'note': 'timed out' if timed_out else tail[-1][:96] if tail else f'exit {exit_code}'}
+        # The checkpoint is the first durable result: any saved command file
+        # therefore already has its witnessed failure and proof invalidation.
+        self.publish(self.result())
         path = os.path.join(self.evidence_dir, self.evidence_id + f'-check-{len(self.checks)}.json')
         atomic_json(self.store, path, entry)
+
+    def result(self):
+        return {'id': self.evidence_id, 'at': time.time(), 'exit_code': None,
+                'state': 'unfinished', 'argv': redacted_argv(sys.argv[1:], self.token),
+                'fingerprint': self.before, 'input_fingerprint': self.before,
+                'inputs_changed': False, 'rows': dict(self.rows),
+                'ownership_epoch': self.view['checkpoint']['ownership_epoch'],
+                'log': os.path.join(self.evidence_dir, self.evidence_id + '.log'),
+                'checks': len(self.checks), 'last_check': self.checks[-1] if self.checks else None,
+                'whole_ledger_verified': False}
+
+    def publish(self, result):
+        view = self.store.require(self.run_id, self.token)
+        cp = view['checkpoint']
+        previous = cp.get('last_evidence') or {}
+        counted = set(previous.get('counted_failures', [])) if previous.get('id') == self.evidence_id else set()
+        failing = {row_id for row_id, outcome in self.rows.items()
+                   if outcome['status'] not in ('PASS', 'VERIFIED', 'WAIT')}
+        for row_id in failing - counted:
+            cp['failures'][row_id] = cp['failures'].get(row_id, 0) + 1
+        result['counted_failures'] = sorted(counted | failing)
+        proof = latest_proof(cp)
+        if result['whole_ledger_verified']:
+            cp['last_proof'] = dict(result)
+        elif proof is not None:
+            cp['last_proof'] = dict(proof)
+            if failing or result['inputs_changed'] or (result['exit_code'] not in (None, 0) and self.checks):
+                cp['last_proof']['invalidated_by'] = self.evidence_id
+        cp['last_evidence'] = result
+        cp['generation'] += 1
+        self.store._save(view, cp)
 
     def prepare(self, row_id, path, original, planted):
         self.active_row = row_id
@@ -603,32 +643,17 @@ class Session:
         path = journal_path(self.store, self.run_id, row_id)
         if os.path.exists(path):
             os.unlink(path)
+        self.active_row = None
 
     def finish(self, code, log_path):
         view = self.store.require(self.run_id, self.token)
-        cp = view['checkpoint']
-        for row_id, outcome in self.rows.items():
-            if outcome['status'] not in ('PASS', 'VERIFIED', 'WAIT'):
-                cp['failures'][row_id] = cp['failures'].get(row_id, 0) + 1
         after = fingerprint(self.store, view, self.engine)
-        result = {'id': self.evidence_id, 'at': time.time(), 'exit_code': code,
-                  'argv': redacted_argv(sys.argv[1:], self.token),
-                  'fingerprint': after, 'input_fingerprint': self.before,
-                  'inputs_changed': self.before != after, 'rows': self.rows,
-                  'ownership_epoch': cp['ownership_epoch'],
-                  'log': log_path, 'checks': len(self.checks),
-                  'whole_ledger_verified': code == 0 and self.args.verify == '' and self.before == after}
+        result = self.result()
+        result.update({'exit_code': code, 'state': 'completed', 'fingerprint': after,
+                       'inputs_changed': self.before != after, 'log': log_path,
+                       'whole_ledger_verified': code == 0 and self.args.verify == '' and self.before == after})
+        self.publish(result)
         atomic_json(self.store, os.path.join(self.evidence_dir, self.evidence_id + '.json'), result)
-        proof = latest_proof(cp)
-        if result['whole_ledger_verified']:
-            cp['last_proof'] = dict(result)
-        elif proof is not None:
-            cp['last_proof'] = dict(proof)
-            if (code != 0 and self.checks) or self.before != after:
-                cp['last_proof']['invalidated_by'] = self.evidence_id
-        cp['last_evidence'] = result
-        cp['generation'] += 1
-        self.store._save(view, cp)
 
 
 @contextmanager

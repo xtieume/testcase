@@ -291,7 +291,7 @@ def _zero_tests_matched(text):
     return None
 
 
-def run_check(cmd, timeout=1800, cwd=None):
+def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
     """Return (ok, one-line summary, timed_out). A check passes only on exit 0 and, if it
     looks like a test runner, only when it actually matched something to run.
 
@@ -310,18 +310,20 @@ def run_check(cmd, timeout=1800, cwd=None):
             _kill_group(p)
             out.seek(0)
             if SESSION is not None:
-                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), True)
+                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), True,
+                                     row_id=row_id, phase=phase)
             return False, f'timed out after {timeout}s', True
         except KeyboardInterrupt:
             _kill_group(p)
             out.seek(0)
             if SESSION is not None:
-                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), False)
+                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), False,
+                                     row_id=row_id, phase=phase)
             raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
         if SESSION is not None:
-            SESSION.record_check(cmd, code, text, False)
+            SESSION.record_check(cmd, code, text, False, row_id=row_id, phase=phase)
     if code == 0 and RUNNER_RE.search(cmd):
         # a runner that ran anything says so. Silence with exit 0 means the command never
         # reached it — one ledger carried `cd dir \&\& dotnet test ...`, and `sh -c` ran the
@@ -502,7 +504,7 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baselin
         if sig['what_hash'] != what_hash(row.what):
             return 'WAIT', f'awaiting {owner} — signature is for an older wording'
         return 'PASS', f'signed by {sig["who"]} on {sig["date"]} — {sig["note"]}'
-    ok, note, _ = run_check(row.check, timeout, cwd)
+    ok, note, _ = run_check(row.check, timeout, cwd, row_id=row.id)
     if not ok:
         return 'FAIL', note
     if row.deliverable:
@@ -716,7 +718,7 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
                 seen[other.check] = 'unswept'
             else:
                 lim = timeout if left is None else min(timeout, int(left))
-                ok, _, hung = run_check(other.check, lim, cwd)
+                ok, _, hung = run_check(other.check, lim, cwd, row_id=other.id, phase='blast')
                 # hitting the sweep's own cap is the sweep running out of time, not the check
                 # hanging — calling that `stuck` would file a real BLAST as a footnote
                 seen[other.check] = ('unswept' if hung and lim < timeout else
@@ -968,7 +970,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
             continue
         keep_undo(row.id, undo, cwd)
         try:
-            ok, note, hung = run_check(row.check, timeout, cwd)
+            ok, note, hung = run_check(row.check, timeout, cwd, row_id=row.id, phase='mutation')
             if blast:
                 began = time.monotonic()
                 left = None if budget is None else max(0.0, budget - spent)

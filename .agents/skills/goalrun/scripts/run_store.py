@@ -175,12 +175,14 @@ class Store:
             raise RunError('run manifest has inconsistent paths or identity')
         if not isinstance(manifest.get('goal'), str) or not manifest['goal'].strip() or not isinstance(manifest.get('spec'), str):
             raise RunError('invalid run goal or spec')
-        evidence = checkpoint.get('last_evidence')
-        if evidence is not None and (not isinstance(evidence, dict) or
-                                    not isinstance(evidence.get('fingerprint'), str) or
-                                    type(evidence.get('whole_ledger_verified')) is not bool or
-                                    not isinstance(evidence.get('rows'), dict)):
-            raise RunError('invalid run evidence')
+        for key in ('last_evidence', 'last_proof'):
+            evidence = checkpoint.get(key)
+            if evidence is not None and (not isinstance(evidence, dict) or
+                                        not isinstance(evidence.get('fingerprint'), str) or
+                                        type(evidence.get('whole_ledger_verified')) is not bool or
+                                        not isinstance(evidence.get('rows'), dict) or
+                                        (key == 'last_proof' and not evidence['whole_ledger_verified'])):
+                raise RunError('invalid run evidence')
         epoch = checkpoint.get('ownership_epoch')
         if type(epoch) is not int or epoch < 0:
             raise RunError('invalid ownership epoch')

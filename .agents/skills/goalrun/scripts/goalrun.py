@@ -320,6 +320,9 @@ def take_baseline(cwd=None, path=None, reset=False):
         for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
             p = os.path.join(base, name)
             files[os.path.normpath(os.path.relpath(p, root))] = _mark(p)
+    from run_cli import tracked_paths
+    for relative in tracked_paths(root):
+        files[os.path.normpath(relative)] = _mark(os.path.join(root, relative))
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:

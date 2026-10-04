@@ -197,8 +197,8 @@ requirements no row measures. It does not catch a fake check or a break that can
 Named runs take their baseline once through `init`, preserve it on resume, and refuse
 `--baseline`, `--reset`, `--ledger` and `--requirements` overrides. Lint automatically reads
 that run's reqs.txt. `--sign ID --who WHO [--note ...]` also requires RUN/TOKEN.
-Only a successful bare whole-ledger verify records `whole_ledger_verified`; inspect freshness
-before relying on it. Legacy `--baseline [--reset]`, `--ledger PATH` and
+Only a successful bare whole-ledger verify records `last_proof.whole_ledger_verified`; inspect `proof_stale`
+before relying on it. Successful later diagnostics preserve that proof; failures invalidate it. Legacy `--baseline [--reset]`, `--ledger PATH` and
 `--lint-ledger --requirements PATH` remain available only while no named run exists;
 use explicit `migrate` to preserve unfinished legacy work without resetting its baseline.
 

@@ -806,6 +806,56 @@ with run_cli.workspace_lock(goalrun) as lock:
                              cwd=self.root, capture_output=True, timeout=3)
         self.assertEqual(out.returncode, 0, out.stderr)
 
+    def test_tracked_source_under_excluded_directory_stales_proof(self):
+        source = self.root / 'src/bin/worker.rs'
+        source.parent.mkdir(parents=True)
+        source.write_text('original source')
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        subprocess.run(['git', 'add', 'src/bin/worker.rs'], cwd=self.root, check=True)
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        source.write_text('changed source')
+        self.assertTrue(self.inspect()['evidence_stale'])
+        baseline = json.loads((self.folder() / 'goalrun/baseline.json').read_text())
+        self.assertIn('src/bin/worker.rs', baseline['files'])
+
+    def test_latest_whole_proof_survives_successful_diagnostics(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        proof_id = self.inspect()['last_evidence']['id']
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+        self.cli('--run', 'export', '--token', token, '--lint-ledger')
+        info = self.inspect()
+        self.assertEqual(info['last_proof']['id'], proof_id)
+        self.assertFalse(info['proof_stale'])
+        self.assertFalse(info['last_evidence']['whole_ledger_verified'])
+
+    def test_new_failed_measurement_invalidates_prior_whole_proof(self):
+        token = self.init()
+        command = "python3 -c \"from pathlib import Path; assert not Path('.testcases/force-failure').exists(); assert Path('feature.txt').read_text() == 'old\\n'\""
+        self.ledger(command=command, brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        (self.root / '.testcases/force-failure').touch()
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertTrue(self.inspect()['proof_stale'])
+        (self.root / '.testcases/force-failure').unlink()
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+        self.assertTrue(self.inspect()['proof_stale'])
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['proof_stale'])
+
+    def test_rejected_diagnostic_without_checks_preserves_whole_proof(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.cli('--run', 'export', '--token', token, '--only', 'UNKNOWN', code=2)
+        self.assertFalse(self.inspect()['proof_stale'])
+
 
 if __name__ == '__main__':
     unittest.main()

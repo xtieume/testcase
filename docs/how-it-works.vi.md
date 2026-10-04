@@ -261,7 +261,7 @@ nhận đường dẫn đã chọn và vai trò được giao; controller giữ 
 
 Agent mới phải verify lại. Source, spec, test hoặc đầu vào chính của run thay đổi cũng làm
 bằng chứng cũ hết hiệu lực. Đo thông thường hoặc check một phần chưa đủ để báo hoàn thành:
-inspect phải có `whole_ledger_verified: true` và `evidence_stale: false`. Row MANUAL đã được
+inspect phải có `last_proof.whole_ledger_verified: true` và `proof_stale: false`. Row MANUAL đã được
 người phụ trách xác nhận và waiver test-first rõ ràng có thể đạt mà không cần trồng lỗi.
 Sửa file trực tiếp và build bên ngoài vẫn cần phối hợp vì dùng chung source và không dùng
 lock của công cụ.

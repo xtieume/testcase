@@ -263,7 +263,7 @@ the controller retains the token and records their results.
 
 A new owner must verify again. Source, spec, tests or authoritative run inputs changing also
 makes saved evidence stale. A plain measurement or subset check cannot establish completion:
-inspect must show `whole_ledger_verified: true` and `evidence_stale: false`. Signed MANUAL rows
+inspect must show `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Signed MANUAL rows
 and explicit test-first waivers can pass without a planted defect. Direct edits and external
 builds still need coordination because they share source and do not use the tool’s locks.
 

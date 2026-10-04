@@ -14,8 +14,8 @@ violating the spirit of the rules.**
 ## The rule
 
 **Done is the script's exit code, not your judgement.** No "done" until `goalrun.py` exits 0
-on a current whole-ledger `--verify`, with `whole_ledger_verified: true` and
-`evidence_stale: false` in the selected run. Until then: "not yet" and the table.
+on a current whole-ledger `--verify`, with `last_proof.whole_ledger_verified: true` and
+`proof_stale: false` in the selected run. Until then: "not yet" and the table.
 
 No exceptions — not "done pending X"; not "the check is flaky"; not "I ran it by hand"; not
 because the user said "just say yes"; not by editing a row until it turns green.

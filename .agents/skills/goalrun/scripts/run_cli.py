@@ -14,6 +14,7 @@ import shutil
 import shlex
 import stat
 import sysconfig
+import subprocess
 import sys
 import time
 import uuid
@@ -126,6 +127,21 @@ def runtime_mark(store, view, engine):
     return digest(json.dumps([sys.version, environment, tools, dependencies], sort_keys=True).encode())
 
 
+def tracked_paths(root):
+    """Tracked inputs override generated-directory guesses, except private run state."""
+    try:
+        result = subprocess.run(['git', '-C', os.path.abspath(root), 'ls-files', '-z'],
+                                capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return []
+    if result.returncode:
+        if os.path.lexists(os.path.join(root, '.git')):
+            raise RunError('cannot enumerate tracked inputs; restore the Git index before verifying')
+        return []
+    return [p for p in os.fsdecode(result.stdout).split('\0') if p and
+            p.split('/')[0] not in {'.git', '.testcases'}]
+
+
 def fingerprint(store, view, engine):
     # Same exclusions as the original baseline. Include ignored run inputs explicitly.
     files = {'runtime': runtime_mark(store, view, engine),
@@ -140,6 +156,13 @@ def fingerprint(store, view, engine):
                 continue
             full = os.path.join(base, name)
             files[os.path.relpath(full, store.root)] = input_mark(full, engine)
+    for relative in tracked_paths(store.root):
+        full = os.path.join(store.root, relative)
+        files[relative] = input_mark(full, engine)
+        parent = os.path.dirname(full)
+        while parent != store.root:
+            files[os.path.relpath(parent, store.root)] = input_mark(parent, engine)
+            parent = os.path.dirname(parent)
     # Fingerprint authoritative inputs, not derived session logs/CSV/review exports.
     # Source/tests/tracked case tables are covered by the workspace walk above.
     for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv'):
@@ -153,20 +176,44 @@ def fingerprint(store, view, engine):
     return digest(json.dumps(files, sort_keys=True).encode())
 
 
+def latest_proof(checkpoint):
+    proof = checkpoint.get('last_proof')
+    if proof is None:
+        previous = checkpoint.get('last_evidence')
+        if previous and previous.get('whole_ledger_verified'):
+            proof = previous
+    return proof
+
+
 def evidence_view(store, view, engine):
-    evidence = view['checkpoint'].get('last_evidence')
-    if evidence is not None:
-        evidence = dict(evidence)
-        evidence['argv'] = redacted_argv(evidence.get('argv', []), view['checkpoint'].get('token'))
-    view['last_evidence'] = evidence
-    view['evidence_stale'] = (evidence is None or
-                              evidence.get('ownership_epoch') != view['checkpoint']['ownership_epoch'] or
-                              evidence.get('fingerprint') != fingerprint(store, view, engine))
+    checkpoint = view['checkpoint']
+    evidence = checkpoint.get('last_evidence')
+    proof = latest_proof(checkpoint)
+    current = fingerprint(store, view, engine)
+
+    def public(record):
+        if record is None:
+            return None
+        result = dict(record)
+        result['argv'] = redacted_argv(result.get('argv', []), checkpoint.get('token'))
+        return result
+
+    def stale(record):
+        return (record is None or bool(record.get('invalidated_by')) or
+                record.get('ownership_epoch') != checkpoint['ownership_epoch'] or
+                record.get('fingerprint') != current)
+
+    view['last_evidence'] = public(evidence)
+    view['evidence_stale'] = stale(evidence)
+    view['last_proof'] = public(proof)
+    view['proof_stale'] = stale(proof)
     # Inspection/listing cannot confer writer privileges.
-    view['checkpoint'] = dict(view['checkpoint'])
+    view['checkpoint'] = dict(checkpoint)
     view['checkpoint'].pop('token', None)
     if evidence is not None:
-        view['checkpoint']['last_evidence'] = evidence
+        view['checkpoint']['last_evidence'] = view['last_evidence']
+    if proof is not None:
+        view['checkpoint']['last_proof'] = view['last_proof']
     return view
 
 
@@ -400,6 +447,13 @@ class Session:
                   'log': log_path, 'checks': len(self.checks),
                   'whole_ledger_verified': code == 0 and self.args.verify == '' and self.before == after}
         atomic_json(self.store, os.path.join(self.evidence_dir, self.evidence_id + '.json'), result)
+        proof = latest_proof(cp)
+        if result['whole_ledger_verified']:
+            cp['last_proof'] = dict(result)
+        elif proof is not None:
+            cp['last_proof'] = dict(proof)
+            if (code != 0 and self.checks) or self.before != after:
+                cp['last_proof']['invalidated_by'] = self.evidence_id
         cp['last_evidence'] = result
         cp['generation'] += 1
         self.store._save(view, cp)

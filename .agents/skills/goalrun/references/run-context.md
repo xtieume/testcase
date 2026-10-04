@@ -91,13 +91,16 @@ are refused: init owns the one baseline. Signing also requires `--run` and `--to
 still records only the human answer actually received.
 
 Saved evidence contains per-check commands, outputs and exit codes, a run log and an input
-fingerprint and ownership epoch. `inspect` exposes `last_evidence` and `evidence_stale`. A new
+fingerprint and ownership epoch. `inspect` exposes `last_evidence`/`evidence_stale` for the latest operation and
+`last_proof`/`proof_stale` for the latest whole-ledger proof. Successful measurements and lint
+preserve a current proof; a later failed check invalidates it until whole verification passes again. A new
 resumed controller must rerun the whole ledger before claiming completion, even with unchanged
 source; its new ownership epoch makes prior evidence stale. Changed source, tests, runtime, tool
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
-File and directory permission modes also participate, so removing executable access stales proof.
+Tracked files remain authoritative even under excluded directory names such as `src/bin`;
+init also records them in the original baseline. File and directory permission modes participate, so removing executable access stales proof.
 Runtime inputs include a digest of environment values (excluding terminal/shell bookkeeping),
 resolved executables in ledger checks, and installed Python/local dependency file identities.
 Changing feature flags, Python paths, runner binaries or installed package files requires new proof.
@@ -109,7 +112,7 @@ outputs should live in the existing excluded build/cache directories. FIFOs and 
 recorded by file type and permissions without opening them.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
 derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
-`whole_ledger_verified: true`. Full proof first gates requirement coverage with lint. A ledger
+`last_proof.whole_ledger_verified: true`; completion also requires `proof_stale: false`. Full proof first gates requirement coverage with lint. A ledger
 consisting only of signed MANUAL rows or explicit test-first waivers can pass without mutation;
 unwaived checks without breaks fail lint. `--only` and `--verify <ids>` give phase verdicts and
 cannot justify completion. A selected check without a break is recorded as `SKIPPED` and

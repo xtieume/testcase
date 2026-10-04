@@ -561,14 +561,19 @@ class Session:
                              'phase': 'measurement' if status in ('PASS', 'FAIL', 'WAIT') else 'verification'}
         self.publish(self.result())
 
-    def record_check(self, command, exit_code, output, timed_out, row_id=None, phase='measurement'):
+    def record_check(self, command, exit_code, output, timed_out, row_id=None, phase='measurement',
+                     passed=None, note=None):
+        if passed is None:
+            passed = exit_code == 0 and not timed_out
         entry = {'command': command, 'exit_code': exit_code, 'timed_out': timed_out, 'output': output,
-                 'row_id': row_id, 'phase': phase, 'mutation_row_id': self.active_row}
+                 'row_id': row_id, 'phase': phase, 'mutation_row_id': self.active_row,
+                 'passed': passed, 'note': note}
         self.checks.append(entry)
-        if phase == 'measurement' and row_id is not None and (exit_code != 0 or timed_out):
+        if phase == 'measurement' and row_id is not None and not passed:
             tail = [line.strip() for line in output.splitlines() if line.strip()]
             self.rows[row_id] = {'status': 'FAIL', 'phase': phase,
-                                 'note': 'timed out' if timed_out else tail[-1][:96] if tail else f'exit {exit_code}'}
+                                 'note': note if note is not None else (
+                                     'timed out' if timed_out else tail[-1][:96] if tail else f'exit {exit_code}')}
         # The checkpoint is the first durable result: any saved command file
         # therefore already has its witnessed failure and proof invalidation.
         self.publish(self.result())

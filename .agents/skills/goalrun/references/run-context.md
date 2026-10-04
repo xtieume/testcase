@@ -106,6 +106,8 @@ finished sessions expose `state: "completed"`. A witnessed failing measurement i
 proof and counts once per row in that session, even after SIGKILL or ownership takeover.
 Check evidence identifies the row and phase (`measurement`, `mutation`, or `blast`), so an
 expected failure under a planted defect does not count as a production regression.
+It retains the raw exit code and records `passed` after the runner gate: a silent runner
+or one matching no tests records `passed: false` even when its exit code is zero.
 
 Ordinary workspace files participate even when Git ignores them, including `.env` and
 pre-existing schema deliverables; empty directories participate in proof freshness too.

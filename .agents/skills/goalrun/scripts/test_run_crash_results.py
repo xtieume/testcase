@@ -207,6 +207,50 @@ run_cli.Session.record_check = pause
             self.cli('checkpoint', 'demo', '--token', self.token, '--phase', 'repair', '--next', 'Fix A')
             self.assertEqual(self.inspect()['checkpoint']['failures'], {'REQ-A': expected})
 
+    def test_zero_test_and_silent_runner_failures_survive_kill_before_finalized_row(self):
+        (self.root / 'pytest').write_text('''from pathlib import Path
+import sys
+assert Path('feature.txt').read_text() == 'old\\n'
+marker = Path('.testcases/no-tests')
+sys.stdout.write(marker.read_text() if marker.exists() else '1 passed\\n')
+''')
+        ledger = self.run / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('python3 check.py', 'python3 pytest'))
+        patch = '''real = run_cli.Session.record_row
+def pause(self, row, status, note):
+    if status == 'FAIL':
+        Path('.testcases/before-row').touch()
+        time.sleep(30)
+    return real(self, row, status, note)
+run_cli.Session.record_row = pause
+'''
+        for expected, output in ((1, 'collected 0 items\n'), (2, '')):
+            with self.subTest(output=output):
+                self.cli('--run', 'demo', '--token', self.token, '--verify')
+                proof = self.inspect()['last_proof']['id']
+                self.assertFalse(self.inspect()['proof_stale'])
+                marker = self.root / '.testcases/no-tests'
+                marker.write_text(output)
+                process = self.spawn('--run', 'demo', '--token', self.token, '--only', 'REQ-A', patch=patch)
+                try:
+                    self.wait_for('before-row', process)
+                    self.stop(process)
+                    (self.root / '.testcases/before-row').unlink()
+                    info = self.inspect()
+                    self.assertTrue(info['proof_stale'])
+                    self.assertEqual(info['last_proof']['id'], proof)
+                    self.assertEqual(info['checkpoint']['failures'], {'REQ-A': expected})
+                    self.assertEqual(info['last_evidence']['rows']['REQ-A']['status'], 'FAIL')
+                    check = json.loads((self.run / 'evidence' /
+                                        (info['last_evidence']['id'] + '-check-1.json')).read_text())
+                    self.assertEqual(check['exit_code'], 0)
+                    self.assertFalse(check['passed'])
+                    self.cli('checkpoint', 'demo', '--token', self.token, '--phase', 'repair', '--next', 'Fix filter')
+                    self.assertEqual(self.inspect()['checkpoint']['failures'], {'REQ-A': expected})
+                finally:
+                    self.stop(process)
+                    marker.unlink()
+
 
 if __name__ == '__main__':
     unittest.main()

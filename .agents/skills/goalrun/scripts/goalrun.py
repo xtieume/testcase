@@ -311,32 +311,38 @@ def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
             out.seek(0)
             if SESSION is not None:
                 SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), True,
-                                     row_id=row_id, phase=phase)
+                                     row_id=row_id, phase=phase, passed=False,
+                                     note=f'timed out after {timeout}s')
             return False, f'timed out after {timeout}s', True
         except KeyboardInterrupt:
             _kill_group(p)
             out.seek(0)
             if SESSION is not None:
                 SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), False,
-                                     row_id=row_id, phase=phase)
+                                     row_id=row_id, phase=phase, passed=False, note='interrupted')
             raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
-        if SESSION is not None:
-            SESSION.record_check(cmd, code, text, False, row_id=row_id, phase=phase)
+    ok, note = code == 0, None
     if code == 0 and RUNNER_RE.search(cmd):
         # a runner that ran anything says so. Silence with exit 0 means the command never
         # reached it — one ledger carried `cd dir \&\& dotnet test ...`, and `sh -c` ran the
         # `cd` with two stray arguments, exit 0, and never called dotnet
         if not text.strip():
-            return False, ('the test runner printed nothing — the command never reached it; '
-                           'a stray backslash before && or || in the ledger is the usual cause'), False
-        marker = _zero_tests_matched(text)
-        if marker:
-            return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
-                           f'test it matched was skipped'), False
+            ok, note = False, ('the test runner printed nothing — the command never reached it; '
+                               'a stray backslash before && or || in the ledger is the usual cause')
+        else:
+            marker = _zero_tests_matched(text)
+            if marker:
+                ok, note = False, (f'ran no test ({marker}) — the filter matched nothing, or every '
+                                   f'test it matched was skipped')
     tail = [l.strip() for l in text.splitlines() if l.strip()]
-    return code == 0, (tail[-1][:96] if tail else f'exit {code}'), False
+    note = note if note is not None else tail[-1][:96] if tail else f'exit {code}'
+    if SESSION is not None:
+        # Publish the interpreted outcome, retaining the raw process exit code.
+        # A runner that matched nothing is already a failure at this boundary.
+        SESSION.record_check(cmd, code, text, False, row_id=row_id, phase=phase, passed=ok, note=note)
+    return ok, note, False
 
 
 def _digest(path):

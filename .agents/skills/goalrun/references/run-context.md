@@ -109,7 +109,10 @@ Runtime inputs include a digest of environment values (excluding terminal/shell 
 resolved executables in ledger checks, and installed Python/local dependency file identities.
 Changing feature flags, Python paths, runner binaries or installed package files requires new proof.
 Runtime/tool metadata, workspace paths and run inputs have separate fingerprint namespaces,
-so source names cannot overwrite metadata.
+so source names cannot overwrite metadata. Git worktree contents include nested submodules;
+repository/submodule HEAD changes also stale proof. Directory deliverables compare the same
+authoritative file selection recorded in the baseline, so pre-existing ignored outputs do not
+make an unchanged directory look shipped.
 Environment values themselves are never saved by the fingerprint. Evidence JSON and session
 logs are created with private `0600` file permissions, independent of the caller’s umask.
 Derived session logs, CSV exports and working review reports do not invalidate measurement
@@ -120,7 +123,8 @@ recorded by file type and permissions without opening them.
 The fingerprint is a freshness check, not proof that the requirements or tests were correctly
 derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
 `last_proof.whole_ledger_verified: true`; completion also requires `proof_stale: false`. Full proof first gates requirement coverage with lint. A ledger
-consisting only of signed MANUAL rows or explicit test-first waivers can pass without mutation;
+consisting only of signed MANUAL rows (including multiple decisions) or explicit test-first waivers
+can pass without mutation; the manual-row ratio gate still applies to mixed ledgers;
 unwaived checks without breaks fail lint. `--only` and `--verify <ids>` give phase verdicts and
 cannot justify completion. A selected check without a break is recorded as `SKIPPED` and
 fails subset verification; its preliminary measurement is not proof. After a subset repair,

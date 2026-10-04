@@ -263,14 +263,9 @@ def _digest(path):
 
 
 def _tree_hashes(root):
-    out = {}
-    for base, dirs, files in os.walk(root):
-        # a symlinked directory is an entry, not a directory to walk into: os.walk lists it
-        # under `dirs` and never yields its contents, so without this it is invisible
-        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            path = os.path.join(base, name)
-            out[os.path.relpath(path, root)] = _digest(path)
-    return out
+    from run_cli import source_entries
+    return {os.path.normpath(relative): _mark(full)
+            for relative, full, directory in source_entries(root, sys.modules[__name__]) if not directory}
 
 
 BASELINE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache',
@@ -314,9 +309,7 @@ def take_baseline(cwd=None, path=None, reset=False):
                      f'against. Retaking it would read every deliverable as unchanged; '
                      f'`--baseline --reset` if that is really what you want')
     root = cwd or '.'
-    from run_cli import source_paths
-    files = {os.path.normpath(relative): _mark(os.path.join(root, relative))
-             for relative in source_paths(root, sys.modules[__name__])}
+    files = _tree_hashes(root)
     data = {'taken': int(time.time()), 'files': files}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
@@ -347,7 +340,7 @@ def not_shipped(path, baseline_files, cwd=None):
         return 'does not exist'
     if os.path.isdir(full) and not os.path.islink(full):
         now = {os.path.normpath(os.path.join(norm, rel)): h for rel, h in _tree_hashes(full).items()}
-        then = {k: v for k, v in baseline_files.items()
+        then = dict(baseline_files) if norm == os.curdir else {k: v for k, v in baseline_files.items()
                 if k == norm or k.startswith(norm + os.sep)}
         return '' if now != then else 'unchanged since baseline'
     return '' if _mark(full) != baseline_files.get(norm) else 'unchanged since baseline'
@@ -461,7 +454,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     # one subjective row is normal — there is usually something a human must eyeball.
     # more than one is worth a second look, and past 30% of rows the ledger is a
     # list of promises — hence both conditions below.
-    if len(manual) > 1 and len(manual) / len(rows) > 0.30:
+    if 1 < len(manual) < len(rows) and len(manual) / len(rows) > 0.30:
         problems.append(f'{len(manual)} of {len(rows)} rows are MANUAL (>30%) — this ledger '
                         f'is mostly promises, not checks')
     shipping = [r.id for r in rows if r.deliverable]

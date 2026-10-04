@@ -962,6 +962,59 @@ with run_cli.workspace_lock(goalrun) as lock:
         self.assertIn('AUTH.1', out.stdout)
         self.assertFalse(self.inspect()['last_evidence']['whole_ledger_verified'])
 
+    def test_submodule_worktree_change_stales_whole_proof(self):
+        with tempfile.TemporaryDirectory() as outside:
+            origin = Path(outside)
+            subprocess.run(['git', 'init', '-q'], cwd=origin, check=True)
+            (origin / 'component.py').write_text('original')
+            subprocess.run(['git', 'add', 'component.py'], cwd=origin, check=True)
+            subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                            'commit', '-qm', 'Initial'], cwd=origin, check=True)
+            subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+            subprocess.run(['git', '-c', 'protocol.file.allow=always', 'submodule', 'add', '-q',
+                            str(origin), 'vendor/component'], cwd=self.root, check=True)
+            token = self.init()
+            self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                        brk='feature.txt :: old :: broken')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            component = self.root / 'vendor/component'
+            previous_head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=component, text=True).strip()
+            subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+                            'commit', '--allow-empty', '-qm', 'Version-only change'], cwd=component, check=True)
+            self.assertTrue(self.inspect()['proof_stale'])
+            subprocess.run(['git', 'checkout', '-q', previous_head], cwd=component, check=True)
+            self.assertFalse(self.inspect()['proof_stale'])
+            (self.root / 'vendor/component/component.py').write_text('changed')
+            self.assertTrue(self.inspect()['proof_stale'])
+
+    def test_multiple_signed_manual_rows_can_complete(self):
+        token = self.init()
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text('REQ-A\tFirst acceptance\tMANUAL:alice\t-\t\n'
+                          'REQ-B\tSecond acceptance\tMANUAL:bob\t-\t\n')
+        (self.folder() / 'goalrun/reqs.txt').write_text('REQ-A\nREQ-B\n')
+        for row, owner in [('REQ-A', 'alice'), ('REQ-B', 'bob')]:
+            self.cli('--run', 'export', '--token', token, '--sign', row, '--who', owner, '--note', 'Accepted')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['proof_stale'])
+        self.assertTrue(self.inspect()['last_proof']['whole_ledger_verified'])
+
+    def test_directory_with_preexisting_ignored_output_is_not_shipped(self):
+        source = self.root / 'src/feature.txt'
+        source.parent.mkdir()
+        source.write_text('original')
+        (self.root / 'src/generated.bin').write_text('ignored output')
+        (self.root / '.gitignore').write_text('src/generated.bin\n')
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        ledger = self.folder() / 'goalrun/ledger.tsv'
+        ledger.write_text(ledger.read_text().replace('\t-\t', '\tsrc\t'))
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        source.write_text('changed source')
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+
 
 if __name__ == '__main__':
     unittest.main()

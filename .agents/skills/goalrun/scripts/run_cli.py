@@ -173,6 +173,29 @@ def source_paths(root, engine):
     return sorted(paths)
 
 
+def source_entries(root, engine, seen=frozenset()):
+    """Expand tracked gitlink directories with the same selection as their worktrees."""
+    real = os.path.realpath(root)
+    if real in seen:
+        return
+    for relative in source_paths(root, engine):
+        full = os.path.join(root, relative)
+        directory = os.path.isdir(full) and not os.path.islink(full)
+        yield relative, full, directory
+        if directory:
+            for child, path, child_directory in source_entries(full, engine, seen | {real}):
+                yield os.path.join(relative, child), path, child_directory
+
+
+def git_head(root):
+    try:
+        result = subprocess.run(['git', '-C', os.path.abspath(root), 'rev-parse', '--verify', 'HEAD'],
+                                capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return None
+    return result.stdout.decode().strip() if result.returncode == 0 else None
+
+
 def fingerprint(store, view, engine):
     # Synthetic metadata and workspace paths have separate collision-free namespaces.
     metadata = {'runtime': runtime_mark(store, view, engine),
@@ -181,8 +204,10 @@ def fingerprint(store, view, engine):
                         ('store', sys.modules[Store.__module__].__file__)):
         metadata[label] = engine._mark(path)
     files = {}
-    for relative in source_paths(store.root, engine):
-        full = os.path.join(store.root, relative)
+    metadata['git-heads'] = {'': git_head(store.root)}
+    for relative, full, directory in source_entries(store.root, engine):
+        if directory:
+            metadata['git-heads'][relative] = git_head(full)
         files[relative] = input_mark(full, engine)
         parent = os.path.dirname(full)
         while parent != store.root:

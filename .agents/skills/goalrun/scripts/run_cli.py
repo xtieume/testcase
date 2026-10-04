@@ -9,6 +9,7 @@ from contextlib import contextmanager, redirect_stderr, redirect_stdout
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import shlex
@@ -143,38 +144,67 @@ def tracked_paths(root):
 
 
 def source_paths(root, engine):
-    """Git inputs include new source; without Git, prune only dependency/cache state."""
-    caches = engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
-    def generated(relative):
-        parts = Path(relative).parts
-        return any(part in caches for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
-               parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
+    """Walk ordinary inputs, including ignored files and empty directories.
 
-    try:
-        result = subprocess.run(['git', '-C', os.path.abspath(root), 'ls-files',
-                                 '--cached', '--others', '--exclude-standard', '-z'],
-                                capture_output=True, timeout=10)
-    except FileNotFoundError:
-        result = None
-    if result is not None and result.returncode == 0:
-        tracked = set(tracked_paths(root))
-        paths = set(p for p in os.fsdecode(result.stdout).split('\0') if p)
-        return sorted(p for p in paths if p.split('/')[0] not in {'.git', '.testcases'} and
-                      (p in tracked or not generated(p)))
-    if result is not None and os.path.lexists(os.path.join(root, '.git')):
-        raise RunError('cannot enumerate workspace inputs; restore the Git index before verifying')
-    paths = []
+    Ignore rules identify common generated-output directories, not arbitrary
+    input files. Tracked paths override output/cache exclusions; private run and
+    Git state never participate.
+    """
+    root = os.path.abspath(root)
+    tracked = set(tracked_paths(root))
+    caches = engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
+    private = {'.git', '.testcases'}
+    ancestors = {str(parent) for path in tracked for parent in Path(path).parents}
+    outputs = {}
+
+    def excluded(relative, directory=False):
+        parts = Path(relative).parts
+        if any(part in private for part in parts):
+            return True
+        if relative in tracked or (directory and relative in ancestors):
+            return False
+        if any(part in caches for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+                parts[-1] == '.coverage' or parts[-1].startswith('.coverage.'):
+            return True
+        for index, part in enumerate(parts if directory else parts[:-1]):
+            if part not in {'bin', 'obj', 'target', 'dist', 'build'}:
+                continue
+            prefix = str(Path(*parts[:index + 1]))
+            if prefix not in outputs:
+                try:
+                    result = subprocess.run(['git', '-C', root, 'check-ignore', '--no-index', '-q', prefix + '/'],
+                                            capture_output=True, timeout=10)
+                except FileNotFoundError:
+                    outputs[prefix] = False
+                else:
+                    outputs[prefix] = result.returncode == 0
+            if outputs[prefix]:
+                return True
+        return False
+
+    paths = set(tracked)
     for base, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in caches]
-        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
+        descend = []
+        for name in dirs:
+            full = os.path.join(base, name)
+            relative = os.path.relpath(full, root)
+            if excluded(relative, directory=True):
+                continue
+            paths.add(relative)
+            # Repository roots recurse in source_entries, retaining their own
+            # tracked overrides and generated-output policy.
+            if not os.path.lexists(os.path.join(full, '.git')):
+                descend.append(name)
+        dirs[:] = descend
+        for name in names:
             relative = os.path.relpath(os.path.join(base, name), root)
-            if not generated(relative):
-                paths.append(relative)
+            if not excluded(relative):
+                paths.add(relative)
     return sorted(paths)
 
 
 def source_entries(root, engine, seen=frozenset()):
-    """Expand tracked gitlink directories with the same selection as their worktrees."""
+    """Expand nested repositories using the same selection as their worktrees."""
     real = os.path.realpath(root)
     if real in seen:
         return
@@ -182,9 +212,40 @@ def source_entries(root, engine, seen=frozenset()):
         full = os.path.join(root, relative)
         directory = os.path.isdir(full) and not os.path.islink(full)
         yield relative, full, directory
-        if directory:
+        if directory and os.path.lexists(os.path.join(full, '.git')):
             for child, path, child_directory in source_entries(full, engine, seen | {real}):
                 yield os.path.join(relative, child), path, child_directory
+
+
+def git_index(root):
+    """Semantic staged entries and persistent flags, independent of stat-cache refresh."""
+    try:
+        result = subprocess.run(['git', '-C', os.path.abspath(root), 'ls-files',
+                                 '--stage', '--debug', '-z'], capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return None
+    if result.returncode:
+        if os.path.lexists(os.path.join(root, '.git')):
+            raise RunError('cannot read staged inputs; restore the Git index before verifying')
+        return None
+    # --debug follows each NUL-terminated pathname with stat-cache fields and
+    # flags. Preserve mode/object/stage and assume-unchanged, skip-worktree,
+    # intent-to-add; ctime, mtime, inode and fsmonitor cache flags are volatile.
+    pattern = rb'([0-9]{6}) ([0-9a-f]+) ([0-3])\t([^\0]*)\0' \
+              rb'  ctime: [^\n]*\n  mtime: [^\n]*\n  dev: [^\n]*\n' \
+              rb'  uid: [^\n]*\n  size: [^\n]*\tflags: ([0-9a-f]+)\n'
+    entries = []
+    offset = 0
+    for match in re.finditer(pattern, result.stdout):
+        if match.start() != offset:
+            raise RunError('cannot parse staged inputs; restore the Git index before verifying')
+        mode, object_id, stage, path, flags = match.groups()
+        entries.append([os.fsdecode(path), mode.decode(), object_id.decode(), int(stage),
+                        int(flags, 16) & (0x8000 | 0x40000000 | 0x20000000)])
+        offset = match.end()
+    if offset != len(result.stdout):
+        raise RunError('cannot parse staged inputs; restore the Git index before verifying')
+    return entries
 
 
 def git_head(root):
@@ -205,9 +266,11 @@ def fingerprint(store, view, engine):
         metadata[label] = engine._mark(path)
     files = {}
     metadata['git-heads'] = {'': git_head(store.root)}
+    metadata['git-indexes'] = {'': git_index(store.root)}
     for relative, full, directory in source_entries(store.root, engine):
-        if directory:
+        if directory and os.path.lexists(os.path.join(full, '.git')):
             metadata['git-heads'][relative] = git_head(full)
+            metadata['git-indexes'][relative] = git_index(full)
         files[relative] = input_mark(full, engine)
         parent = os.path.dirname(full)
         while parent != store.root:
@@ -360,13 +423,39 @@ def recover_publications(store):
             table = Path(paths['run_dir']) / 'migrated-testcases.md'
         else:
             table = Path(destination)
-        if os.path.lexists(table):
-            store._safe(table)
-            current = os.stat(table, follow_symlinks=False)
-            if (current.st_dev, current.st_ino) != (record['device'], record['inode']) or \
-                    digest(table.read_bytes()) != record['hash']:
+
+        def validate(path):
+            store._safe(path)
+            if not os.path.lexists(path):
+                raise RunError('migration publication conflict; table missing; journal retained')
+            current = os.stat(path, follow_symlinks=False)
+            if not stat.S_ISREG(current.st_mode) or \
+                    (current.st_dev, current.st_ino) != (record['device'], record['inode']) or \
+                    digest(Path(path).read_bytes()) != record['hash']:
                 raise RunError('migration publication conflict; preserve the table and reconcile the journal')
+
+        if published:
+            # The recovery hardlink is the only copy after destination deletion.
+            # Publish it exclusively and sync it before removing recovery state.
+            if os.path.lexists(table):
+                validate(table)
+                if not os.path.lexists(destination):
+                    os.makedirs(os.path.dirname(destination), exist_ok=True)
+                    try:
+                        os.link(table, destination)
+                    except FileExistsError:
+                        raise RunError('migration publication conflict; destination appeared; journal retained')
+                validate(destination)
+                store._sync_dir(os.path.dirname(destination))
+                table.unlink()
+                store._sync_dir(paths['run_dir'])
+            else:
+                # A kill after recovery-copy removal leaves only the journal.
+                validate(destination)
+        elif os.path.lexists(table):
+            validate(table)
             table.unlink()
+            store._sync_dir(os.path.dirname(destination))
         if not published and os.path.exists(staging):
             shutil.rmtree(staging)
         journal.unlink()

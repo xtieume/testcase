@@ -267,6 +267,12 @@ that the previous agent and its check processes have stopped, then take over exp
 `--expected-generation`. Delegated children receive selected paths and their assigned role;
 the controller retains the token and records their results.
 
+Ordinary workspace inputs include Git-ignored files and empty directories. Init captures
+ordinary files in the original baseline, so an unchanged ignored deliverable cannot count as
+new work. Private state, dependencies, caches and ignored build directories are excluded;
+tracked files override output and cache exclusions. Git HEAD and semantic staged index changes
+stale proof, while Git status and index stat-cache refreshes preserve it.
+
 A new owner must verify again. Source, spec, tests or authoritative run inputs changing also
 makes saved evidence stale. A plain measurement or subset check cannot establish completion:
 inspect must show `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Signed MANUAL rows

@@ -265,6 +265,13 @@ Quyền sở hữu không tự hết hạn. Khi agent bị crash, đọc generat
 và các tiến trình check đã dừng, rồi tiếp quản rõ ràng bằng `--expected-generation`. Subagent
 nhận đường dẫn đã chọn và vai trò được giao; controller giữ token và ghi nhận kết quả.
 
+Đầu vào thông thường của workspace gồm cả file bị Git ignore và thư mục rỗng. Init ghi
+các file thông thường vào baseline ban đầu, nên deliverable bị ignore nhưng không đổi chưa
+được tính là công việc mới. Trạng thái riêng, dependency, cache và thư mục build bị ignore
+được loại trừ; file được Git theo dõi vẫn được tính dù nằm trong thư mục output hoặc cache.
+Thay đổi Git HEAD hay nội dung, mode, conflict và cờ của index làm proof hết hiệu lực;
+Git status và thao tác làm mới stat-cache của index giữ nguyên hiệu lực proof.
+
 Agent mới phải verify lại. Source, spec, test hoặc đầu vào chính của run thay đổi cũng làm
 bằng chứng cũ hết hiệu lực. Đo thông thường hoặc check một phần chưa đủ để báo hoàn thành:
 inspect phải có `last_proof.whole_ledger_verified: true` và `proof_stale: false`. Row MANUAL đã được

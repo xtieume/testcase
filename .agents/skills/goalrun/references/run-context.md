@@ -99,20 +99,23 @@ source; its new ownership epoch makes prior evidence stale. Changed source, test
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures, waiver bindings) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
-Tracked and new, unignored files remain authoritative under names such as `src/bin`;
-init records the same source selection in the original baseline. Git ignore rules identify
-generated outputs; tracked files override those rules. Without Git, only known dependency,
-cache and private-run directories are excluded, so folder names such as `bin` or `build`
-alone never hide source. Keep generated outputs in ignored or recognized cache paths.
+Ordinary workspace files participate even when Git ignores them, including `.env` and
+pre-existing schema deliverables; empty directories participate in proof freshness too.
+Init records the same file selection in the original baseline. Known dependency, cache and
+private-run directories are excluded. In Git workspaces, ignored directories named `bin`,
+`obj`, `target`, `dist` or `build` also exclude generated output; tracked files override output
+and cache exclusions. Without Git, those names alone never hide source. Keep generated
+outputs in ignored build directories or recognized cache paths.
 File and directory permission modes participate, so removing executable access stales proof.
 Runtime inputs include a digest of environment values (excluding terminal/shell bookkeeping),
 resolved executables in ledger checks, and installed Python/local dependency file identities.
 Changing feature flags, Python paths, runner binaries or installed package files requires new proof.
 Runtime/tool metadata, workspace paths and run inputs have separate fingerprint namespaces,
 so source names cannot overwrite metadata. Git worktree contents include nested submodules;
-repository/submodule HEAD changes also stale proof. Directory deliverables compare the same
-authoritative file selection recorded in the baseline, so pre-existing ignored outputs do not
-make an unchanged directory look shipped.
+repository/submodule HEAD and semantic index changes also stale proof. Staged object IDs,
+modes, conflict stages and persistent index flags participate; Git status and index stat-cache
+refreshes preserve proof. Directory deliverables compare the same authoritative file selection
+recorded in the baseline, so unchanged ignored ordinary files cannot count as newly shipped.
 Environment values themselves are never saved by the fingerprint. Evidence JSON and session
 logs are created with private `0600` file permissions, independent of the caller’s umask.
 Derived session logs, CSV exports and working review reports do not invalidate measurement

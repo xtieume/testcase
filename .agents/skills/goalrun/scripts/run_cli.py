@@ -458,6 +458,9 @@ def recover_publications(store):
         run_id = record.get('run_id')
         paths = store._paths(run_id)
         staging, destination = record.get('staging'), record.get('destination')
+        # a hand-edited or truncated journal is a clean refusal, not a KeyError traceback
+        if not isinstance(staging, str) or not isinstance(destination, str):
+            raise RunError('invalid pending migration publication')
         staging = store._safe(staging)
         destination = store._safe(destination)
         if record.get('version') != 1 or str(journal) != publication_path(store, run_id) or \
@@ -480,10 +483,13 @@ def recover_publications(store):
             store._safe(path)
             if not os.path.lexists(path):
                 raise RunError('migration publication conflict; table missing; journal retained')
+            identity = (record.get('device'), record.get('inode'), record.get('hash'))
+            if not all(isinstance(v, int) for v in identity[:2]) or not isinstance(identity[2], str):
+                raise RunError('invalid pending migration publication')
             current = os.stat(path, follow_symlinks=False)
             if not stat.S_ISREG(current.st_mode) or \
-                    (current.st_dev, current.st_ino) != (record['device'], record['inode']) or \
-                    digest(Path(path).read_bytes()) != record['hash']:
+                    (current.st_dev, current.st_ino) != (identity[0], identity[1]) or \
+                    digest(Path(path).read_bytes()) != identity[2]:
                 raise RunError('migration publication conflict; preserve the table and reconcile the journal')
 
         if published:
@@ -534,12 +540,15 @@ def recover(store, engine):
                 original = base64.b64decode(record['original'], validate=True)
             except (KeyError, ValueError, TypeError) as exc:
                 raise RunError(f'invalid recovery bytes: {path}') from exc
+            planted = record.get('planted_hash')
+            if not (planted is None or isinstance(planted, str)):
+                raise RunError(f'invalid recovery journal: {path}')
             guard_original(store, full, original, record)
             current = Path(full).read_bytes() if os.path.exists(full) else None
             if current == original:
                 pass  # crash before planting or after restoration
-            elif (current is None and record['planted_hash'] is None) or \
-                    (current is not None and digest(current) == record['planted_hash']):
+            elif (current is None and planted is None) or \
+                    (current is not None and digest(current) == planted):
                 restore_original(store, full, original, str(path))
                 print(f'recovered {run_id}/{record["row_id"]}: {rel}', file=sys.stderr)
             else:

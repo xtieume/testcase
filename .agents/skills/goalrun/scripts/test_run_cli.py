@@ -186,6 +186,12 @@ class RunCliTests(unittest.TestCase):
         for evidence in (self.folder() / 'evidence').glob('*.json'):
             self.assertNotIn(token, evidence.read_text())
 
+    def test_timeout_must_be_at_least_one_second(self):
+        token = self.init()
+        self.ledger()
+        out = self.cli('--run', 'export', '--token', token, '--timeout', '0', '--only', 'REQ-A', code=2)
+        self.assertIn('--timeout', out.stderr)
+
     def test_symlinked_directory_inputs_track_contents_and_stop_cycles(self):
         with tempfile.TemporaryDirectory() as outside:
             folder = Path(outside)

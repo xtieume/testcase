@@ -1168,6 +1168,9 @@ def run(a, locked=False):
         raise Misuse('--requirements is read by --lint-ledger')
     if a.blast is not None and a.verify is None:
         raise Misuse('--blast/--no-blast is read by --verify')
+    if a.timeout < 1:
+        raise Misuse('--timeout is seconds per check; 0 or less times out every check '
+                     'and files each sibling as stuck')
 
     if a.requirements and not os.path.exists(a.requirements):
         raise Misuse(f'no requirements file at {a.requirements}')

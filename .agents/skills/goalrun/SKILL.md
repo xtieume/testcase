@@ -24,9 +24,9 @@ because the user said "just say yes"; not by editing a row until it turns green.
 
 From the repo root, `GOALRUN=<path to>/.agents/skills/goalrun/scripts/goalrun.py`.
 
-Read `references/run-context.md` before any output. Select an explicit run for this work,
-initialize it before edits, then resume it as the controller; save the returned top-level
-token as `TOKEN`. Existing work resumes its selected run, preserving the original baseline.
+Read `references/run-context.md` before output. Select an explicit run. `init` before edits;
+`resume` as controller; save the top-level `token` as `TOKEN`. Existing work resumes its run
+and keeps the original baseline.
 
 ```bash
 RUN=export-v1
@@ -35,16 +35,15 @@ python3 "$GOALRUN" resume "$RUN" --owner controller-a
 python3 "$GOALRUN" inspect "$RUN"
 ```
 
-Use `paths` from inspection: `GOAL_DIR=goalrun_dir`, `DOCS_REVIEW_DIR=docs_review_dir`,
-`TESTCASE_DIR=testcase_dir`, `TESTCASES=testcases` (the values, not these key names).
-All engine commands take `--run "$RUN" --token "$TOKEN"`. Never infer a run from the newest
-report. Unknown versions and a different canonical workspace refuse; no automatic relocation.
+`GOAL_DIR=goalrun_dir`, `DOCS_REVIEW_DIR=docs_review_dir`, `TESTCASE_DIR=testcase_dir`,
+`TESTCASES=testcases` (values, not key names). Every engine command takes `--run "$RUN"
+--token "$TOKEN"`. Never infer the run from the newest report. Unknown versions and a
+different canonical workspace refuse; no automatic relocation.
 
-**The work is the deliverable; the ledger is scaffolding.** The selected goalrun directory
-holds ledger.tsv, reqs.txt, baseline.json, signoff.tsv and recovery undo/. Reports live in the
-selected docs-review/testcase directories; evidence lives beside them under this run. A check
-script hidden there is a check no reviewer reads and no CI runs; its assertions belong in the
-repository's own tests (step 3). Keep `.testcases/` excluded locally.
+**The work is the deliverable; the ledger is scaffolding.** The run holds ledger.tsv,
+reqs.txt, baseline.json, signoff.tsv, undo/, plus reports and evidence. A hidden check script
+there is not reviewed or run in CI; its assertions belong in repository tests (step 3).
+Exclude `.testcases/` locally.
 
 Works in any directory; no version control needed. `--verify` makes each break's edit and puts
 the file back byte for byte; nothing is copied. POSIX only (`sh -c`, process groups,
@@ -52,13 +51,12 @@ the file back byte for byte; nothing is copied. POSIX only (`sh -c`, process gro
 
 ## Four modes
 
-Inspect the selected run, state the next action in one sentence, then act within the user's
-request. New work plans; an unfinished run resumes; measure and audit run checks. Ask only
-for missing information or a genuine scope choice, not to reconfirm work already authorized.
+Inspect the run, state the next action, then act. Plan, resume, measure, or audit. Ask only
+when information or scope is missing. Do not reconfirm authorized work.
 
-`--plan` `--resume` `--measure` `--audit` in the user's request are words for *you*, rejected
-by the engine. The script's `resume <id> --owner ...` is a separate lifecycle command.
-A status question runs the selected ledger and reports its table and evidence freshness.
+`--plan` `--resume` `--measure` `--audit` are for you; the engine rejects them.
+`resume <id> --owner ...` is a lifecycle command. A status question runs the ledger and
+reports the table and evidence freshness.
 
 ## Plan
 
@@ -109,13 +107,10 @@ row.**
    the same evidence a break manufactures later — so that row may waive its break:
    `# verify-ok: <id> — test-first, seen red on <date>`. A row measuring code that already
    existed gets no such waiver: nobody ever watched those tests fail.
-   The first engine command binds each existing waiver to its row in
-   `$GOAL_DIR/verify-waivers.json`. If wording, check, deliverable or break changes, witness
-   the revised test red and replace the reason with a new observation, for example
-   `# verify-ok: <id> — test-first, seen red on <date> for revised JSON check`.
-   The refreshed reason must contain `test-first` followed by `seen red` and must not reuse
-   an earlier reason for that ID. Measurement, verification and handoff preserve bindings;
-   keeping the old line or deleting and restoring it does not refresh consent.
+   The first engine command binds each waiver to its row in `$GOAL_DIR/verify-waivers.json`.
+   If wording, check, deliverable, or break changes, witness the new red and replace the reason.
+   The reason must contain `test-first` then `seen red`, and must be unused for that ID.
+   Measurement, verification, and handoff keep bindings. The old line does not refresh consent.
 
    A row over work that was finished before this run began names no `deliverable` — nothing
    this run produces can differ from the baseline there. What it ships, if anything, is the
@@ -151,8 +146,8 @@ row.**
    the code. A red you blame on contention is not a finding either way — wait, re-run that row
    with `--only`, and the re-run is the evidence.
 
-Show ledger, phases and red rows, then continue the authorized work. Checkpoint the plan and
-next action; offer a scope menu only when the user has left that choice open.
+Show ledger, phases and red rows, then continue. Checkpoint the plan and next action. Offer
+a scope menu only when the user left that choice open.
 
 Skipping steps 2, 3 or 5 because the goal "is small" is how a ledger ends up measuring the
 work you happened to do. The three skills are one pipeline: **`docs-review` says what is
@@ -161,15 +156,16 @@ required · `testcase` says how it is proven · `goalrun` says whether it holds.
 ## Build — one subagent per phase
 
 The subagent gets its rows, baseline sha, run ID, canonical workspace, schema version, exact
-path selections and delegated ownership role — never your conclusions or controller token.
-It writes only assigned files and never takes ownership. The controller checkpoints each
-meaningful step; decisions go into the spec, failure counts persist across handoff. Its verdict is not
-evidence; **you** run `python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --only DARK,SHIP` (`PHASE OK`, never `DONE`).
+paths, and a delegated role — never your conclusions or the controller token. Assigned files
+only; it never takes ownership.
+You checkpoint; decisions go in the spec; failure counts survive handoff. Its verdict is not
+evidence; **you** run `python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --only DARK,SHIP`
+(`PHASE OK`, never `DONE`).
 
-**Three strikes**, counted in persistent checkpoint failures: engine reds are recorded
-automatically; use checkpoint `--failure` only for inline/delegated failures not already
-recorded, never twice for the same red. First red → probe (command, exit, last lines),
-redispatch; second → fresh subagent scoped to that row; third → checkpoint and release with all three failures and a concrete next action.
+**Three strikes**, in the checkpoint. Engine reds record themselves. `--failure` once, only if
+unrecorded (inline or delegated). First red → probe (command, exit, last lines), redispatch;
+second → fresh subagent scoped to that row; third → checkpoint and release with all three
+failures and a concrete next action.
 
 A subagent killed mid-phase — rate limit, crash, no report — is not a strike: the rows never
 got their chance. Re-dispatch it once. Only if that dies too, or there is no subagent tool
@@ -189,9 +185,9 @@ left in the tree is work-in-progress, not an answer — read it, trust none of i
    `break` describes, runs the check, and writes the file back byte for byte. A row that did
    not pass in the table is `ALREADY RED`: it proves nothing by going red again, so no break is
    planted for it. Interrupted, it restores on the way out; killed outright, the next run puts
-   the file back after comparing fingerprints, or refuses a conflicting external edit and
-   retains the journal. Every named write or engine operation recovers all run journals under the workspace lock;
-   inspect and list remain read-only.
+   the file back after comparing fingerprints, or refuses a conflicting external edit and keeps
+   the journal. Named writes and engine operations recover every run's journal under the
+   workspace lock. Inspect and list stay read-only.
 
    Every verdict says what it means; two need a decision from you.
 
@@ -278,10 +274,10 @@ the row measures. Two honest moves: if the work is small enough to finish and ve
 and the row goes green on its own; if not, answer with the cost and the fork and leave the row
 alone. Neither is arguing, and neither is `--sign`.
 
-Before handoff, save phase, next action, selected paths and evidence in a checkpoint, then
-release ownership with a handoff note. The note and checkpoint share one atomic JSON record.
-The next controller inspects and resumes; silence never expires ownership. See
-`references/run-context.md` for deliberate generation-checked takeover and legacy migration.
+Before handoff, checkpoint phase, next action, paths, and evidence, then release with a note.
+Note and checkpoint are one atomic JSON record. The next controller inspects and resumes;
+silence never expires ownership. Generation-checked takeover and legacy migration:
+`references/run-context.md`.
 
 ## Rules
 
@@ -298,7 +294,7 @@ The next controller inspects and resumes; silence never expires ownership. See
    the check it only proves the two agree.
 8. **Three reds on one row is a handoff.**
 9. **Subjective criteria need a human signature**, bound to the wording and current MANUAL owner.
-   Changing either requires a fresh answer from the current owner and a new `--sign`.
+   Changing either needs that owner's fresh answer and a new `--sign`.
 10. **A ledger you alone wrote is unreviewed.** Requirements from `docs-review`, behaviour
     from
     `testcase`, and the ledger itself audited by `docs-review`'s loop before the first run.

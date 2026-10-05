@@ -2,7 +2,7 @@
 
 [Tiếng Việt](how-it-works.vi.md)
 
-Five diagrams. Everything here is drawn from the skills' own `SKILL.md` files.
+Four pictures. Everything here is drawn from the skills' own `SKILL.md` files.
 
 ## 1. The pipeline
 
@@ -220,13 +220,11 @@ flowchart TD
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
-Signed manual rows require the current owner's signature for the current wording. A test-first
-waiver binds to all current row fields in `verify-waivers.json`. After changing a waived row,
-witness its revised test red and replace the waiver reason with a never-used
-`test-first ... seen red ...` observation describing that red. Reverification or handoff
-cannot renew an unchanged waiver line.
+A MANUAL row passes only with the current owner's signature on its current wording. A
+test-first waiver is bound to its row: after the row changes, watch the revised test go red and
+write a new `test-first ... seen red ...` reason; re-verify or handoff never renews it.
 
-Verdicts describe what the script observed. `HOLLOW`, `STUCK`, `BLAST`,
+Verdicts are what the script observed. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
 proved nothing is not a pass.
 
@@ -235,53 +233,30 @@ behaviour from the defect — every input it tries is an input this defect is in
 route back is into `testcase`, whose `Distinguishes from` column names the wrong implementation
 each case rules out, never forwards into the ledger by re-pointing the row.
 
-
 ## 5. Independent runs and agent handoff
 
-Initialize a run before editing source. Each goal gets its own requirements, ledger, baseline,
-signatures, reports and checkpoint under `.testcases/runs/<id>/`. Working state is excluded
-from git; case tables ship at `docs/testcases/<id>/testcases.md`, and executable tests stay in
-the repository’s test framework. `docs-review` and `testcase` use these same paths even when
-invoked separately.
+Each goal is one run: its requirements, ledger, baseline, reports, test case table and
+checkpoint live under `.testcases/runs/<id>/`, out of git. The test case table goes into the
+repo only if you name a path.
 
-```mermaid
-flowchart TD
-    NEW["New goal: init run ID before edits"]
-    A["Agent A: resume, save writer token"]
-    WORK["Use selected run paths; checkpoint phase, next action and failure history"]
-    RELEASE["Release: save handoff and revoke A’s token"]
-    B["Agent B: list / inspect, match goal and spec, resume with new token"]
-    CONT["Continue with original baseline, IDs and failure counts"]
-    PROOF["Run whole-ledger --verify; inspect current evidence"]
-    OTHER["Another goal: separate run ID and artifacts"]
-    SOURCE["Shared source: workspace lock serializes engine checks and recovery"]
-
-    NEW --> A --> WORK --> RELEASE --> B --> CONT --> PROOF
-    OTHER --> SOURCE
-    WORK --> SOURCE
-    CONT --> SOURCE
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # before any edit
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy the JSON token into TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # receives a new token
 ```
 
-Ownership never expires automatically. After a crash, inspect the current generation, confirm
-that the previous agent and its check processes have stopped, then take over explicitly with
-`--expected-generation`. Delegated children receive selected paths and their assigned role;
-the controller retains the token and records their results.
+- `release` saves the handoff note and revokes the old token. Baseline, IDs and failure counts
+  stay.
+- A new owner reruns the whole-ledger `--verify`. Done means `inspect` shows
+  `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Editing source, spec,
+  tests or the test case table stales the old proof.
+- Ownership never expires. If the previous agent stopped mid-way, confirm it has stopped, then
+  `resume --expected-generation <n>` with the generation from `inspect`.
+- Continue only in the same workspace. Direct edits and external builds do not take goalrun's
+  lock.
 
-Ordinary workspace inputs include Git-ignored files and empty directories. Init captures
-ordinary files in the original baseline, so an unchanged ignored deliverable cannot count as
-new work. Private state, dependencies, caches and ignored build directories are excluded;
-tracked files override output and cache exclusions. Explicit deliverables in excluded paths
-are rejected, and initial exclusion boundaries and ignore rules remain binding after staging or
-ignore-rule edits, including for output files created after init.
-Git HEAD, the symbolic branch it is on and semantic staged index changes
-stale proof, while Git status and index stat-cache refreshes preserve it.
-
-A new owner must verify again. Source, spec, tests or authoritative run inputs changing also
-makes saved evidence stale. A plain measurement or subset check cannot establish completion:
-inspect must show `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Signed MANUAL rows
-and explicit test-first waivers can pass without a planted defect. Direct edits and external
-builds still need coordination because they share source and do not use the tool’s locks.
-
-See [run context](../.agents/skills/goalrun/references/run-context.md) for commands, recovery
-and legacy migration. Continuing in the same canonical workspace preserves ignored state;
-a clone or moved workspace requires an explicit transfer and migration.
+Details (fingerprint, excluded files, recovery, migration):
+[run context](../.agents/skills/goalrun/references/run-context.md).

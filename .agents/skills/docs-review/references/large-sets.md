@@ -4,7 +4,7 @@ Read this when the measurement in `SKILL.md` step 1 says the set is large. The s
 workflow does not degrade gracefully at this size: it produces `Missing` verdicts that are
 really search failures, and review rounds that return nothing because the reviewer silently
 sampled. Both read exactly like a clean audit. This file replaces steps 2–4 of `SKILL.md`
-with a sharded version; steps 1, 5 and 6 stay as written. Keep the selected run and
+with a sharded version; steps 1, 5 and 6 stay as written. Keep the run and
 `DOCS_REVIEW_DIR` from `SKILL.md`; indexers and shard reviewers receive the run context
 and assigned paths without taking ownership.
 

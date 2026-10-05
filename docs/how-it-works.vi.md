@@ -2,7 +2,7 @@
 
 [English](how-it-works.md)
 
-Năm sơ đồ. Mọi thứ ở đây rút ra từ chính `SKILL.md` của các skill.
+Bốn bức hình. Mọi thứ ở đây rút ra từ chính `SKILL.md` của các skill.
 
 ## 1. Dây chuyền
 
@@ -219,13 +219,11 @@ flowchart TD
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
-Row manual cần chữ ký của owner hiện tại cho đúng câu chữ hiện tại. Waiver test-first được
-ràng buộc với mọi trường của row trong `verify-waivers.json`. Sau khi sửa row có waiver,
-chứng kiến test đã sửa chạy đỏ rồi thay lý do waiver bằng một ghi nhận
-`test-first ... seen red ...` chưa từng dùng cho ID đó, mô tả lần đỏ mới.
-Chạy verify lại hoặc bàn giao không làm mới dòng waiver giữ nguyên.
+Row MANUAL chỉ đạt khi có chữ ký của owner hiện tại cho đúng câu chữ hiện tại. Waiver
+test-first gắn với row của nó: row đổi thì phải thấy test mới chạy đỏ và ghi một lý do
+`test-first ... seen red ...` mới; verify lại hay bàn giao không làm mới waiver.
 
-Các verdict mô tả kết quả script quan sát được. `HOLLOW`, `STUCK`, `BLAST`,
+Verdict là kết quả script quan sát được. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` và `SWEEP STOPPED` đều exit 1: một lần chạy
 không chứng minh được gì thì không phải là pass.
 
@@ -234,56 +232,28 @@ khiếm khuyết — mọi input nó thử đều là input mà lỗi này vô h
 `testcase`**, nơi cột `Distinguishes from` gọi tên implementation sai mà mỗi case loại trừ —
 chứ không phải đi xuôi vào ledger để sửa row.
 
-
 ## 5. Run độc lập và bàn giao giữa agent
 
-Khởi tạo run trước khi sửa source. Mỗi mục tiêu có requirement, ledger, baseline, chữ ký,
-report và checkpoint riêng trong `.testcases/runs/<id>/`. Trạng thái làm việc được loại khỏi
-git; bảng test case được đưa vào repo tại `docs/testcases/<id>/testcases.md`, còn test thực thi
-nằm trong framework test của repo. `docs-review` và `testcase` cũng dùng những đường dẫn này
-khi được gọi riêng.
+Mỗi mục tiêu là một run: requirement, ledger, baseline, report, bảng test case và checkpoint
+nằm trong `.testcases/runs/<id>/`, ngoài git. Bảng test case chỉ vào repo khi bạn chỉ định
+đường dẫn.
 
-```mermaid
-flowchart TD
-    NEW["Mục tiêu mới: init run ID trước khi sửa"]
-    A["Agent A: resume, lưu token ghi"]
-    WORK["Dùng đường dẫn của run; checkpoint phase, bước tiếp theo và lịch sử lỗi"]
-    RELEASE["Release: lưu bàn giao và thu hồi token của A"]
-    B["Agent B: list / inspect, khớp mục tiêu và spec, resume nhận token mới"]
-    CONT["Tiếp tục với baseline, ID và bộ đếm lỗi ban đầu"]
-    PROOF["Chạy --verify toàn ledger; inspect bằng chứng hiện tại"]
-    OTHER["Mục tiêu khác: run ID và artifact riêng"]
-    SOURCE["Source dùng chung: workspace lock tuần tự hóa check và khôi phục"]
-
-    NEW --> A --> WORK --> RELEASE --> B --> CONT --> PROOF
-    OTHER --> SOURCE
-    WORK --> SOURCE
-    CONT --> SOURCE
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # trước khi sửa
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # lưu token từ JSON vào TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # nhận token mới
 ```
 
-Quyền sở hữu không tự hết hạn. Khi agent bị crash, đọc generation hiện tại, xác định agent cũ
-và các tiến trình check đã dừng, rồi tiếp quản rõ ràng bằng `--expected-generation`. Subagent
-nhận đường dẫn đã chọn và vai trò được giao; controller giữ token và ghi nhận kết quả.
+- `release` lưu ghi chú bàn giao và thu hồi token cũ. Baseline, ID và số lần lỗi được giữ.
+- Owner mới phải chạy lại `--verify` toàn ledger. Xong khi `inspect` cho
+  `last_proof.whole_ledger_verified: true` và `proof_stale: false`. Sửa source, spec, test
+  hoặc bảng test case làm proof cũ hết hiệu lực.
+- Quyền sở hữu không tự hết hạn. Agent trước dừng giữa chừng: xác nhận nó đã dừng, rồi
+  `resume --expected-generation <n>` với generation lấy từ `inspect`.
+- Chỉ tiếp tục trong cùng workspace. Sửa tay và build bên ngoài không đi qua lock của goalrun.
 
-Đầu vào thông thường của workspace gồm cả file bị Git ignore và thư mục rỗng. Init ghi
-các file thông thường vào baseline ban đầu, nên deliverable bị ignore nhưng không đổi chưa
-được tính là công việc mới. Trạng thái riêng, dependency, cache và thư mục build bị ignore
-được loại trừ; file được Git theo dõi vẫn được tính dù nằm trong thư mục output hoặc cache.
-Deliverable chỉ rõ đường dẫn bị loại trừ sẽ bị từ chối. Ranh giới loại trừ và quy tắc ignore
-lúc init vẫn được áp dụng sau khi staging hoặc sửa quy tắc ignore, kể cả với file output tạo sau
-init.
-Thay đổi Git HEAD, nhánh symbolic mà nó đang trỏ tới hay nội dung, mode, conflict và cờ
-của index làm proof hết hiệu lực (hai nhánh có thể cùng trỏ một commit, nên HEAD đã resolve
-chưa đủ phân biệt việc đổi nhánh);
-Git status và thao tác làm mới stat-cache của index giữ nguyên hiệu lực proof.
-
-Agent mới phải verify lại. Source, spec, test hoặc đầu vào chính của run thay đổi cũng làm
-bằng chứng cũ hết hiệu lực. Đo thông thường hoặc check một phần chưa đủ để báo hoàn thành:
-inspect phải có `last_proof.whole_ledger_verified: true` và `proof_stale: false`. Row MANUAL đã được
-người phụ trách xác nhận và waiver test-first rõ ràng có thể đạt mà không cần trồng lỗi.
-Sửa file trực tiếp và build bên ngoài vẫn cần phối hợp vì dùng chung source và không dùng
-lock của công cụ.
-
-Xem [run context](../.agents/skills/goalrun/references/run-context.md) để biết lệnh, khôi phục
-và migrate trạng thái cũ. Tiếp tục trong cùng workspace có đường dẫn chuẩn giữ được trạng thái
-bị ignore; clone hoặc chuyển workspace cần chuyển trạng thái và migrate rõ ràng.
+Chi tiết (fingerprint, file bị loại trừ, khôi phục, migrate):
+[run context](../.agents/skills/goalrun/references/run-context.md).

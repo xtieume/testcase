@@ -1,8 +1,7 @@
 # Mode B — Investigation Without a Spec
 
 Read this when the user gives documents and a question but no spec to audit against.
-Keep the persistent run selected in `SKILL.md`; use its `DOCS_REVIEW_DIR` and pass
-the selected paths and delegated role to reviewers.
+Use `DOCS_REVIEW_DIR` from `SKILL.md`; pass the selected paths and delegated role to reviewers.
 
 ## The trap
 

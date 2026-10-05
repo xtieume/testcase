@@ -1,7 +1,7 @@
 # Writing a ledger
 
-Read when writing ledger rows. First select the run as described in `run-context.md`;
-`GOAL_DIR` is its inspected `paths.goalrun_dir`, and all engine examples use its RUN/TOKEN.
+Read when writing rows. Select the run per `run-context.md`. `GOAL_DIR` is inspected
+`paths.goalrun_dir`. Examples use that RUN/TOKEN.
 
 ## The shape of a row
 
@@ -28,19 +28,16 @@ if an authoritative file under it was added, removed or changed. `touch` counts 
 absolute paths and `..` never count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
 name: nothing can differ from a baseline that already contains it.
 
-Ordinary ignored files are authoritative inputs. Explicit deliverables in excluded generated,
-cache or private paths fail instead of being counted as new files. Choose an ordinary source
-deliverable, or track the output/cache target before initializing the run baseline; do not
-reset an existing baseline as a workaround. Directory comparisons use the workspace baseline
-selection, including original tracked overrides, so excluded generated siblings never count as shipped.
-The baseline saves omitted file/subtree boundaries: later `git add -f` or ignore-rule changes do not
-reclassify those paths as new work. Files already recorded in the baseline remain authoritative.
-New source belongs outside saved exclusion boundaries; an excluded subtree stays excluded. The
-baseline also saves the Git ignore rules in effect (`.gitignore` files, `info/exclude`, the global
-excludes file, per repository): a path it never recorded under an output directory those rules
-ignored, or under a dependency/cache name, stays excluded even when created later and force-added
-or after the rule is removed. Older baselines without this provenance conservatively reject
-unrecorded generated/cache-name targets.
+Ordinary ignored files are authoritative inputs. A deliverable in an excluded generated, cache,
+or private path fails and is not new: use an ordinary source path, or track that target before
+`init`. Do not reset the baseline. Directory comparisons use the baseline selection, including
+original tracked overrides, so an excluded generated sibling is not shipped. Init saves omitted
+file/subtree boundaries and the ignore rules then in effect (`.gitignore` files,
+`info/exclude`, the global excludes file, per repository). Later `git add -f` or rule removal
+does not reclassify them. Recorded files stay authoritative; a saved exclusion stays excluded;
+new source stays outside it. A never-recorded path under an ignored output directory or a
+dependency/cache name stays excluded if force-added or the rule is removed. Older baselines
+without this provenance conservatively reject unrecorded generated/cache-name targets.
 
 ## An example
 
@@ -53,8 +50,8 @@ LINT	no debug prints left in src	! grep -rn 'print(' src/	—	src/export.py :: i
 UX	REQ-UX-004 the CSV opens cleanly in Excel	MANUAL:tuananh	—	—
 ```
 
-The example assumes the named source fragments each occur once; choose a fragment from
-your actual implementation when writing a break. Each behavioural row names one test. `DOCS` is a claim about text and is still a test —
+Each example fragment occurs once; use the real fragment in a break. Each behavioural row
+names one test. `DOCS` is a claim about text and is still a test —
 `tests/test_docs.py` reads the file and asserts — so a reviewer sees it in the diff and CI runs
 it on every push. `LINT` is the exception that proves the shape: a hygiene rule belonging to no
 requirement, so no `REQ-` and no test.
@@ -94,13 +91,11 @@ path, reversibility) are the rows a ledger forgets.
 
 No reason, no waiver. A waiver naming a row or requirement that is not in the ledger reads as an
 accepted gap when it is only a line nobody deleted, so the lint reports it.
-The first engine command durably binds existing `verify-ok` observations to all five row
-fields in `$GOAL_DIR/verify-waivers.json`. Changing wording, check, deliverable or break
-invalidates the observation. After witnessing the revised test red, replace the reason with
-a new `test-first ... seen red ...` observation, including the date and what changed.
-Use a reason never previously used for that ID; an old line cannot authorize a revised row.
-Bindings survive removed rows, handoff and legacy migration. Preserve this file with the
-ledger; measurement and verification do not renew stale observations.
+The first engine command binds each `verify-ok` to all five row fields in
+`$GOAL_DIR/verify-waivers.json`. A changed wording, check, deliverable, or break is invalid
+until a new unused `test-first ... seen red ...` reason records the new red (date and what
+changed). An old line cannot authorize the row. Bindings survive removed rows, handoff, and
+legacy migration. Keep the file with the ledger. Measurement and verification do not renew it.
 
 ## Writing a `break`
 
@@ -154,8 +149,8 @@ would cost before planting anything; read that line before deciding whether to p
 `--verify` prints the ledger table, then per row makes the edit, runs the check, and writes the
 file back byte for byte. It runs once, at the end, in place of the final plain run. The bytes
 go to `$GOAL_DIR/undo/` before planting. An interrupted verify restores on its way out.
-Before named operations, all runs' journals are recovered under the workspace lock by comparing
-original/planted fingerprints. Conflicting edits refuse recovery and retain the journal.
+Before named operations, every run's journal is recovered under the workspace lock against the
+original and planted fingerprints. A conflicting edit refuses recovery and keeps the journal.
 
 - **Only a file in the tree.** An absolute path, or one climbing out through `..`, is refused.
 - **Only text.** A binary file has nothing to substitute in; delete it instead, or pick a
@@ -165,7 +160,7 @@ original/planted fingerprints. Conflicting edits refuse recovery and retain the 
 - **A check runs in your tree**, as it does on a plain run, so a check that litters litters
   where it already did.
 - **A directory deliverable** ships when an authoritative file under it changes. Keep check
-  output in excluded build/cache paths so an ordinary output file cannot masquerade as shipped work.
+  output in an excluded build or cache path so it is not shipped work.
 
 ## The sweep
 
@@ -204,9 +199,8 @@ command produces that answer. Laziness when you could have written the check: "t
 clean", "performance looks fine", "the migration is safe".
 
 `--sign` accepts only the named owner and stores that signer plus a hash of `what`.
-Verification requires both the wording hash and the current `MANUAL:<owner>` to match.
-Changing wording or owner returns the row to `WAIT`; obtain the current owner's fresh answer
-and record it with `--sign`.
+Verification needs that hash and the current `MANUAL:<owner>`; changing either returns `WAIT`
+until that owner's fresh `--sign`.
 
 The lint catches: no rows; `MANUAL` without an owner; mostly-`MANUAL` ledgers; deliverables with
 no baseline; stale signatures and waivers; rows with no `break`; and, using the named run's reqs.txt,
@@ -216,14 +210,14 @@ requirements no row measures. It does not catch a fake check or a break that can
 
 `--blast [SECONDS]` adds the sweep; `--no-blast` says out loud that it is not wanted.
 `--timeout N` seconds per check (default 1800; a timed-out check is `FAIL`). `--only A,B` ends
-`PHASE OK` / `PHASE NOT OK`, never `DONE`; `--verify A,B` is also a phase verdict.
-Named runs take their baseline once through `init`, preserve it on resume, and refuse
-`--baseline`, `--reset`, `--ledger` and `--requirements` overrides. Lint automatically reads
-that run's reqs.txt. `--sign ID --who WHO [--note ...]` also requires RUN/TOKEN.
-Only a successful bare whole-ledger verify records `last_proof.whole_ledger_verified`; inspect `proof_stale`
-before relying on it. Successful later diagnostics preserve that proof; failures invalidate it. Legacy `--baseline [--reset]`, `--ledger PATH` and
-`--lint-ledger --requirements PATH` remain available only while no named run exists;
-use explicit `migrate` to preserve unfinished legacy work without resetting its baseline.
+`PHASE OK` / `PHASE NOT OK`, never `DONE`. `--verify A,B` is a phase verdict too.
+`init` takes the baseline once; resume preserves it. Named runs refuse `--baseline`,
+`--reset`, `--ledger`, and `--requirements`. Lint reads that run's reqs.txt.
+`--sign ID --who WHO [--note ...]` requires RUN/TOKEN. Only a successful bare whole-ledger
+`--verify` sets `last_proof.whole_ledger_verified`; inspect `proof_stale` first. Later
+successes keep that proof; failures invalidate it. No named run: legacy `--baseline [--reset]`,
+`--ledger PATH`, and `--lint-ledger --requirements PATH` remain. `migrate` keeps unfinished
+legacy work and does not reset its baseline.
 
 | Exit | Means |
 | ---- | ----- |

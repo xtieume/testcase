@@ -16,22 +16,11 @@ to prevent.
 ## Select the persistent run
 
 Before writing outputs, read `../goalrun/references/run-context.md`. If `../goalrun/` is not
-installed, say so and ask the user to install it beside this skill (see README) instead of
-guessing run paths. Use an explicitly named
-existing run or initialize a standalone review run with `goalrun.py init <id> --goal ...
---spec <path>` before edits, then `resume <id> --owner <label>`. Inspect the run; use its
-`paths.docs_review_dir` as `DOCS_REVIEW_DIR` and `paths.goalrun_dir` as `GOAL_DIR`.
-Do not select the newest report or reuse another run's shared artifacts. Keep the baseline,
-REQ/DOC IDs, decisions and failure counts when continuing the same work.
-
-The controller owns the resume token, checkpoints each meaningful step with phase, next
-action and handoff note, then releases when handing off. Decisions belong in the spec.
-A delegated review child receives the run ID, canonical workspace, schema version, spec,
-exact input/output selections and read-only or delegated-writer role. It never resumes or
-takes over the run. These artifact selections also override fixed default paths in this
-skill's references; an explicitly user-selected output is recorded and passed to children.
-Engine failures are already counted; checkpoint `--failure` records only inline/delegated
-failures the engine has not recorded. Never double-count the same red.
+installed, say so and ask the user to install it beside this skill (see README); never guess
+paths. Use a named run, or `goalrun.py init <id> --goal ... --spec <path>` before edits, then
+`resume <id> --owner <label>`. Inspect and set `DOCS_REVIEW_DIR=paths.docs_review_dir` and
+`GOAL_DIR=paths.goalrun_dir`. Keep this run's REQ/DOC IDs. Selections override fixed default
+paths in this skill's references.
 
 ## Files in this skill
 
@@ -107,12 +96,12 @@ a document.
 
 | Req ID | Requirement (atomic) | Dimension | Source (spec section) |
 
-`Req ID`: preserve existing spec IDs such as `REQ-001`; generate new IDs as
+`Req ID`: keep spec IDs such as `REQ-001`; new IDs are
 `REQ-<area>-<3 digits>`. Keep IDs from the previous report in this same run, append
 new ones at the end, mark removed ones `[OBSOLETE — why]` in the ID cell rather than deleting — in every table,
 the traceability table included, where such a row carries no verdict and the lint lets it
-stand. Never renumber. Persist the active requirement IDs, one per line, in `$GOAL_DIR/reqs.txt`
-for testcase and goalrun to consume in this same run.
+stand. Never renumber. Write active IDs, one per line, to `$GOAL_DIR/reqs.txt`
+for testcase and goalrun in this same run.
 
 ### 3. Map documents onto the checklist
 
@@ -280,17 +269,19 @@ is stale the moment they change. Never write it into the docs tree under audit, 
 or commit it.
 
 Reports and review artifacts go under the selected run's `DOCS_REVIEW_DIR`; the requirement
-list goes to `$GOAL_DIR/reqs.txt`. Keep `.testcases/` excluded locally, for example through
-`.git/info/exclude`; do not commit working reports. Without git, create the selected directory
-and state that reports are untracked by convention. User-selected output paths take precedence;
-record the selection and whether it is excluded. Fix mode changes the actual documents.
+list goes to `$GOAL_DIR/reqs.txt`. Keep `.testcases/` excluded locally via `.git/info/exclude`;
+never commit working reports.
+`.git/info/exclude` is local-only — it leaves the project's `.gitignore` untouched, so the
+exclusion produces no diff. Not a git repo, or the commands fail: create the directory and say
+the report is untracked-by-convention. If the user names a path, use theirs and say once whether
+it is excluded. Fix mode changes the actual documents.
 
 **Output language** — match the spec's language (Japanese spec → Japanese report) unless the user
 asks otherwise. Same rule in Mode B, keyed to the question's language.
 
 **If the gaps turn into work that has to be driven to completion**, the `goalrun` skill measures
 it: keep the `REQ-` ids — they become its ledger rows, one per requirement, and its
-`--run <id> --token <token> --lint-ledger` automatically reads that run's reqs.txt and fails on any requirement the ledger forgot.
+`--run <id> --token <token> --lint-ledger` reads that run's reqs.txt and fails on any requirement the ledger forgot.
 
 ### 7. Fix mode — only if asked
 

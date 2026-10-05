@@ -55,7 +55,7 @@ The core pipeline, one handoff per stage. Use any stage alone, or chain them and
 | 2. Prove | `testcase` | `TC-` ids traced to a `REQ-`, implemented as tests in the repo's own framework |
 | 3. Build | `goalrun` | The implementation, phase by phase, until the ledger of checks exits 0 |
 
-Five diagrams of the pipeline, and of how `goalrun` decides a row and proves a check: [How these skills work](docs/how-it-works.md).
+Four diagrams of the pipeline, and of how `goalrun` decides a row and proves a check: [How these skills work](docs/how-it-works.md).
 
 ## Get started
 
@@ -78,27 +78,20 @@ Five diagrams of the pipeline, and of how `goalrun` decides a row and proves a c
 
 ## Continue across agents
 
-A named run belongs to the work and preserves its baseline, selected artifacts, failure counts
-and handoff across agents or hosts in the same workspace. Start before edits:
+Each goal is a named run under `.testcases/runs/<id>/`, out of git; its test case table goes
+into the repo only if you name a path. Another agent in the same workspace picks it up:
 
 ```bash
 GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
-python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md
-python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy JSON token into TOKEN
-python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build \
-  --next "Implement TC-EXP-004" --note "Tests red; continue from spec.md"
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # before any edit
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy the JSON token into TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
 python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
-python3 "$GOALRUN" inspect export-v1
 python3 "$GOALRUN" resume export-v1 --owner agent-b   # receives a new token
 ```
 
-Use paths returned by `inspect`; test cases ship at `docs/testcases/<id>/testcases.md`, while
-working state stays under `.testcases/runs/<id>/`. `docs-review` and `testcase` use the same
-run contract even standalone. Ownership never expires; takeover requires the inspected
-`--expected-generation` after the previous agent and checks have stopped. Changed inputs
-make saved proof stale; completion needs a current whole-ledger `--verify`. See
-[run context](.agents/skills/goalrun/references/run-context.md) for evidence, child delegation,
-workspace transfer and explicit legacy migration.
+The new owner reruns the whole-ledger `--verify` before calling it done. Details:
+[How these skills work §5](docs/how-it-works.md#5-independent-runs-and-agent-handoff).
 
 ## Install
 

@@ -1,8 +1,7 @@
 # Review Mode — Auditing Existing Test Cases
 
 Read this when the user hands you an existing test case list to review, improve, or check.
-Keep the run and `TESTCASES`, `TESTCASE_DIR`, `GOAL_DIR` selected in `SKILL.md`.
-Record an explicitly supplied existing table as the selected input; preserve its IDs.
+Use `TESTCASES`, `TESTCASE_DIR`, `GOAL_DIR` from `SKILL.md`. A supplied table is the selected input; keep its IDs.
 
 ## The trap
 
@@ -45,8 +44,8 @@ Do not rewrite a case that is fine. A review touching everything is indistinguis
 **6. Lint the merged list.**
 
 Write the combined file to `$TESTCASES` (or the recorded explicit output). Run
-`python3 scripts/summarize.py "$TESTCASES" --requirements "$GOAL_DIR/reqs.txt"`,
-using the step-2 IDs while preserving the run’s requirements outside this review’s scope — the highest-value check in review mode: a list someone else wrote is exactly where a whole requirement has no case at all.
+`python3 scripts/summarize.py "$TESTCASES" --requirements "$GOAL_DIR/reqs.txt"` with
+the step-2 IDs — the highest-value check in review mode: a list someone else wrote is exactly where a whole requirement has no case at all. Keep requirements outside this review's scope.
 
 ## Reporting
 

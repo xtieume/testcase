@@ -1,13 +1,13 @@
 # Persistent run context
 
-Read before creating outputs, resuming work, or dispatching a child skill. A run belongs to
-one piece of work; it survives agent changes, compaction and host restarts. Select its ID
-explicitly. Never choose the newest directory or report as the active run.
+Read before creating outputs, resuming, or dispatching a child skill. One run is one piece of
+work. It survives agent changes, compaction and host restarts. Select its ID explicitly. Never
+use the newest directory or report as the active run.
 
 ## Start and select
 
-Run from the workspace root; set `GOALRUN` to the installed `scripts/goalrun.py` path.
-Run IDs are 1–80 letters, digits, underscores or hyphens, starting with a letter or digit.
+From the workspace root, `GOALRUN` is the installed `scripts/goalrun.py`. IDs are 1–80 letters,
+digits, underscores or hyphens, and start with a letter or digit.
 
 ```bash
 RUN=export-v1
@@ -17,66 +17,53 @@ python3 "$GOALRUN" inspect "$RUN"
 python3 "$GOALRUN" list
 ```
 
-`init` takes the baseline **before any edits**, creates an unowned run, and refuses duplicate
-IDs. The baseline and migration payload are staged before a run becomes visible; a failed
-preparation leaves the ID available for retry. Copy the top-level `token` from `resume` JSON
-into `TOKEN`; it authorizes this owner.
-`inspect` and `list` are read-only and never return an ownership token. Read the goal, spec,
-checkpoint, handoff, generation and evidence before continuing. Resume never resets the
-baseline, requirements, permanent IDs, failure counts or prior decisions.
+- `init` **before any edits**: unowned; refuse duplicate IDs; stage baseline and migration
+  payload before visible. Failed preparation leaves the ID retryable.
+- Copy `resume`'s top-level `token` to `TOKEN` (this owner). `inspect` and `list` are read-only;
+  no token.
+- Read goal, spec, checkpoint, handoff, generation, evidence. Resume never resets baseline,
+  requirements, permanent IDs, failure counts, or decisions.
 
-Use the exact absolute paths in the selected run's JSON `paths`:
+Use absolute `paths` from the run JSON:
 
 | Key | Use |
 | --- | --- |
-| `run_dir` | `.testcases/runs/<id>/`: manifest, checkpoint and evidence |
-| `goalrun_dir` | ledger.tsv, reqs.txt, baseline.json, signoff.tsv, verify-waivers.json and guarded undo/ |
+| `run_dir` | `.testcases/runs/<id>/`: manifest, checkpoint, evidence |
+| `goalrun_dir` | ledger.tsv, reqs.txt, baseline.json, signoff.tsv, verify-waivers.json, guarded undo/ |
 | `docs_review_dir` | this run's reports and review artifacts |
-| `testcase_dir` | this run's CSV, previous table, coverage map and review artifacts |
-| `testcases` | tracked `docs/testcases/<id>/testcases.md` deliverable |
-| `checkpoint` / `handoff` | same checkpoint.json; its handoff field is canonical |
+| `testcase_dir` | this run's CSV, previous table, coverage map, review artifacts |
+| `testcases` | `.testcases/runs/<id>/testcase/testcases.md` |
+| `checkpoint` / `handoff` | same checkpoint.json; handoff field is canonical |
 
-Set `GOAL_DIR`, `DOCS_REVIEW_DIR`, `TESTCASE_DIR` and `TESTCASES` from these keys when following
-examples. These variables are path selections, not script flags. The report scripts remain
-in their installed skills' `scripts/` directories. Keep `.testcases/` excluded locally; the
-tracked test case table and runnable tests belong in the repository. Do not place test code
-inside ignored run artifacts. An explicit user output path takes precedence; record that
-selection in the spec and handoff and pass it to every child instead of silently mixing it
-with the default.
+- `GOAL_DIR`, `DOCS_REVIEW_DIR`, `TESTCASE_DIR`, `TESTCASES`: values, not flags. Report scripts
+  stay in skill `scripts/`.
+- Exclude `.testcases/`. Runnable tests belong in the repo, not ignored artifacts.
+- `paths.testcases` stays private unless the user explicitly asks for a path. Editing it
+  invalidates proof (run input).
+- Explicit path wins: record in spec and handoff, pass to every child, do not mix with the
+  default.
 
 ## Ownership and handoff
 
-Checkpoint after each meaningful step: phase, next action, decisions already recorded in the
-spec, relevant paths and evidence to inspect next. Engine runs automatically persist row
-and proof failures. Use `--failure` only for inline or delegated failures the engine has not
-already recorded; never count the same red twice. Counts survive agent changes.
-
 ```bash
-python3 "$GOALRUN" checkpoint "$RUN" --token "$TOKEN" --phase build \
-  --next "Implement TC-EXP-004" --note "Tests red; decision recorded in spec.md"
 python3 "$GOALRUN" checkpoint "$RUN" --token "$TOKEN" --phase build \
   --next "Fix rounding" --failure inline-ROUND --note "Delegated inline test failed; log in handoff"
 python3 "$GOALRUN" release "$RUN" --token "$TOKEN" --note "Continue at TC-EXP-004"
-python3 "$GOALRUN" resume "$RUN" --owner controller-b
-```
-
-`release` revokes the token, clears ownership, increments generation and atomically saves the
-handoff with the checkpoint. There is no independently authoritative `handoff.md`.
-An old token cannot checkpoint, release, sign or execute the engine. Ownership has **no TTL**.
-If a prior owner crashed, inspect first, establish that its agent and check processes have
-stopped, then deliberately take over using the observed generation:
-
-```bash
 python3 "$GOALRUN" resume "$RUN" --owner controller-b --expected-generation 7
 ```
 
-Replace `7` with the current inspection value. Stale generations refuse; being old, quiet or
-on another host never grants permission. A controller owns the token. Its subagents receive
-run ID, canonical workspace, schema version, spec, exact input/output path selections and an
-ownership role such as `delegated writer: tests/test_export.py` or `read-only reviewer`.
-They write only assigned files, return evidence, and never resume, release or take over the
-run. The controller checkpoints their merged results. Context fields do not include the
-controller's reasoning or earlier review findings.
+- Checkpoint: phase, next action, decisions already in the spec, paths, evidence next.
+- Engine persists row and proof failures. `--failure` once, only unrecorded inline or delegated.
+  Counts survive agent changes.
+- `release`: revoke token, clear ownership, increment generation, atomic handoff+checkpoint. No
+  `handoff.md`.
+- Old token cannot checkpoint, release, sign, or run the engine. **No TTL**.
+- Crash: inspect; confirm agent and check processes stopped; deliberate takeover (replace `7`).
+  Stale generations refuse. Old, quiet, or another host never grants permission.
+- Controller holds the token. Subagent: run ID, canonical workspace, schema version, spec, exact
+  input/output paths, `delegated writer: tests/test_export.py` or `read-only reviewer`.
+- Assigned files only; return evidence; never resume, release, or take over. Controller
+  checkpoints merged results. Omit controller reasoning and earlier findings.
 
 ## Execute and trust current evidence
 
@@ -86,148 +73,109 @@ python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --only EXPORT,ROUND
 python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify
 ```
 
-Named engine commands bind all artifacts to the run. Do not pass `--ledger` or
-`--requirements`; lint uses that run's reqs.txt automatically. `--baseline` and `--reset`
-are refused: init owns the one baseline. Signing also requires `--run` and `--token` and
-still records only the human answer actually received.
-
-Saved evidence contains per-check commands, outputs and exit codes, a run log and an input
-fingerprint and ownership epoch. `inspect` exposes `last_evidence`/`evidence_stale` for the
-latest operation and `last_proof`/`proof_stale` for the latest whole-ledger proof. Evidence
-JSON and session logs are created with private `0600` file permissions, independent of the
-caller’s umask. Environment values themselves are never saved by the fingerprint.
+- Named commands bind the run. No `--ledger` or `--requirements` (lint uses reqs.txt). Refuse
+  `--baseline` and `--reset`: `init` owns the one baseline.
+- `--sign` needs `--run` and `--token`; record only the human answer received.
+- Evidence: commands, outputs, exits, run log, fingerprint, epoch. `inspect`:
+  `last_evidence`/`evidence_stale`, `last_proof`/`proof_stale`.
+- JSON and session logs `0600`, independent of umask. Fingerprint stores no environment values.
 
 ### Durability per check
 
-Each observed check and finalized row updates the checkpoint before the next check starts.
-Interrupted sessions expose `last_evidence.state: "unfinished"` with a null exit code;
-finished sessions expose `state: "completed"`. A witnessed failing measurement invalidates
-proof and counts once per row in that session, even after SIGKILL or ownership takeover.
-A HOLLOW or STUCK mutation verdict is published before the blast sweep begins, so a kill
-during the sweep leaves the failure counted and the previous proof invalidated; an expected
-failure under the planted defect still waits for the sweep, because it is not a regression.
-Check evidence identifies the row and phase (`measurement`, `mutation`, or `blast`), so an
-expected failure under a planted defect does not count as a production regression.
-It retains the raw exit code and records `passed` after the runner gate: a silent runner
-or one matching no tests records `passed: false` even when its exit code is zero.
-Checks share a private Python bytecode cache that is replaced whenever a break is planted or
-restored, so a changed source is never shadowed by bytecode compiled from the other version
-in the same second.
+- Checkpoint after each observed check and finalized row, before the next.
+- `last_evidence`: `state: "unfinished"` (null exit) or `state: "completed"`.
+- Witnessed failure invalidates proof, once per row, even after SIGKILL or takeover.
+- Publish `HOLLOW`/`STUCK` before the blast sweep. Mid-sweep kill: failure stays counted; prior
+  proof stays invalid.
+- Planted failure waits for the sweep (not a regression). Phase `measurement`, `mutation`,
+  `blast`: not a production regression.
+- Keep the raw exit. Silent or no match → `passed: false` at exit 0.
+- Replace the private Python bytecode cache on plant or restore so other-version same-second
+  bytecode cannot shadow source.
 
 ### What stales a proof
 
-Successful measurements and lint preserve a current proof; a later failed check invalidates
-it until whole verification passes again. A new resumed controller must rerun the whole
-ledger before claiming completion, even with unchanged source; its new ownership epoch makes
-prior evidence stale. Changed source, tests, runtime, tool version, spec or authoritative run
-inputs (requirements, ledger, baseline, signatures, waiver bindings) also make old evidence
-stale; a previous proof is not current proof.
-
-- Ordinary workspace files participate even when Git ignores them, including `.env` and
-  pre-existing schema deliverables; empty directories participate too. Init records the same
-  file selection in the original baseline.
-- Workspace symlinks include both link identity and resolved contents; directory links are
-  followed with cycle detection. A specification directory is read through to the files
-  inside it, linked or not, so editing, adding or removing a requirement file beneath it
-  stales proof.
-- File and directory permission modes participate, so removing executable access stales proof.
-- Runtime inputs include a digest of environment values (excluding terminal/shell
-  bookkeeping), resolved executables in ledger checks, and installed Python/local dependency
-  file identities. Changing feature flags, Python paths, runner binaries or installed package
-  files requires new proof. Runtime/tool metadata, workspace paths and run inputs have
-  separate fingerprint namespaces, so source names cannot overwrite metadata.
-- Git worktree contents include nested submodules; repository/submodule HEAD, the symbolic
-  branch it is on and semantic index changes also stale proof (two branches can share one
-  commit, so the resolved HEAD alone cannot tell a switch). Staged object IDs, modes, conflict
-  stages and persistent index flags participate; Git status and index stat-cache refreshes
-  preserve proof.
-- Derived session logs, CSV exports and working review reports do not invalidate measurement
-  evidence; requirements and tracked test case tables remain authoritative inputs. FIFOs and
-  devices are recorded by file type and permissions without opening them.
+- Measure or lint success keeps proof. A later failure invalidates it until whole verification
+  passes.
+- New ownership epoch: whole-ledger rerun before completion even if source is unchanged.
+  Previous proof is not current proof.
+- **Source files.** Ordinary ignored files (`.env`, pre-existing schema deliverables), empty
+  directories; init records that set. Symlink identity and target; follow directory links;
+  detect cycles. Spec directory read through, linked or not: add, edit, or remove a requirement
+  file and proof stales. Modes count; removing executable access stales proof. Tests and spec
+  stale proof.
+- **Runtime/env.** Env digest except terminal/shell bookkeeping; resolved check executables;
+  installed Python and local dependency files. New proof: feature flags, Python paths, runner
+  binaries, installed packages, tool version. Separate namespaces: runtime/tool metadata,
+  workspace paths, run inputs.
+- **Git state.** Nested submodules; repository/submodule HEAD; symbolic branch; semantic index
+  changes. Resolved HEAD alone cannot tell a switch. Staged object IDs, modes, conflict stages,
+  persistent index flags. Git status and index stat-cache refresh preserve proof.
+- **Run inputs.** Requirements, ledger, baseline, signatures, waiver bindings, test case table.
+  Derived session logs, CSV exports, working review reports do not stale measurement. FIFOs and
+  devices: type and permissions only; do not open them.
 
 ### Exclusions and deliverables
 
-Known dependency, cache and private-run directories are excluded, and so are standard coverage
-outputs (`.coverage`, `.coverage.*`, `coverage.xml`, `junit.xml`). In Git workspaces, ignored
-directories named `bin`, `obj`, `target`, `dist` or `build` also exclude generated output;
-tracked files override output and cache exclusions. Without Git, those names alone never hide
-source. Keep generated outputs in Git-ignored build paths or recognized cache directories.
-
-Directory deliverables compare the same authoritative file selection recorded in the baseline,
-so unchanged ignored ordinary files cannot count as newly shipped. Explicit deliverables in
-excluded output/cache/private paths are rejected; choose an ordinary authoritative path, or
-track the output/cache target before initializing its run baseline.
-
-Initial omitted file/subtree boundaries are also saved in the baseline. Later staging or ignore
-rule edits cannot turn those paths into newly shipped work; files recorded in the original
-baseline retain their authoritative status. A saved excluded subtree remains excluded for new
-files below it, so put new source outside that original boundary. The Git ignore rules in
-effect at init are saved too: files created later under an output directory they ignored, or
-under a dependency/cache name, stay excluded even if force-added or the rule is removed. Older
-baselines without exclusion or ignore-rule provenance conservatively reject unrecorded
-generated/cache-name targets. Do not reset an existing run baseline to work around an excluded
-deliverable.
+- Excluded: known dependency, cache, private-run dirs; `.coverage`, `.coverage.*`,
+  `coverage.xml`, `junit.xml`.
+- Git-ignored `bin`, `obj`, `target`, `dist`, `build` exclude generated output; tracked files
+  override. Without Git those names never hide source. Keep output in a Git-ignored build path
+  or a recognized cache.
+- Directory deliverable: baseline authoritative files. An unchanged ignored ordinary file is not
+  shipped.
+- No deliverable under an excluded output, cache, or private path. Ordinary authoritative path,
+  or track it before `init`. Do not reset the baseline.
+- Init saves omitted file/subtree boundaries. Later staging or ignore edits are not new work.
+  Recorded files stay authoritative. Excluded subtree stays excluded; new source outside it.
+- Init saves ignore rules then in effect. A later file under an ignored output dir, or a
+  dependency/cache name, stays excluded if force-added or the rule goes. Older baselines without
+  that provenance reject unrecorded generated/cache-name targets.
 
 ### What counts as completion
 
-The fingerprint is a freshness check, not proof that the requirements or tests were correctly
-derived. Only a successful **bare, whole-ledger `--verify`** with unchanged inputs records
-`last_proof.whole_ledger_verified: true`; completion also requires `proof_stale: false`. Full
-proof first gates requirement coverage with lint.
-
-- A ledger consisting only of signed MANUAL rows (including multiple decisions) or explicit
-  test-first waivers can pass without mutation. Manual signatures must match the current
-  wording and owner.
-- Test-first waivers are bound to their current row in verify-waivers.json before the session
-  fingerprint is taken. After row edits, witness the revised test red and replace the waiver's
-  reason with a never-used `test-first ... seen red ...` observation describing the new red.
-  Unchanged lines, measurement, removed rows and handoffs cannot refresh a stale waiver.
-- The manual-row ratio gate still applies to mixed ledgers; unwaived checks without breaks
-  fail lint.
-- `--only` and `--verify <ids>` give phase verdicts and cannot justify completion. A selected
-  check without a break is recorded as `SKIPPED` and fails subset verification; its
-  preliminary measurement is not proof. After a subset repair, rerun the whole ledger before
-  claiming done.
+- Fingerprint is freshness, not derivation. Bare whole-ledger `--verify` on unchanged inputs
+  sets `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Lint gates coverage
+  first.
+- Signed `MANUAL` only (one or many) or test-first waivers may pass with no mutation. Signature
+  matches current wording and owner.
+- Bind the current row in verify-waivers.json before the session fingerprint. After an edit:
+  witness the new red; unused `test-first ... seen red ...`. Unchanged lines, measurement,
+  removed rows, handoffs do not refresh it.
+- Mixed ledgers: manual-row ratio gate. No break and no waiver fails lint.
+- `--only` and `--verify <ids>` are not completion. No break: `SKIPPED`, subset fails, not
+  proof. After a subset repair, rerun the whole ledger before claiming done.
 
 ### Locks and recovery
 
-The CLI holds a run lock across ownership checks and writes, and a global workspace lock
-across source-sensitive operations, including checking whether legacy mode is still eligible.
-Before lifecycle writes or named engine operations it recovers **all runs'** pending verify
-journals under that global lock. A run whose manifest or checkpoint cannot be read is listed
-with an `error`, and blocks those operations until it is reconciled, because its journals
-cannot be checked. Restoration compares current bytes and saved permission modes to the
-original or planted fingerprint; conflicting external edits (including chmod while a defect
-is planted) refuse recovery and retain the journal for reconciliation. Planting and
-restoration write and sync a temporary file, then atomically replace the target; recovery
-clears the journal only after restoration. Symlinked or hardlinked source targets are refused
-before planting a defect. Deletion breaks also compare the current source with the journal
-before unlinking. After a parent crash, an orphan check process retains the workspace lock
-until it stops. Normal completion explicitly unlocks the shared descriptor, so surviving
-background processes do not keep the lock. `inspect` can still read state.
-Direct artifact edits by cooperating agents follow the owner's delegation contract; these
-locks do not enforce OS access control, and external editors/builds do not participate.
+- Run lock: ownership checks and writes. Workspace lock: source-sensitive ops, including
+  legacy-mode eligibility.
+- Before a lifecycle write or named engine operation, recover **all runs'** pending verify
+  journals under the workspace lock. Unreadable manifest or checkpoint: `error`, block until
+  reconciled (journals unchecked).
+- Match bytes and saved permission modes to the original or planted fingerprint. Conflict,
+  including chmod while planted: refuse recovery, keep the journal.
+- Sync a temp file, then atomically replace; clear the journal only after restore. Refuse
+  symlink or hardlink sources. Deletion compares to the journal before unlink.
+- Orphan check after a parent crash holds the workspace lock until it stops. Completion unlocks
+  the shared descriptor so survivors do not. `inspect` still reads. Cooperating edits follow the
+  delegation contract. Locks are not OS access control. External editors and builds do not take
+  them.
 
 ## Portability and legacy state
 
-Manifest and checkpoint schema version is `1`; unknown versions refuse and require explicit
-migration. The workspace is its canonical real path, not the installed skill path or host
-name. Another host may resume in the **same workspace**. A clone or moved worktree requires a
-deliberate transfer of matching source and ignored state and an explicit workspace migration;
-automatic relocation is outside this workflow. Never copy only a token or assume a clone
-contains `.testcases/`.
-
-Legacy commands work only while no named run exists. To adopt unfinished legacy work:
+- Schema `1`. Unknown versions refuse until explicit migration. Workspace is the canonical real
+  path, not the skill path or host name. Another host may resume the **same workspace**.
+- Clone or moved worktree: transfer matching source and ignored state, then explicit workspace
+  migration. No automatic relocation. Never copy only a token. Never assume a clone contains
+  `.testcases/`.
+- Legacy commands only while no named run exists:
 
 ```bash
 python3 "$GOALRUN" migrate export-v1 --goal "Ship CSV export" --spec spec.md
 python3 "$GOALRUN" resume export-v1 --owner controller-a
 ```
 
-`migrate` copies the existing legacy baseline, ledger, reqs, signatures, waiver bindings,
-docs-review/testcase artifacts and root testcases.md into selected run paths, leaves originals untouched and never
-retakes the baseline. An existing destination testcase table is refused; reconcile its permanent
-IDs before retrying migration. A pending publication journal recovers a tracked table left by
-a killed migration; intervening edits are preserved and require reconciliation. Reconcile
-pending legacy undo before migration. Once a named run exists,
-select `--run` explicitly for engine commands.
+- `migrate` copies baseline, ledger, reqs, signatures, waiver bindings, docs-review/testcase
+  artifacts, root testcases.md; originals stay; baseline not retaken. Reconcile pending legacy
+  undo first. Then `--run`.

@@ -22,27 +22,18 @@ Never stop at the happy paths.
 | "write up this bug" | `references/bug-report.md` — the judgement your tracker's form cannot check |
 | "implement the automatable ones" | Step 7 only, against an existing table |
 
-Deliverable is the selected run's `paths.testcases` (`docs/testcases/<id>/testcases.md`) plus
-whatever ships as runnable tests. The run is not finished until `summarize.py` exits clean (step 6).
+Deliverable is `paths.testcases` (`.testcases/runs/<id>/testcase/testcases.md`) plus
+whatever ships as runnable tests. Editing that table invalidates proof; put it in the repo
+only if the user names a path. The run is not finished until `summarize.py` exits clean (step 6).
 
 ## Select the persistent run
 
 Before outputs, read `../goalrun/references/run-context.md`. If `../goalrun/` is not installed,
-say so and ask the user to install it beside this skill (see README) instead of guessing run
-paths. Use an explicitly selected
-existing run or initialize a standalone testcase run with `goalrun.py init <id> --goal ...
---spec <path>` before edits, then `resume <id> --owner <label>`. From inspect JSON, set
-`TESTCASES=paths.testcases`, `TESTCASE_DIR=paths.testcase_dir`, `GOAL_DIR=paths.goalrun_dir`
-using the actual path values. Never use the newest table/report as implicit context.
-Preserve the baseline, permanent IDs, spec decisions and failure counts on continuation.
-
-The controller owns the token and checkpoints phase, next action and handoff after meaningful
-steps; release before another controller resumes. A child receives run ID, canonical
-workspace, schema version, spec, exact path selections and delegated ownership role. It
-writes only its assigned files and never resumes or takes over. These selections override
-fixed output defaults in this skill's references. Record and propagate explicit user paths.
-Engine failures are already counted; checkpoint `--failure` records only inline/delegated
-failures the engine has not recorded. Never double-count the same red.
+say so and ask the user to install it beside this skill (see README); never guess paths. Use a
+named run, or `goalrun.py init <id> --goal ... --spec <path>` before edits, then
+`resume <id> --owner <label>`. From inspect JSON, set `TESTCASES=paths.testcases`,
+`TESTCASE_DIR=paths.testcase_dir` and `GOAL_DIR=paths.goalrun_dir` to the actual paths.
+Selections override defaults in this skill's references.
 
 ## Files in this skill
 
@@ -77,15 +68,13 @@ Requirement is a design (Figma link, mockup, screenshot)? Read `references/desig
 
 ### 3. Generate pass-1 test cases
 
-Write to `$TESTCASES` from the selected run, unless the user explicitly names another path.
+Write to `$TESTCASES` unless the user explicitly names a path.
 
-**The test cases are a deliverable — they belong in the repo**, alongside the runnable tests
-step 7 writes. CSV, review findings, previous-table snapshots and requested coverage maps go
-under `$TESTCASE_DIR`; keep `.testcases/` excluded locally and never commit those artifacts.
-Create selected parent directories as needed. Without git, working artifacts are untracked
-by convention. Persist the step-1 requirement IDs to `$GOAL_DIR/reqs.txt` for this same run;
-reuse existing IDs and preserve requirements outside this invocation's scope. A focused
-case-writing task must not replace the run's full requirement list with its subset.
+Everything else is a working artifact under `$TESTCASE_DIR` (CSV, review findings, previous-table snapshots, requested coverage maps): never commit it, never put it in the docs tree. Keep `.testcases/` excluded locally. Create selected parent directories as needed.
+
+`.git/info/exclude` is local-only — no diff, `.gitignore` untouched. Not a git repo: create the directory anyway and say the output is untracked-by-convention.
+
+Step-1 IDs go to `$GOAL_DIR/reqs.txt` for this run; reuse existing IDs; do not replace the full list with this invocation's subset.
 
 The coverage map stays in the reply; persist only on request, to `$TESTCASE_DIR/coverage-map.md`.
 
@@ -198,7 +187,7 @@ The table is the spec; the runnable tests are the other half of the deliverable.
 
 Use the test framework already in the repo — its runner, its helpers, its fixtures — and put the files where that repo already puts tests. No new dependency, no second harness alongside the existing one. No framework at all: say so and stop here rather than picking one unasked.
 
-**When the work also has to be driven to done**, hand over to the `goalrun` skill in the same run; checkpoint and release if changing controllers, preserving the baseline and selected paths: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
+**When the work also has to be driven to done**, hand over to the `goalrun` skill in the same run; checkpoint and release if the controller changes: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
 
 **Each test names its case ID**, e.g. `test('TC-DROPDOWN-004 — rejects a 101-character name', ...)`. That ID is the only thing tying the code back to the table; without it the step-6 traceability ends at the file boundary.
 

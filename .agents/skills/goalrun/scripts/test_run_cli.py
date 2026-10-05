@@ -115,6 +115,43 @@ class RunCliTests(unittest.TestCase):
             spec.write_text('Amended requirement\n')
             self.assertTrue(self.inspect()['evidence_stale'])
 
+    def test_external_spec_directory_content_changes_stale_whole_proof(self):
+        with tempfile.TemporaryDirectory() as outside:
+            specs = Path(outside) / 'specs'
+            specs.mkdir()
+            (specs / 'req.md').write_text('Original requirement\n')
+            self.cli('init', 'export', '--goal', 'Export CSV', '--spec', str(specs))
+            token = json.loads(self.cli('resume', 'export', '--owner', 'A').stdout)['token']
+            self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                        brk='feature.txt :: old :: broken')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            self.assertFalse(self.inspect()['evidence_stale'])
+            (specs / 'req.md').write_text('Amended requirement\n')
+            self.assertTrue(self.inspect()['evidence_stale'],
+                            'editing a file inside an ordinary spec directory must stale proof')
+            self.cli('--run', 'export', '--token', token, '--verify')
+            self.assertFalse(self.inspect()['evidence_stale'])
+            (specs / 'added.md').write_text('Late requirement\n')
+            self.assertTrue(self.inspect()['evidence_stale'],
+                            'adding a file inside an ordinary spec directory must stale proof')
+
+    def test_branch_switch_between_same_commit_stales_whole_proof(self):
+        subprocess.run(['git', 'init', '-q', '-b', 'main'], cwd=self.root, check=True)
+        subprocess.run(['git', 'config', 'user.email', 'a@b.c'], cwd=self.root, check=True)
+        subprocess.run(['git', 'config', 'user.name', 'test'], cwd=self.root, check=True)
+        subprocess.run(['git', 'add', 'feature.txt'], cwd=self.root, check=True)
+        subprocess.run(['git', 'commit', '-qm', 'initial'], cwd=self.root, check=True)
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertTrue(self.inspect()['last_evidence']['whole_ledger_verified'])
+        self.assertFalse(self.inspect()['proof_stale'])
+        subprocess.run(['git', 'checkout', '-q', '-b', 'same-commit'], cwd=self.root, check=True)
+        self.assertTrue(self.inspect()['proof_stale'],
+                        'two branches on one commit differ by name; a check reading the branch '
+                        'must not keep the proof taken on the other branch')
+
     def test_workspace_symlink_target_change_stales_whole_proof(self):
         with tempfile.TemporaryDirectory() as outside:
             data = Path(outside) / 'input.txt'
@@ -979,11 +1016,16 @@ with run_cli.workspace_lock(goalrun) as lock:
                         brk='feature.txt :: old :: broken')
             self.cli('--run', 'export', '--token', token, '--verify')
             component = self.root / 'vendor/component'
+            branch = subprocess.check_output(['git', 'branch', '--show-current'],
+                                             cwd=component, text=True).strip()
             previous_head = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=component, text=True).strip()
             subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
                             'commit', '--allow-empty', '-qm', 'Version-only change'], cwd=component, check=True)
             self.assertTrue(self.inspect()['proof_stale'])
             subprocess.run(['git', 'checkout', '-q', previous_head], cwd=component, check=True)
+            self.assertTrue(self.inspect()['proof_stale'],
+                            'a detached checkout at the same commit still changed the branch input')
+            subprocess.run(['git', 'checkout', '-q', '-B', branch, previous_head], cwd=component, check=True)
             self.assertFalse(self.inspect()['proof_stale'])
             (self.root / 'vendor/component/component.py').write_text('changed')
             self.assertTrue(self.inspect()['proof_stale'])

@@ -46,6 +46,17 @@ def workspace_lock(engine):
         engine.drop_lock(lock)
 
 
+def directory_contents(target, engine, seen):
+    """Every file under a directory that is itself an input, not a workspace root."""
+    contents = {}
+    for base, dirs, names in os.walk(target):
+        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}]
+        for name in names + dirs:
+            full = os.path.join(base, name)
+            contents[os.path.relpath(full, target)] = input_mark(full, engine, seen)
+    return contents
+
+
 def input_mark(path, engine, seen=frozenset()):
     """Track link identity and the input it reads, including directory links and cycles."""
     if not os.path.lexists(path):
@@ -64,13 +75,7 @@ def input_mark(path, engine, seen=frozenset()):
         return [mark, input_mark(target, engine, seen)]
     if not os.path.isdir(target):
         return [mark, 'unavailable']
-    contents = {}
-    for base, dirs, names in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}]
-        for name in names + dirs:
-            full = os.path.join(base, name)
-            contents[os.path.relpath(full, target)] = input_mark(full, engine, seen | {target})
-    return [mark, os.stat(target).st_mode & 0o7777, contents]
+    return [mark, os.stat(target).st_mode & 0o7777, directory_contents(target, engine, seen | {target})]
 
 
 def redacted_argv(argv, token):
@@ -281,6 +286,18 @@ def git_head(root):
     return result.stdout.decode().strip() if result.returncode == 0 else None
 
 
+def git_symbolic_branch(root):
+    """The branch HEAD is on, which the resolved commit alone cannot tell: two branches
+    can point at one commit, and a check that reads the branch name must not keep a
+    proof taken on the other one. Detached or absent: None."""
+    try:
+        result = subprocess.run(['git', '-C', os.path.abspath(root), 'symbolic-ref',
+                                 '--quiet', '--short', 'HEAD'], capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return None
+    return result.stdout.decode().strip() if result.returncode == 0 else None
+
+
 def fingerprint(store, view, engine):
     # Synthetic metadata and workspace paths have separate collision-free namespaces.
     metadata = {'runtime': runtime_mark(store, view, engine),
@@ -291,10 +308,12 @@ def fingerprint(store, view, engine):
     files = {}
     metadata['git-heads'] = {'': git_head(store.root)}
     metadata['git-indexes'] = {'': git_index(store.root)}
+    metadata['git-branches'] = {'': git_symbolic_branch(store.root)}
     for relative, full, directory in source_entries(store.root, engine):
         if directory and os.path.lexists(os.path.join(full, '.git')):
             metadata['git-heads'][relative] = git_head(full)
             metadata['git-indexes'][relative] = git_index(full)
+            metadata['git-branches'][relative] = git_symbolic_branch(full)
         files[relative] = input_mark(full, engine)
         parent = os.path.dirname(full)
         while parent != store.root:
@@ -309,7 +328,15 @@ def fingerprint(store, view, engine):
     spec_mark = None
     if spec:
         full = spec if os.path.isabs(spec) else os.path.join(store.root, spec)
-        spec_mark = input_mark(full, engine)
+        if os.path.isdir(full) and not os.path.islink(full):
+            # An ordinary spec directory is the requirements inside it: recurse as
+            # linked directories already do, so edits, additions and removals beneath
+            # it change the fingerprint instead of leaving a stale proof current.
+            target = os.path.realpath(full)
+            spec_mark = [engine._mark(full), os.stat(target).st_mode & 0o7777,
+                         directory_contents(target, engine, frozenset({target}))]
+        else:
+            spec_mark = input_mark(full, engine)
     return digest(json.dumps({'metadata': metadata, 'workspace': files,
                               'run-inputs': inputs, 'spec': [spec, spec_mark]}, sort_keys=True).encode())
 

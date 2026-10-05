@@ -271,7 +271,9 @@ các file thông thường vào baseline ban đầu, nên deliverable bị ignor
 được loại trừ; file được Git theo dõi vẫn được tính dù nằm trong thư mục output hoặc cache.
 Deliverable chỉ rõ đường dẫn bị loại trừ sẽ bị từ chối. Ranh giới loại trừ ban đầu vẫn được
 áp dụng sau khi staging hoặc sửa quy tắc ignore.
-Thay đổi Git HEAD hay nội dung, mode, conflict và cờ của index làm proof hết hiệu lực;
+Thay đổi Git HEAD, nhánh symbolic mà nó đang trỏ tới hay nội dung, mode, conflict và cờ
+của index làm proof hết hiệu lực (hai nhánh có thể cùng trỏ một commit, nên HEAD đã resolve
+chưa đủ phân biệt việc đổi nhánh);
 Git status và thao tác làm mới stat-cache của index giữ nguyên hiệu lực proof.
 
 Agent mới phải verify lại. Source, spec, test hoặc đầu vào chính của run thay đổi cũng làm

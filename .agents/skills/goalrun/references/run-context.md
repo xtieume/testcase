@@ -99,11 +99,16 @@ source; its new ownership epoch makes prior evidence stale. Changed source, test
 version, spec or authoritative run inputs (requirements, ledger, baseline, signatures, waiver bindings) also
 make old evidence stale; a previous proof is not current proof. Workspace symlinks include
 both link identity and resolved contents; directory links are followed with cycle detection.
+A specification directory is read through to the files inside it, linked or not, so editing,
+adding or removing a requirement file beneath it stales proof.
 
 Each observed check and finalized row updates the checkpoint before the next check starts.
 Interrupted sessions expose `last_evidence.state: "unfinished"` with a null exit code;
 finished sessions expose `state: "completed"`. A witnessed failing measurement invalidates
 proof and counts once per row in that session, even after SIGKILL or ownership takeover.
+A HOLLOW or STUCK mutation verdict is published before the blast sweep begins, so a kill
+during the sweep leaves the failure counted and the previous proof invalidated; an expected
+failure under the planted defect still waits for the sweep, because it is not a regression.
 Check evidence identifies the row and phase (`measurement`, `mutation`, or `blast`), so an
 expected failure under a planted defect does not count as a production regression.
 It retains the raw exit code and records `passed` after the runner gate: a silent runner
@@ -122,7 +127,9 @@ resolved executables in ledger checks, and installed Python/local dependency fil
 Changing feature flags, Python paths, runner binaries or installed package files requires new proof.
 Runtime/tool metadata, workspace paths and run inputs have separate fingerprint namespaces,
 so source names cannot overwrite metadata. Git worktree contents include nested submodules;
-repository/submodule HEAD and semantic index changes also stale proof. Staged object IDs,
+repository/submodule HEAD, the symbolic branch it is on and semantic index changes also stale
+proof (two branches can share one commit, so the resolved HEAD alone cannot tell a switch).
+Staged object IDs,
 modes, conflict stages and persistent index flags participate; Git status and index stat-cache
 refreshes preserve proof. Directory deliverables compare the same authoritative file selection
 recorded in the baseline, so unchanged ignored ordinary files cannot count as newly shipped.

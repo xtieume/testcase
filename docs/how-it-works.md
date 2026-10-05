@@ -272,7 +272,7 @@ ordinary files in the original baseline, so an unchanged ignored deliverable can
 new work. Private state, dependencies, caches and ignored build directories are excluded;
 tracked files override output and cache exclusions. Explicit deliverables in excluded paths
 are rejected, and initial exclusion boundaries remain binding after staging or ignore-rule edits.
-Git HEAD and semantic staged index changes
+Git HEAD, the symbolic branch it is on and semantic staged index changes
 stale proof, while Git status and index stat-cache refreshes preserve it.
 
 A new owner must verify again. Source, spec, tests or authoritative run inputs changing also

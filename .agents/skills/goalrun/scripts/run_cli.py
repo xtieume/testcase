@@ -47,7 +47,11 @@ def workspace_lock(engine):
 
 
 def directory_contents(target, engine, seen):
-    """Every file under a directory that is itself an input, not a workspace root."""
+    """Every file under a directory that is itself an input, not a workspace root.
+
+    Build and cache names (node_modules, coverage, ...) prune this walk exactly as
+    they prune the workspace: a spec kept inside such a subtree is beyond the
+    boundary either way."""
     contents = {}
     for base, dirs, names in os.walk(target):
         dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}]

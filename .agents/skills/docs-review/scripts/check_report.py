@@ -27,7 +27,7 @@ def _cells(line):
 
 
 def rows(path):
-    """Yield (line number, cells) for data rows of tables that have a verdict column.
+    """Yield (line number, cells, header) for data rows of tables that have a verdict column.
 
     The report also contains the requirement checklist, the round log and findings tables
     whose rows carry IDs or component names but no verdict. Linting those reports every

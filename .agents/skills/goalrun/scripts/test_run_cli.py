@@ -174,6 +174,18 @@ class RunCliTests(unittest.TestCase):
         for evidence in (self.folder() / 'evidence').glob('*.json'):
             self.assertNotIn(token, evidence.read_text())
 
+    def test_check_output_does_not_leak_the_writer_token(self):
+        token = self.init()
+        reveal = ("python3 -c \"import os, subprocess; print(subprocess.run("
+                  "['ps', '-ww', '-o', 'command=', '-p', str(os.getppid())], "
+                  "capture_output=True, text=True).stdout)\"")
+        self.ledger(command=reveal, brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify', code=1)
+        self.assertNotIn(token, self.cli('inspect', 'export').stdout,
+                         'a check echoing its parent command line leaked the writer token')
+        for evidence in (self.folder() / 'evidence').glob('*.json'):
+            self.assertNotIn(token, evidence.read_text())
+
     def test_symlinked_directory_inputs_track_contents_and_stop_cycles(self):
         with tempfile.TemporaryDirectory() as outside:
             folder = Path(outside)

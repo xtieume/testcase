@@ -584,12 +584,20 @@ class Session:
         self.before = fingerprint(store, self.view, engine)
 
     def record_row(self, row, status, note):
+        if note is not None and self.token:
+            # a check that echoes its parent command line (ps) would otherwise
+            # carry the writer token into the checkpoint and inspect output
+            note = note.replace(self.token, '[redacted]')
         self.rows[row.id] = {'status': status, 'note': note,
                              'phase': 'measurement' if status in ('PASS', 'FAIL', 'WAIT') else 'verification'}
         self.publish(self.result())
 
     def record_check(self, command, exit_code, output, timed_out, row_id=None, phase='measurement',
                      passed=None, note=None):
+        if self.token:
+            output = output.replace(self.token, '[redacted]')
+            if note is not None:
+                note = note.replace(self.token, '[redacted]')
         if passed is None:
             passed = exit_code == 0 and not timed_out
         entry = {'command': command, 'exit_code': exit_code, 'timed_out': timed_out, 'output': output,

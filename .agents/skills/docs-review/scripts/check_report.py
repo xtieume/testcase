@@ -13,6 +13,10 @@ ID_RE = re.compile(r"[A-Za-z0-9][\w.-]*")
 
 
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
+# A verdict column alone is not enough: a findings table like `| Component | Answer | Notes |`
+# carries answers too, and linting its rows would flag `parser` as a requirement with no
+# valid verdict. Verdict rows live in tables whose first column names the requirement/Q ID.
+ID_HEADERS = {"id", "req id", "requirement id", "q id", "question id"}
 
 
 def _cells(line):
@@ -25,9 +29,10 @@ def _cells(line):
 def rows(path):
     """Yield (line number, cells) for data rows of tables that have a verdict column.
 
-    The report also contains the requirement checklist and the round log, whose rows carry
-    IDs but no verdict. Linting those reports every checklist row as a duplicate with a
-    missing verdict, so tables are selected by their header.
+    The report also contains the requirement checklist, the round log and findings tables
+    whose rows carry IDs or component names but no verdict. Linting those reports every
+    checklist row as a duplicate with a missing verdict, so tables are selected by their
+    header: a verdict column under a recognized requirement/Q-ID heading.
     """
     header = None
     for n, line in enumerate(open(path, encoding="utf-8"), 1):
@@ -41,7 +46,7 @@ def rows(path):
         if header is None:
             header = [c.lower() for c in cells]
             continue
-        if set(header) & VERDICT_HEADERS:
+        if header and header[0] in ID_HEADERS and set(header) & VERDICT_HEADERS:
             yield n, cells, header
 
 
@@ -77,6 +82,10 @@ Searched the tree for: first, second, third — nothing outside the set.
 | DOC-A-001 | doc says fourth | Unspecified | D1:6 | "y" |
 
 ## Round findings
+
+| Component | Answer | Notes |
+| --------- | ------ | ----- |
+| parser | Yes | findings may answer in their own words |
 
 ## Round log
 
@@ -132,9 +141,41 @@ Searched the tree for: first, second, third — nothing outside the set.
                          '| REQ-A-003 | Undecided | TYPO |'),
           'has no valid verdict', 'requirement text equals a verdict')
 
-    # The checklist and the round log carry IDs and numbers but no verdict column.
-    # Counting their rows is the bug this header selection exists to prevent.
+    # The checklist and the round log carry IDs and numbers but no verdict column, and the
+    # findings table answers in its own words under a Component heading. Counting those
+    # rows is the bug this header selection exists to prevent.
     assert sum(counts.values()) == 4, "non-verdict tables were linted"
+
+    # Mode B answers sit under a Q-ID heading: the ID requirement must not drop them.
+    mode_b = """## Source inventory
+
+| Doc ID | Path | What it is |
+| ------ | ---- | ---------- |
+| D1 | a.md | a document |
+
+Searched the tree for: first, second, third — nothing outside the set.
+
+## Sub-question answers
+
+| Q ID | Sub-question | Answer | Confidence | Evidence (doc + section) | Quote |
+| ---- | ------------ | ------ | ---------- | ------------------------ | ----- |
+| Q-1 | first | Stated | Stated | D1:1 | "x" |
+| Q-2 | second | Absent | Absent | searched: x, y in D1 | |
+
+## Round findings
+
+## Round log
+
+| Round | Status | New rows | Verdict changes | Citations rejected | Nits |
+| ----- | ------ | -------- | --------------- | ------------------ | ---- |
+| 1 | merged | 0 | 0 | 0 | 0 |
+"""
+    problems, counts = run(mode_b, verdicts=VERDICTS_B)
+    assert problems == [], problems
+    assert counts == Counter({"Stated": 1, "Absent": 1}), counts
+    fires(mode_b.replace("| Q-1 | first | Stated | Stated | D1:1 | \"x\" |",
+                         "| Q-1 | first | Stated | Typo | D1:1 | \"x\" |"),
+          'has no valid verdict', 'mode B row without a valid confidence')
 
     fires(report.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
                          "| REQ-A-001 | first | Coverd | D1:1 | \"x\" |"),

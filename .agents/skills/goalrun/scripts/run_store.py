@@ -20,6 +20,12 @@ class RunError(Exception):
     """Invalid run, unsafe storage, stale ownership or an unavailable lock."""
 
 
+def _fingerprint_shape(value):
+    """A digest per input group; older evidence stored a single digest string."""
+    return isinstance(value, str) or (isinstance(value, dict) and
+                                      all(isinstance(v, str) for v in value.values()))
+
+
 class Store:
     VERSION = 1
 
@@ -176,7 +182,7 @@ class Store:
         for key in ('last_evidence', 'last_proof'):
             evidence = checkpoint.get(key)
             if evidence is not None and (not isinstance(evidence, dict) or
-                                        not isinstance(evidence.get('fingerprint'), str) or
+                                        not _fingerprint_shape(evidence.get('fingerprint')) or
                                         type(evidence.get('whole_ledger_verified')) is not bool or
                                         not isinstance(evidence.get('rows'), dict) or
                                         (key == 'last_proof' and not evidence['whole_ledger_verified'])):

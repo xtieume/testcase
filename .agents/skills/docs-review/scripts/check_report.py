@@ -30,7 +30,12 @@ def _cells(line):
     return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
 
 
-def rows(path):
+def _keyed(header):
+    return (header[0] in ID_HEADERS and bool(set(header) & VERDICT_HEADERS)
+            or header[0] in PLAIN_ID_HEADERS and "verdict" in header)
+
+
+def rows(path, unkeyed=None):
     """Yield (line number, cells, header) for data rows of tables that have a verdict column.
 
     The report also contains the requirement checklist, the round log and findings tables
@@ -49,9 +54,10 @@ def rows(path):
         cells = _cells(line)
         if header is None:
             header = [c.lower() for c in cells]
+            if unkeyed is not None and "verdict" in header and not _keyed(header):
+                unkeyed.append(n)
             continue
-        if header and (header[0] in ID_HEADERS and set(header) & VERDICT_HEADERS
-                       or header[0] in PLAIN_ID_HEADERS and "verdict" in header):
+        if header and _keyed(header):
             yield n, cells, header
 
 
@@ -153,6 +159,11 @@ Searched the tree for: first, second, third — nothing outside the set.
     fires(report.replace('| REQ-A-003 | third | Undecided |',
                          '| REQ-A-003 | Undecided | TYPO |'),
           'has no valid verdict', 'requirement text equals a verdict')
+
+    # A Verdict column under a heading the linter cannot key on is reported, not skipped.
+    fires(report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
+                         "| Verdict | Req ID | Requirement | Evidence | Quote |"),
+          "not an ID heading", "verdict column first")
 
     # A verdict table keyed by a plain `Requirement` or `Req` heading is still a verdict table;
     # the same headings over prose answers (in the clean report above) are not.
@@ -398,7 +409,8 @@ def lint(path, verdicts=VERDICTS_A):
     text_all = open(path, encoding="utf-8").read()
     docs, base = inventory(text_all), os.getcwd()
 
-    for n, cells, header in rows(path):
+    unkeyed = []
+    for n, cells, header in rows(path, unkeyed):
         rid = re.split(r"\s*\[OBSOLETE", cells[0], maxsplit=1, flags=re.I)[0].strip()
         if not ID_RE.fullmatch(rid) or not re.search(r'[A-Za-z]', rid):
             problems.append(f"{path}:{n}: invalid requirement ID {rid!r}")
@@ -441,6 +453,8 @@ def lint(path, verdicts=VERDICTS_A):
                                 f"of the spec's own word is how a search failure becomes a gap")
 
     problems += [f"{path}: duplicate ID {rid} ({c} rows)" for rid, c in seen.items() if c > 1]
+    problems += [f"{path}:{n}: table has a Verdict column but its first column is not an ID heading "
+                 f"(Req ID, ID, Q ID, Requirement, Req); its rows were not linted" for n in unkeyed]
 
     if not counts:
         problems.append(f"{path}: no verdict rows found — is this the right file?")

@@ -1,6 +1,6 @@
 ---
 name: testcase
-description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, Figma designs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Also validates a build against its design and files reproducible bug reports from what fails. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases, to compare a screen against its Figma design, or to write up a bug. Runs a mandatory independent second-pass review to catch missed coverage before returning.
+description: Generate or review test cases from requirements, specs, tickets, UI descriptions, API specs, Figma designs, or code changes, then implement the automatable ones as runnable tests in the repo's own framework. Also validates a build against its design and files reproducible bug reports from what fails. Use whenever the user asks to write, create, generate, implement, review, improve, or check test cases, to compare a screen against its Figma design, or to write up a bug. Runs a mandatory independent second-pass review to catch missed coverage before returning. Requires the goalrun skill installed alongside, for its run context.
 allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 ---
 

@@ -100,7 +100,9 @@ jobs:
             < /tmp/prompt.md > /tmp/review.out 2> /tmp/review.err || code=$?
           if [ "$code" -ne 0 ]; then
             tail -n 20 /tmp/review.out /tmp/review.err
-            if grep -qiE "$QUOTA_RE" /tmp/review.out /tmp/review.err; then
+            # stdout may hold a partial review that mentions quotas: read only its CLI error lines
+            api_error=$( { grep -iE '^API Error' /tmp/review.out || true; cat /tmp/review.err; } )
+            if grep -qiE "$QUOTA_RE" <<< "$api_error"; then
               echo "::warning::Bot review skipped: the model API is out of quota or rate-limited."
               echo "skipped=true" >> "$GITHUB_OUTPUT"
               exit 0

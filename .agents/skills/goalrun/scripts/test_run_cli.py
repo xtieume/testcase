@@ -862,6 +862,28 @@ with run_cli.workspace_lock(goalrun) as lock:
         baseline = json.loads((self.folder() / 'goalrun/baseline.json').read_text())
         self.assertIn('src/bin/worker.rs', baseline['files'])
 
+    def test_inspect_names_what_staled_the_proof_and_ignores_session_variables(self):
+        token = self.init()
+        self.ledger(command='python3 -c "assert open(\'feature.txt\').read() == \'old\\n\'"',
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+
+        def inspect(**extra):
+            out = subprocess.run([sys.executable, str(SCRIPT), 'inspect', 'export'], cwd=self.root,
+                                 text=True, capture_output=True, timeout=15,
+                                 env={**os.environ, **extra})
+            self.assertEqual(out.returncode, 0, out.stderr)
+            return json.loads(out.stdout)
+
+        view = inspect(TMUX_PANE='%9', SSH_TTY='/dev/ttys009', GITHUB_OUTPUT='/tmp/step-out')
+        self.assertFalse(view['proof_stale'])
+        self.assertEqual(view['proof_stale_because'], [])
+        view = inspect(FEATURE_FLAG='on')
+        self.assertTrue(view['proof_stale'])
+        self.assertEqual(view['proof_stale_because'], ['runtime'])
+        (self.root / 'feature.txt').write_text('changed\n')
+        self.assertEqual(self.inspect()['proof_stale_because'], ['source'])
+
     def test_latest_whole_proof_survives_successful_diagnostics(self):
         token = self.init()
         self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",

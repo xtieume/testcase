@@ -57,8 +57,7 @@ it on every push. `LINT` is the exception that proves the shape: a hygiene rule 
 requirement, so no `REQ-` and no test.
 
 ```bash
-python3 "$GOALRUN" init "$RUN" --goal "Ship CSV export" --spec spec.md  # before edits
-python3 "$GOALRUN" resume "$RUN" --owner controller-a   # save top-level token as TOKEN
+# RUN and TOKEN come from init/resume (references/run-context.md)
 python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --lint-ledger  # run reqs.txt automatically
 python3 "$GOALRUN" --run "$RUN" --token "$TOKEN"          # pre-flight; --only per phase
 python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify # final whole-ledger proof

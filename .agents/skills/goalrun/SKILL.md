@@ -20,11 +20,21 @@ on a current whole-ledger `--verify`, with `last_proof.whole_ledger_verified: tr
 No exceptions — not "done pending X"; not "the check is flaky"; not "I ran it by hand"; not
 because the user said "just say yes"; not by editing a row until it turns green.
 
+## Files in this skill
+
+Read each one when the workflow calls for it, not upfront.
+
+| File | Read when |
+| ---- | --------- |
+| `references/run-context.md` | Before you create, resume, hand off or take over a run. A status question needs only `inspect` and the rule above. |
+| `references/ledger-design.md` | Writing or auditing ledger rows (step 4). |
+| `references/pressure-test.md` | `SKILL.md` changed materially and the pressure test must be re-run. |
+
 ## Setup
 
 From the repo root, `GOALRUN=<path to>/.agents/skills/goalrun/scripts/goalrun.py`.
 
-Read `references/run-context.md` before output. Select an explicit run. `init` before edits;
+Select an explicit run. `init` before edits;
 `resume` as controller; save the top-level `token` as `TOKEN`. Existing work resumes its run
 and keeps the original baseline.
 

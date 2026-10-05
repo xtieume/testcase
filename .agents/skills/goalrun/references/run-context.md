@@ -77,7 +77,8 @@ python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify
   `--baseline` and `--reset`: `init` owns the one baseline.
 - `--sign` needs `--run` and `--token`; record only the human answer received.
 - Evidence: commands, outputs, exits, run log, fingerprint, epoch. `inspect`:
-  `last_evidence`/`evidence_stale`, `last_proof`/`proof_stale`.
+  `last_evidence`/`evidence_stale`, `last_proof`/`proof_stale`, and `proof_stale_because`
+  (`runtime`, `source`, `run-inputs`, `spec`, `ownership`, `invalidated`, `missing`, `format`).
 - JSON and session logs `0600`, independent of umask. Fingerprint stores no environment values.
 
 ### Durability per check
@@ -104,7 +105,9 @@ python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify
   detect cycles. Spec directory read through, linked or not: add, edit, or remove a requirement
   file and proof stales. Modes count; removing executable access stales proof. Tests and spec
   stale proof.
-- **Runtime/env.** Env digest except terminal/shell bookkeeping; resolved check executables;
+- **Runtime/env.** Env digest except terminal, SSH/tmux session and per-step CI bookkeeping
+  (`SESSION_VARIABLES` in `run_cli.py`); run `inspect` in the environment the checks ran in;
+  resolved check executables;
   installed Python and local dependency files. New proof: feature flags, Python paths, runner
   binaries, installed packages, tool version. Separate namespaces: runtime/tool metadata,
   workspace paths, run inputs.

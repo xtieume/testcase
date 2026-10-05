@@ -39,8 +39,8 @@ def atomic_json(store, path, data):
 @contextmanager
 def workspace_lock(engine):
     store = Store()
-    store._safe(os.path.join(store.root, '.testcases', 'goalrun.lock'))
-    lock = engine.hold_lock()
+    # the lock file is checked like any run path, so a symlinked lock cannot redirect it
+    lock = engine.hold_lock(store._safe(os.path.join(store.root, engine.LOCK)))
     try:
         yield lock
     finally:
@@ -87,10 +87,21 @@ def redacted_argv(argv, token):
     return [arg.replace(token, '[redacted]') if token else arg for arg in argv]
 
 
+# Per-process bookkeeping: terminal, SSH/tmux session and per-step CI variables differ between
+# two shells running the same checks, so they must not stale a proof.
+SESSION_VARIABLES = {
+    '_', 'SHLVL', 'PWD', 'OLDPWD', 'TERM', 'COLUMNS', 'LINES', 'TERM_SESSION_ID',
+    'ITERM_SESSION_ID', 'WINDOWID', 'SECURITYSESSIONID', 'TMUX', 'TMUX_PANE', 'STY',
+    'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'SSH_CLIENT', 'SSH_CONNECTION', 'SSH_TTY', 'GPG_TTY',
+    'INVOCATION_ID', 'JOURNAL_STREAM', 'GITHUB_ACTION', 'GITHUB_ACTION_PATH', 'GITHUB_ACTION_REF',
+    'GITHUB_ACTION_REPOSITORY', 'GITHUB_ENV', 'GITHUB_OUTPUT', 'GITHUB_PATH', 'GITHUB_STATE',
+    'GITHUB_STEP_SUMMARY', 'RUNNER_TRACKING_ID',
+}
+
+
 def runtime_mark(store, view, engine):
     # Persist only the resulting digest, never environment values or credentials.
-    environment = {k: v for k, v in os.environ.items()
-                   if k not in {'_', 'SHLVL', 'PWD', 'OLDPWD', 'TERM', 'COLUMNS', 'LINES'}}
+    environment = {k: v for k, v in os.environ.items() if k not in SESSION_VARIABLES}
     tools = {sys.executable: input_mark(sys.executable, engine)}
     ledger = Path(view['paths']['goalrun_dir']) / 'ledger.tsv'
     if ledger.is_file():
@@ -113,7 +124,10 @@ def runtime_mark(store, view, engine):
              os.path.join(store.root, 'node_modules'), os.path.join(store.root, '.venv'),
              os.environ.get('VIRTUAL_ENV')}
     roots.update(p for p in os.environ.get('PYTHONPATH', '').split(os.pathsep) if p)
-    for root in sorted(p for p in roots if p and os.path.isdir(p)):
+    roots = {os.path.realpath(p) for p in roots if p and os.path.isdir(p)}
+    # a venv's site-packages sits inside VIRTUAL_ENV: walk it once
+    roots = {p for p in roots if not any(p != other and p.startswith(other + os.sep) for other in roots)}
+    for root in sorted(roots):
         seen = set()
         for base, dirs, names in os.walk(root, followlinks=True):
             real = os.path.realpath(base)
@@ -417,12 +431,13 @@ def git_symbolic_branch(root):
 
 
 def fingerprint(store, view, engine):
+    """Digest per input group, so inspect can say which group staled a proof."""
     # Synthetic metadata and workspace paths have separate collision-free namespaces.
-    metadata = {'runtime': runtime_mark(store, view, engine),
-                'workspace-mode': os.stat(store.root).st_mode & 0o7777}
+    runtime = {'environment': runtime_mark(store, view, engine)}
     for label, path in (('engine', engine.__file__), ('cli', __file__),
                         ('store', sys.modules[Store.__module__].__file__)):
-        metadata[label] = engine._mark(path)
+        runtime[label] = engine._mark(path)
+    metadata = {'workspace-mode': os.stat(store.root).st_mode & 0o7777}
     files = {}
     metadata['git-heads'] = {'': git_head(store.root)}
     metadata['git-indexes'] = {'': git_index(store.root)}
@@ -458,8 +473,9 @@ def fingerprint(store, view, engine):
                          directory_contents(target, engine, frozenset({target}))]
         else:
             spec_mark = input_mark(full, engine)
-    return digest(json.dumps({'metadata': metadata, 'workspace': files,
-                              'run-inputs': inputs, 'spec': [spec, spec_mark]}, sort_keys=True).encode())
+    return {group: digest(json.dumps(value, sort_keys=True).encode()) for group, value in (
+        ('runtime', runtime), ('source', {'metadata': metadata, 'workspace': files}),
+        ('run-inputs', inputs), ('spec', [spec, spec_mark]))}
 
 
 def latest_proof(checkpoint):
@@ -484,15 +500,24 @@ def evidence_view(store, view, engine):
         result['argv'] = redacted_argv(result.get('argv', []), checkpoint.get('token'))
         return result
 
-    def stale(record):
-        return (record is None or bool(record.get('invalidated_by')) or
-                record.get('ownership_epoch') != checkpoint['ownership_epoch'] or
-                record.get('fingerprint') != current)
+    def stale_because(record):
+        if record is None:
+            return ['missing']
+        reasons = ['invalidated'] if record.get('invalidated_by') else []
+        if record.get('ownership_epoch') != checkpoint['ownership_epoch']:
+            reasons.append('ownership')
+        recorded = record.get('fingerprint')
+        if not isinstance(recorded, dict):
+            reasons.append('format')
+        else:
+            reasons += [group for group in current if recorded.get(group) != current[group]]
+        return reasons
 
     view['last_evidence'] = public(evidence)
-    view['evidence_stale'] = stale(evidence)
+    view['evidence_stale'] = bool(stale_because(evidence))
     view['last_proof'] = public(proof)
-    view['proof_stale'] = stale(proof)
+    view['proof_stale_because'] = stale_because(proof)
+    view['proof_stale'] = bool(view['proof_stale_because'])
     # Inspection/listing cannot confer writer privileges.
     view['checkpoint'] = dict(checkpoint)
     view['checkpoint'].pop('token', None)

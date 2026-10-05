@@ -194,6 +194,29 @@ class RunCliTests(unittest.TestCase):
         out = self.cli('--run', 'export', '--token', token, '--timeout', '0', '--only', 'REQ-A', code=2)
         self.assertIn('--timeout', out.stderr)
 
+    def test_truncated_recovery_journal_refuses_cleanly(self):
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        undo = self.folder() / 'goalrun/undo'
+        undo.mkdir(parents=True)
+        feature = self.root / 'feature.txt'
+        feature.write_text('old\n')
+        journal = undo / 'deadbeef.json'
+        journal.write_text(json.dumps({
+            'version': 1, 'run_id': 'export', 'row_id': 'REQ-A', 'path': 'feature.txt',
+            'original': base64.b64encode(b'old\n').decode(), 'mode': 0o644,
+            'planted_hash': hashlib.sha256(b'broken\n').hexdigest()}))
+        feature.write_text('broken\n')  # the crash left the break planted
+        record = json.loads(journal.read_text())
+        del record['planted_hash']      # ... and the journal was truncated
+        journal.write_text(json.dumps(record))
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=2)
+        self.assertIn('invalid recovery journal', out.stderr)
+        self.assertNotIn('Traceback', out.stderr)
+        self.assertEqual(feature.read_text(), 'broken\n',
+                         'a malformed journal must not be acted on, only refused')
+
     def test_symlinked_directory_inputs_track_contents_and_stop_cycles(self):
         with tempfile.TemporaryDirectory() as outside:
             folder = Path(outside)

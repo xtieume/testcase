@@ -408,14 +408,21 @@ def prepare_undo(store, run_id, row_id, path, original, planted):
 
 def guard_original(store, full, original, record):
     store._safe(full)
+    # every journal this tool writes carries planted_hash (null for deletions) and
+    # row_id; a record without them is truncated or hand-edited, and the guards and
+    # re-reads below all consume the normalized values, never raw subscripts
+    if 'planted_hash' not in record or not (record['planted_hash'] is None or
+                                            isinstance(record['planted_hash'], str)):
+        raise RunError('invalid recovery journal: planted_hash is missing or malformed')
+    planted = record['planted_hash']
     if os.path.exists(full):
         metadata = os.stat(full)
         if not stat.S_ISREG(metadata.st_mode) or (record.get('mode') is not None and
                 metadata.st_mode & 0o7777 != record['mode']):
             raise RunError(f'recovery conflict at {full}: source type or permissions changed; journal retained')
     current = Path(full).read_bytes() if os.path.exists(full) else None
-    if current == original or (current is None and record['planted_hash'] is None) or \
-            (current is not None and digest(current) == record['planted_hash']):
+    if current == original or (current is None and planted is None) or \
+            (current is not None and digest(current) == planted):
         return
     raise RunError(f'recovery conflict at {full}: source changed during verify; journal retained')
 
@@ -545,7 +552,9 @@ def recover(store, engine):
             except (KeyError, ValueError, TypeError) as exc:
                 raise RunError(f'invalid recovery bytes: {path}') from exc
             planted = record.get('planted_hash')
-            if not (planted is None or isinstance(planted, str)):
+            row_id = record.get('row_id')
+            if 'planted_hash' not in record or not (planted is None or isinstance(planted, str)) or \
+                    not isinstance(row_id, str) or not row_id:
                 raise RunError(f'invalid recovery journal: {path}')
             guard_original(store, full, original, record)
             current = Path(full).read_bytes() if os.path.exists(full) else None
@@ -554,7 +563,7 @@ def recover(store, engine):
             elif (current is None and planted is None) or \
                     (current is not None and digest(current) == planted):
                 restore_original(store, full, original, str(path))
-                print(f'recovered {run_id}/{record["row_id"]}: {rel}', file=sys.stderr)
+                print(f'recovered {run_id}/{row_id}: {rel}', file=sys.stderr)
             else:
                 raise RunError(f'recovery conflict at {rel} in {run_id}: source changed after verify; '
                                'reconcile it with the journal before continuing')

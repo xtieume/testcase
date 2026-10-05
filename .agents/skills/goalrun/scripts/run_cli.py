@@ -17,6 +17,7 @@ import stat
 import sysconfig
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 
@@ -54,7 +55,7 @@ def directory_contents(target, engine, seen):
     boundary either way."""
     contents = {}
     for base, dirs, names in os.walk(target):
-        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}]
+        dirs[:] = [d for d in dirs if d not in engine.BASELINE_SKIP - engine.OUTPUT_DIRS]
         for name in names + dirs:
             full = os.path.join(base, name)
             contents[os.path.relpath(full, target)] = input_mark(full, engine, seen)
@@ -161,7 +162,7 @@ def source_paths(root, engine):
     """
     root = os.path.abspath(root)
     tracked = set(tracked_paths(root))
-    caches = engine.BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
+    caches = engine.BASELINE_SKIP - engine.OUTPUT_DIRS
     private = {'.git', '.testcases'}
     ancestors = {str(parent) for path in tracked for parent in Path(path).parents}
     outputs = {}
@@ -176,7 +177,7 @@ def source_paths(root, engine):
                 parts[-1] == '.coverage' or parts[-1].startswith('.coverage.'):
             return True
         for index, part in enumerate(parts if directory else parts[:-1]):
-            if part not in {'bin', 'obj', 'target', 'dist', 'build'}:
+            if part not in engine.OUTPUT_DIRS:
                 continue
             prefix = str(Path(*parts[:index + 1]))
             if prefix not in outputs:
@@ -248,6 +249,125 @@ def source_exclusions(root, engine):
             if relative not in selected:
                 excluded.append(relative)
     return sorted(excluded)
+
+
+def _git_text(at, *args):
+    try:
+        result = subprocess.run(['git', '-C', at, *args], capture_output=True, timeout=10)
+    except FileNotFoundError:
+        return None
+    return os.fsdecode(result.stdout).rstrip('\n') if result.returncode == 0 else None
+
+
+def _read_text(path):
+    try:
+        with open(path, encoding='utf-8', errors='surrogateescape') as f:
+            return f.read()
+    except OSError:
+        return ''
+
+
+def ignore_rules(root, engine):
+    """Snapshot the Git ignore rules in effect at initialization, per repository.
+
+    Output directories they ignored stay excluded for files created later, even
+    after force-adding those files or editing the rules. Empty outside Git.
+    """
+    root = os.path.abspath(root)
+    skip = {'.git', '.testcases'} | (engine.BASELINE_SKIP - engine.OUTPUT_DIRS)
+    rules = []
+
+    def collect(at):
+        top = _git_text(at, 'rev-parse', '--show-toplevel')
+        if top is None:
+            return
+        top, real = os.path.realpath(top), os.path.realpath(at)
+        files = {}
+        ancestor = real
+        while True:
+            if os.path.isfile(os.path.join(ancestor, '.gitignore')):
+                files[os.path.relpath(os.path.join(ancestor, '.gitignore'), top)] = \
+                    _read_text(os.path.join(ancestor, '.gitignore'))
+            if ancestor == top or os.path.dirname(ancestor) == ancestor:
+                break
+            ancestor = os.path.dirname(ancestor)
+        nested = []
+        for base, dirs, names in os.walk(at):
+            descend = []
+            for name in dirs:
+                if name in skip:
+                    continue
+                if os.path.lexists(os.path.join(base, name, '.git')):
+                    nested.append(os.path.join(base, name))
+                else:
+                    descend.append(name)
+            dirs[:] = descend
+            if base != at and '.gitignore' in names:
+                files[os.path.relpath(os.path.realpath(os.path.join(base, '.gitignore')), top)] = \
+                    _read_text(os.path.join(base, '.gitignore'))
+        exclude = _git_text(at, 'rev-parse', '--git-path', 'info/exclude')
+        excludes_file = _git_text(at, 'config', '--path', 'core.excludesFile') or os.path.join(
+            os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'git', 'ignore')
+        rules.append({'at': os.path.normpath(os.path.relpath(at, root)),
+                      'base': os.path.normpath(os.path.relpath(real, top)),
+                      'gitignore': files,
+                      'exclude': _read_text(os.path.join(at, exclude)) if exclude else '',
+                      'global': _read_text(excludes_file)})
+        for child in nested:
+            collect(child)
+
+    collect(root)
+    return rules
+
+
+@contextmanager
+def baseline_ignores(rules):
+    """Yield ignored(directory) that answers with the rules recorded at initialization."""
+    with tempfile.TemporaryDirectory() as tmp:
+        answers = {}
+
+        def owner(relative):
+            inside = [(index, entry) for index, entry in enumerate(rules)
+                      if entry['at'] == os.curdir or relative == entry['at']
+                      or relative.startswith(entry['at'] + os.sep)]
+            return max(inside, key=lambda item: 0 if item[1]['at'] == os.curdir else len(item[1]['at']),
+                       default=(None, None))
+
+        def ignored(relative):
+            if relative not in answers:
+                index, entry = owner(relative)
+                answers[relative] = entry is not None and _ignored_by(tmp, index, entry, relative)
+            return answers[relative]
+
+        yield ignored
+
+
+def _ignored_by(tmp, index, entry, relative):
+    repository = os.path.join(tmp, str(index))
+    excludes_file = repository + '.global'
+    try:
+        if not os.path.isdir(repository):
+            subprocess.run(['git', 'init', '-q', repository], check=True, capture_output=True, timeout=10)
+            for name, text in entry['gitignore'].items():
+                target = os.path.normpath(name)
+                if os.path.isabs(target) or target.split(os.sep)[0] == os.pardir:
+                    continue
+                os.makedirs(os.path.dirname(os.path.join(repository, target)), exist_ok=True)
+                with open(os.path.join(repository, target), 'w', encoding='utf-8', errors='surrogateescape') as f:
+                    f.write(text)
+            with open(os.path.join(repository, '.git', 'info', 'exclude'), 'w', encoding='utf-8',
+                      errors='surrogateescape') as f:
+                f.write(entry['exclude'])
+            with open(excludes_file, 'w', encoding='utf-8', errors='surrogateescape') as f:
+                f.write(entry['global'])
+        inner = relative if entry['at'] == os.curdir else os.path.relpath(relative, entry['at'])
+        result = subprocess.run(['git', '-C', repository, '-c', f'core.excludesFile={excludes_file}',
+                                 'check-ignore', '--no-index', '-q',
+                                 os.path.normpath(os.path.join(entry['base'], inner)) + '/'],
+                                capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return True  # the rules cannot be evaluated: never let that admit an output tree
+    return result.returncode != 1
 
 
 def git_index(root):

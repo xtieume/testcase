@@ -35,8 +35,12 @@ reset an existing baseline as a workaround. Directory comparisons use the worksp
 selection, including original tracked overrides, so excluded generated siblings never count as shipped.
 The baseline saves omitted file/subtree boundaries: later `git add -f` or ignore-rule changes do not
 reclassify those paths as new work. Files already recorded in the baseline remain authoritative.
-New source belongs outside saved exclusion boundaries; an excluded subtree stays excluded. Older
-baselines without this provenance conservatively reject unrecorded generated/cache-name targets.
+New source belongs outside saved exclusion boundaries; an excluded subtree stays excluded. The
+baseline also saves the Git ignore rules in effect (`.gitignore` files, `info/exclude`, the global
+excludes file, per repository): a path it never recorded under an output directory those rules
+ignored, or under a dependency/cache name, stays excluded even when created later and force-added
+or after the rule is removed. Older baselines without this provenance conservatively reject
+unrecorded generated/cache-name targets.
 
 ## An example
 

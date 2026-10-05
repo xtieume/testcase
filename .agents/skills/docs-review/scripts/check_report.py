@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Lint a docs-review report: verdict validity, duplicate IDs, missing citations."""
+import argparse
 import os
 import re
 import sys
@@ -443,12 +444,18 @@ def lint(path, verdicts=VERDICTS_A):
 
 
 def main():
-    if "--selfcheck" in sys.argv:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("report", nargs="?", help="docs-review report (markdown)")
+    parser.add_argument("--mode", type=str.lower, choices=("a", "b"), default="a",
+                        help="a: requirement verdicts (default), b: investigation answers")
+    parser.add_argument("--selfcheck", action="store_true", help="run the built-in self-checks")
+    args = parser.parse_args()
+    if args.selfcheck:
         selfcheck()
         return 0
-    path = sys.argv[1]
-    verdicts = VERDICTS_B if "--mode" in sys.argv and "b" in sys.argv[-1].lower() else VERDICTS_A
-    problems, counts = lint(path, verdicts)
+    if args.report is None or not os.path.isfile(args.report):
+        parser.error(f"report not found: {args.report}" if args.report else "a report path is required")
+    problems, counts = lint(args.report, VERDICTS_B if args.mode == "b" else VERDICTS_A)
 
     print(f"{sum(counts.values())} rows: " + ", ".join(f"{v}={c}" for v, c in counts.most_common()))
     for p in problems:

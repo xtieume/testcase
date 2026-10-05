@@ -151,6 +151,73 @@ class InputProvenanceTests(unittest.TestCase):
         self.cli('--run', 'export', '--token', token, '--verify', code=1)
         self.assertTrue(self.inspect()['proof_stale'])
 
+    def test_late_tracking_cannot_ship_new_file_under_originally_ignored_output(self):
+        self.repository()
+        (self.root / 'build').mkdir()
+        (self.root / 'build/source.txt').write_text('tracked source')
+        self.git('add', '-f', 'build/source.txt')
+        token = self.exclusion_ledger('build/out.txt')
+        (self.root / 'build/out.txt').write_text('generated after init')
+        self.git('add', '-f', 'build/out.txt')
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertIn('excluded at baseline', out.stdout)
+
+    def test_late_tracking_cannot_ship_output_or_cache_tree_created_after_init(self):
+        self.repository()
+        for run_id, deliverable in (('built', 'build/out.txt'), ('cache', 'node_modules/pkg/index.js')):
+            with self.subTest(deliverable=deliverable):
+                token = self.exclusion_ledger(deliverable, run_id)
+                path = self.root / deliverable
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('created after init')
+                self.git('add', '-f', deliverable)
+                out = self.cli('--run', run_id, '--token', token, '--only', 'REQ-A', code=1)
+                self.assertIn('excluded at baseline', out.stdout)
+
+    def test_removing_an_ignore_rule_cannot_ship_new_file_under_its_output(self):
+        self.repository()
+        (self.root / 'pkg').mkdir()
+        (self.root / 'pkg/.gitignore').write_text('dist/\n')
+        token = self.exclusion_ledger('pkg/dist/out.txt')
+        (self.root / '.gitignore').write_text('.testcases/\n')
+        (self.root / 'pkg/.gitignore').unlink()
+        path = self.root / 'pkg/dist/out.txt'
+        path.parent.mkdir()
+        path.write_text('generated after init')
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertIn('excluded at baseline', out.stdout)
+
+    def test_exclude_file_and_nested_repository_rules_are_recorded_at_init(self):
+        self.repository()
+        exclude = self.root / '.git/info/exclude'
+        exclude.write_text('dist/\n')
+        nested = self.root / 'lib'
+        nested.mkdir()
+        subprocess.check_output(['git', 'init', '-q'], cwd=nested)
+        (nested / '.gitignore').write_text('target/\n')
+        for run_id, deliverable in (('excluded', 'dist/out.txt'), ('nested', 'lib/target/out.txt')):
+            with self.subTest(deliverable=deliverable):
+                token = self.exclusion_ledger(deliverable, run_id)
+                exclude.write_text('')
+                (nested / '.gitignore').write_text('')
+                path = self.root / deliverable
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('generated after init')
+                out = self.cli('--run', run_id, '--token', token, '--only', 'REQ-A', code=1)
+                self.assertIn('excluded at baseline', out.stdout)
+                exclude.write_text('dist/\n')
+                (nested / '.gitignore').write_text('target/\n')
+                path.unlink()
+
+    def test_unignored_output_named_directory_ships_new_files(self):
+        self.repository()
+        (self.root / '.gitignore').write_text('.testcases/\n')
+        token = self.exclusion_ledger('build/out.txt')
+        path = self.root / 'build/out.txt'
+        path.parent.mkdir()
+        path.write_text('new ordinary source')
+        self.cli('--run', 'export', '--token', token, '--only', 'REQ-A')
+
     def test_legacy_baseline_cannot_reclassify_unrecorded_generated_target_by_staging(self):
         self.repository()
         path = self.root / 'build/schema.json'
@@ -160,6 +227,7 @@ class InputProvenanceTests(unittest.TestCase):
         baseline = self.folder() / 'goalrun/baseline.json'
         data = json.loads(baseline.read_text())
         data.pop('excluded', None)  # A saved baseline from before exclusion provenance existed.
+        data.pop('ignore_rules', None)
         baseline.write_text(json.dumps(data))
         self.git('add', '-f', 'build/schema.json')
         self.cli('--run', 'export', '--token', token, '--verify', code=1)
@@ -175,6 +243,7 @@ class InputProvenanceTests(unittest.TestCase):
         baseline = self.folder() / 'goalrun/baseline.json'
         data = json.loads(baseline.read_text())
         data.pop('excluded', None)
+        data.pop('ignore_rules', None)
         baseline.write_text(json.dumps(data))
         path.write_text('changed tracked source')
         self.cli('--run', 'export', '--token', token, '--verify')
@@ -200,6 +269,7 @@ class InputProvenanceTests(unittest.TestCase):
                 self.assertNotIn('build/schema.json', data['files'])
                 self.assertIn('build', data['excluded'])
                 data.pop('excluded')  # Exercise an existing baseline in the older format.
+                data.pop('ignore_rules')
                 baseline.write_text(json.dumps(data))
                 original_baseline = baseline.read_bytes()
                 self.git('add', '-f', 'build/schema.json')
@@ -213,6 +283,7 @@ class InputProvenanceTests(unittest.TestCase):
         baseline = self.folder() / 'goalrun/baseline.json'
         data = json.loads(baseline.read_text())
         data.pop('excluded')
+        data.pop('ignore_rules')
         baseline.write_text(json.dumps(data))
         original_baseline = baseline.read_bytes()
         path = self.root / 'build/schema.json'

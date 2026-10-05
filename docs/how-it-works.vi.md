@@ -269,8 +269,9 @@ nhận đường dẫn đã chọn và vai trò được giao; controller giữ 
 các file thông thường vào baseline ban đầu, nên deliverable bị ignore nhưng không đổi chưa
 được tính là công việc mới. Trạng thái riêng, dependency, cache và thư mục build bị ignore
 được loại trừ; file được Git theo dõi vẫn được tính dù nằm trong thư mục output hoặc cache.
-Deliverable chỉ rõ đường dẫn bị loại trừ sẽ bị từ chối. Ranh giới loại trừ ban đầu vẫn được
-áp dụng sau khi staging hoặc sửa quy tắc ignore.
+Deliverable chỉ rõ đường dẫn bị loại trừ sẽ bị từ chối. Ranh giới loại trừ và quy tắc ignore
+lúc init vẫn được áp dụng sau khi staging hoặc sửa quy tắc ignore, kể cả với file output tạo sau
+init.
 Thay đổi Git HEAD, nhánh symbolic mà nó đang trỏ tới hay nội dung, mode, conflict và cờ
 của index làm proof hết hiệu lực (hai nhánh có thể cùng trỏ một commit, nên HEAD đã resolve
 chưa đủ phân biệt việc đổi nhánh);

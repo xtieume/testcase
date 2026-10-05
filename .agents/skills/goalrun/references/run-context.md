@@ -138,8 +138,10 @@ authoritative path, or track the output/cache target before initializing its run
 Initial omitted file/subtree boundaries are also saved in the baseline. Later staging or ignore
 rule edits cannot turn those paths into newly shipped work; files recorded in the original baseline
 retain their authoritative status. A saved excluded subtree remains excluded for new files below it,
-so put new source outside that original boundary. Older baselines without exclusion provenance
-conservatively reject unrecorded generated/cache-name targets.
+so put new source outside that original boundary. The Git ignore rules in effect at init are saved
+too: files created later under an output directory they ignored, or under a dependency/cache name,
+stay excluded even if force-added or the rule is removed. Older baselines without exclusion or
+ignore-rule provenance conservatively reject unrecorded generated/cache-name targets.
 Do not reset an existing run baseline to work around an excluded deliverable.
 Environment values themselves are never saved by the fingerprint. Evidence JSON and session
 logs are created with private `0600` file permissions, independent of the caller’s umask.

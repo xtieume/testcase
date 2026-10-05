@@ -271,7 +271,8 @@ Ordinary workspace inputs include Git-ignored files and empty directories. Init 
 ordinary files in the original baseline, so an unchanged ignored deliverable cannot count as
 new work. Private state, dependencies, caches and ignored build directories are excluded;
 tracked files override output and cache exclusions. Explicit deliverables in excluded paths
-are rejected, and initial exclusion boundaries remain binding after staging or ignore-rule edits.
+are rejected, and initial exclusion boundaries and ignore rules remain binding after staging or
+ignore-rule edits, including for output files created after init.
 Git HEAD, the symbolic branch it is on and semantic staged index changes
 stale proof, while Git status and index stat-cache refreshes preserve it.
 

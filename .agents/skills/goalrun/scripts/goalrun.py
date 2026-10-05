@@ -388,6 +388,8 @@ def _tree_hashes(root):
 BASELINE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache',
                  'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases', '.codegraph',
                  '.terraform', '.gradle', '.cache', '.pytest_cache', '.ruff_cache', 'coverage'}
+# output directories: excluded only where Git ignores them; the rest of BASELINE_SKIP always
+OUTPUT_DIRS = {'bin', 'obj', 'target', 'dist', 'build'}
 # a deliverable is never this big; a database dump or a cached asset is, and reading it is
 # most of the walk. Its size and mtime stand in for its content — a change still registers
 BIG_FILE = 32 << 20
@@ -427,9 +429,10 @@ def take_baseline(cwd=None, path=None, reset=False):
                      f'`--baseline --reset` if that is really what you want')
     root = cwd or '.'
     files = _tree_hashes(root)
-    from run_cli import source_exclusions
+    from run_cli import ignore_rules, source_exclusions
+    engine = sys.modules[__name__]
     data = {'taken': int(time.time()), 'files': files,
-            'excluded': source_exclusions(root, sys.modules[__name__])}
+            'excluded': source_exclusions(root, engine), 'ignore_rules': ignore_rules(root, engine)}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1, sort_keys=True)
@@ -446,12 +449,22 @@ def read_baseline(path=None, cwd=None):
         return json.load(f)
 
 
-def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
+def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None, baseline_rules=None):
     """'' when the deliverable exists and differs from the baseline, else the reason.
 
     An authoritative file the baseline never saw is new since then, so it shipped.
     Excluded outputs cannot be deliverables. A directory shipped when an authoritative
-    file under it was added, removed or changed."""
+    file under it was added, removed or changed.
+
+    A path the baseline never saw is classified by the ignore rules recorded with it, so
+    force-adding a file or editing the rules later cannot turn output into new work."""
+    from run_cli import baseline_ignores
+    with baseline_ignores(baseline_rules or []) as ignored:
+        return _not_shipped(path, baseline_files, cwd, baseline_exclusions, baseline_rules, ignored)
+
+
+def _not_shipped(path, baseline_files, cwd, baseline_exclusions, baseline_rules, ignored):
+    from run_cli import source_entries
     norm = os.path.normpath(path)
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
@@ -465,8 +478,8 @@ def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
             authoritative.add(parent)
             parent = os.path.dirname(parent)
 
-    legacy_candidates = BASELINE_SKIP - {'bin', 'obj', 'target', 'dist', 'build'}
-    if baseline_exclusions is None:
+    legacy_candidates = BASELINE_SKIP - OUTPUT_DIRS
+    if baseline_rules is None:
         # A workspace can sit inside a parent worktree without its own .git.
         # Resolve that context once, rather than spawning Git for every file.
         try:
@@ -479,24 +492,32 @@ def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None):
             if context.returncode == 0 and context.stdout.strip() == b'true':
                 legacy_candidates = BASELINE_SKIP
 
-    def excluded_at_baseline(relative):
+    def excluded_at_baseline(relative, directory):
         if relative in authoritative:
             return False
-        if baseline_exclusions is not None:
-            return any(relative == boundary or relative.startswith(boundary + os.sep)
-                       for boundary in baseline_exclusions)
-        # Older baselines have no record of omitted output trees. A late tracked
-        # override cannot prove such a target was absent at initialization.
+        if baseline_exclusions is not None and any(
+                relative == boundary or relative.startswith(boundary + os.sep)
+                for boundary in baseline_exclusions):
+            return True
         parts = relative.split(os.sep)
-        return any(part in legacy_candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+        if baseline_rules is None:
+            # Older baselines have no record of the ignore rules. A late tracked
+            # override cannot prove such a target was absent at initialization.
+            candidates = legacy_candidates
+        else:
+            candidates = BASELINE_SKIP - OUTPUT_DIRS
+            outputs = parts if directory else parts[:-1]
+            if any(part in OUTPUT_DIRS and ignored(os.sep.join(parts[:index + 1]))
+                   for index, part in enumerate(outputs)):
+                return True
+        return any(part in candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
                parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
 
-    if norm != os.curdir and excluded_at_baseline(norm):
+    if norm != os.curdir and excluded_at_baseline(norm, os.path.isdir(full) and not os.path.islink(full)):
         return 'excluded at baseline; later tracking or ignore edits cannot establish a new deliverable'
-    from run_cli import source_entries
     selected = {os.path.normpath(relative): (source, directory)
                 for relative, source, directory in source_entries(cwd or '.', sys.modules[__name__])
-                if not excluded_at_baseline(os.path.normpath(relative))}
+                if not excluded_at_baseline(os.path.normpath(relative), directory)}
     if norm != os.curdir and norm not in selected:
         return 'excluded generated, cache or private path; use an authoritative deliverable'
     if os.path.isdir(full) and not os.path.islink(full):
@@ -528,7 +549,8 @@ def load_signatures(path=None):
     return sigs
 
 
-def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baseline_exclusions=None):
+def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baseline_exclusions=None,
+           baseline_rules=None):
     """Resolve one row to (status, note); status is PASS, FAIL or WAIT."""
     if row.check.startswith('MANUAL:'):
         owner = owner_of(row) or 'unassigned'
@@ -544,20 +566,21 @@ def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baselin
     if not ok:
         return 'FAIL', note
     if row.deliverable:
-        why = not_shipped(row.deliverable, baseline_files or {}, cwd, baseline_exclusions)
+        why = not_shipped(row.deliverable, baseline_files or {}, cwd, baseline_exclusions, baseline_rules)
         if why:
             return 'FAIL', f'deliverable not shipped: {row.deliverable} — {why}'
     return 'PASS', note
 
 
-def report(rows, signatures, baseline_files, timeout, cwd=None, times=None, baseline_exclusions=None):
+def report(rows, signatures, baseline_files, timeout, cwd=None, times=None, baseline_exclusions=None,
+           baseline_rules=None):
     """Print the table. Return [(status, row)]. `times`, if given, collects how long each
     distinct check took, which is what lets a caller price the work it is about to do."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
         began = time.monotonic()
-        status, note = decide(row, signatures, baseline_files, timeout, cwd, baseline_exclusions)
+        status, note = decide(row, signatures, baseline_files, timeout, cwd, baseline_exclusions, baseline_rules)
         if times is not None and not row.check.startswith('MANUAL:'):
             times.setdefault(row.check, time.monotonic() - began)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
@@ -939,7 +962,7 @@ def _dur(seconds):
 
 
 def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
-           signatures=None, baseline_files=None, baseline_exclusions=None):
+           signatures=None, baseline_files=None, baseline_exclusions=None, baseline_rules=None):
     """Run the ledger, then plant each row's break, prove its check goes red under it, and
     put the file back. Return True if every row passed and every break was caught.
 
@@ -956,7 +979,8 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # does not re-run every check to learn what the run already printed
     scan = everything if blast else rows
     cost = {}
-    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost, baseline_exclusions)
+    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost, baseline_exclusions,
+                     baseline_rules)
     already = {r.id for st, r in results if st != 'PASS'}
     print()
     live = [r for r in rows
@@ -1276,7 +1300,8 @@ def _run_checks(a, rows, baseline):
         ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
                     waived=waived, signatures=load_signatures(),
                     baseline_files=baseline['files'] if baseline else {},
-                    baseline_exclusions=baseline.get('excluded') if baseline else None)
+                    baseline_exclusions=baseline.get('excluded') if baseline else None,
+                    baseline_rules=baseline.get('ignore_rules') if baseline else None)
         print()
         if SESSION is not None and a.verify:
             print('PHASE OK — selected rows verified' if ok else 'PHASE NOT OK — selected rows unproven')
@@ -1294,7 +1319,8 @@ def _run_checks(a, rows, baseline):
                      f'recorded — run --baseline first')
 
     results = report(chosen, load_signatures(), baseline['files'] if baseline else {}, a.timeout,
-                     baseline_exclusions=baseline.get('excluded') if baseline else None)
+                     baseline_exclusions=baseline.get('excluded') if baseline else None,
+                     baseline_rules=baseline.get('ignore_rules') if baseline else None)
     passed = sum(1 for s, _ in results if s == 'PASS')
     print()
     if a.only is not None:

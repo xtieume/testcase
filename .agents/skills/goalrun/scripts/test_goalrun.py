@@ -684,6 +684,18 @@ def test_verify_flags_a_hollow_check():
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
 
 
+def test_verify_restores_the_break_when_the_undo_journal_cannot_be_written():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        # an id shaped like a path cannot become a journal file, and the tree is
+        # already planted when that surfaces — the restore must still run
+        ledger(tmp, 'AUTH/LOGIN\tsign-in works\tgrep -q old old.txt\t—	old.txt :: old :: broken\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 2, out
+        assert open(os.path.join(tmp, 'old.txt')).read() == 'old\n', \
+            'a break whose journal cannot be written must not stay planted in the tree'
+
+
 def test_break_editing_an_unrelated_file_is_still_hollow_in_the_clone():
     """The check never reads the file the break edits. If the row still went red, the
     mutation would have to have leaked out of the clone some other way than the check

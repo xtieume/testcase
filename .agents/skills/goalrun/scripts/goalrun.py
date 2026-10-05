@@ -985,8 +985,11 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 SESSION.record_row(row, 'BREAK FAILED', why)
             print(f'BREAK FAILED {row.id} — {why}')
             continue
-        keep_undo(row.id, undo, cwd)
         try:
+            # journaling the original can itself fail — an id shaped like a path, a full
+            # disk — and the tree is already mutated, so the journal write belongs inside
+            # the try whose finally restores the break this row never got to verify
+            keep_undo(row.id, undo, cwd)
             ok, note, hung = run_check(row.check, timeout, cwd, row_id=row.id, phase='mutation')
             # a HOLLOW or STUCK verdict is known the moment its own mutation check
             # ends; the sweep after it can block for the whole budget, and a kill

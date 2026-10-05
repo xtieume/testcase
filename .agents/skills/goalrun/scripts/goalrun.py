@@ -888,7 +888,6 @@ def plant(brk, cwd=None, row_id=None):
     planted = text.replace(old, new).encode('utf-8')
     if SESSION is not None:
         SESSION.prepare(row_id, path, was, planted)
-    if SESSION is not None:
         SESSION.plant(full, planted)
     else:
         with open(full, 'wb') as fh:
@@ -1050,7 +1049,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 if unswept:
                     incomplete.append(row.id)
             else:
-                same, crossed, stuck = [], [], []
+                same, crossed, stuck, unswept = [], [], [], []
             # the row's own verdict first, its sweep footnotes after — printed the other way
             # round, `shared` reads as the previous row's fallout
             if SESSION is not None:
@@ -1084,7 +1083,7 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                     SESSION.record_row(row, 'STUCK', ', '.join(stuck))
                 print(f'stuck {row.id} — {", ".join(stuck)} timed out under its break; those '
                       f'checks hang rather than fail, which the sweep cannot read either way')
-            if blast and unswept and SESSION is not None:
+            if unswept and SESSION is not None:
                 SESSION.record_row(row, 'UNSWEPT', ', '.join(unswept))
             if same:
                 print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
@@ -1147,6 +1146,9 @@ def main():
     if len(sys.argv) > 1 and sys.argv[1] in ACTIONS:
         try:
             return lifecycle(sys.modules[__name__], sys.argv[1:])
+        except KeyboardInterrupt:
+            sys.stderr.write('interrupted — evidence and pending journals retained\n')
+            return 130
         except (Misuse, RunError, OSError, ValueError) as e:
             sys.stderr.write(f'{e}\n')
             return 2

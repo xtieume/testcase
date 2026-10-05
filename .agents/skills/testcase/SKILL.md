@@ -27,7 +27,9 @@ whatever ships as runnable tests. The run is not finished until `summarize.py` e
 
 ## Select the persistent run
 
-Before outputs, read `../goalrun/references/run-context.md`. Use an explicitly selected
+Before outputs, read `../goalrun/references/run-context.md`. If `../goalrun/` is not installed,
+say so and ask the user to install it beside this skill (see README) instead of guessing run
+paths. Use an explicitly selected
 existing run or initialize a standalone testcase run with `goalrun.py init <id> --goal ...
 --spec <path>` before edits, then `resume <id> --owner <label>`. From inspect JSON, set
 `TESTCASES=paths.testcases`, `TESTCASE_DIR=paths.testcase_dir`, `GOAL_DIR=paths.goalrun_dir`
@@ -196,8 +198,7 @@ The table is the spec; the runnable tests are the other half of the deliverable.
 
 Use the test framework already in the repo — its runner, its helpers, its fixtures — and put the files where that repo already puts tests. No new dependency, no second harness alongside the existing one. No framework at all: say so and stop here rather than picking one unasked.
 
-**When the work also has to be driven to done**, hand over to the `goalrun` skill in the same run; checkpoint and release if changing
-controllers, preserving the baseline and selected paths: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
+**When the work also has to be driven to done**, hand over to the `goalrun` skill in the same run; checkpoint and release if changing controllers, preserving the baseline and selected paths: one ledger row per requirement, its `check` running the tests you just wrote, its `deliverable` the file the work ships, and every `Automatable: N` case becoming a `MANUAL:<owner>` row — this table has no owner column, so ask the user who must look rather than naming someone yourself.
 
 **Each test names its case ID**, e.g. `test('TC-DROPDOWN-004 — rejects a 101-character name', ...)`. That ID is the only thing tying the code back to the table; without it the step-6 traceability ends at the file boundary.
 

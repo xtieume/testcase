@@ -17,7 +17,7 @@ VERDICT_HEADERS = {"verdict", "answer", "confidence"}
 # A verdict column alone is not enough: a findings table like `| Component | Answer | Notes |`
 # carries answers too, and linting its rows would flag `parser` as a requirement with no
 # valid verdict. Verdict rows live in tables whose first column names the requirement/Q ID.
-ID_HEADERS = {"id", "req id", "requirement id", "q id", "question id"}
+ID_HEADERS = {"id", "req", "req id", "requirement", "requirement id", "q id", "question", "question id"}
 
 
 def _cells(line):
@@ -141,6 +141,13 @@ Searched the tree for: first, second, third — nothing outside the set.
     fires(report.replace('| REQ-A-003 | third | Undecided |',
                          '| REQ-A-003 | Undecided | TYPO |'),
           'has no valid verdict', 'requirement text equals a verdict')
+
+    # A verdict table keyed by a plain `Requirement` or `Req` heading is still a verdict table.
+    for heading in ("Requirement", "Req"):
+        fires(report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
+                             f"| {heading} | Requirement | Verdict | Evidence | Quote |")
+                    .replace("| Covered |", "| Coverd |", 1),
+              "has no valid verdict", f"{heading} heading")
 
     # The checklist and the round log carry IDs and numbers but no verdict column, and the
     # findings table answers in its own words under a Component heading. Counting those

@@ -656,6 +656,9 @@ def recover(store, engine):
     recover_publications(store)
     for summary in store.list():
         run_id = summary['run_id']
+        if 'error' in summary:
+            raise RunError(f"run '{run_id}' is unreadable ({summary['error']}); its recovery "
+                           f"journals cannot be checked, so reconcile it before touching source")
         directory = store._safe(os.path.join(store._paths(run_id)['goalrun_dir'], 'undo'))
         for path in sorted(Path(directory).glob('*.json')):
             record = store._read(str(path))

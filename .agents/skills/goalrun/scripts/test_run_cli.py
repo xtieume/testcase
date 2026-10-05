@@ -281,6 +281,23 @@ class RunCliTests(unittest.TestCase):
         self.cli('checkpoint', 'export', '--token', token, '--phase', 'build', '--next', 'x', code=2)
         self.assertEqual((self.folder() / 'checkpoint.json').read_bytes(), before)
 
+    def test_unreadable_run_is_listed_and_still_blocks_source_operations(self):
+        token = self.init('good')
+        self.init('bad')
+        path = self.folder('bad') / 'manifest.json'
+        data = json.loads(path.read_text())
+        data['version'] = 999
+        path.write_text(json.dumps(data))
+        rows = {row['run_id']: row for row in json.loads(self.cli('list').stdout)}
+        self.assertEqual(rows['good']['goal'], 'Export CSV')
+        self.assertIn('unsupported run schema version', rows['bad']['error'])
+        self.inspect('good')
+        self.ledger('good')
+        # its recovery journals cannot be trusted, so nothing may touch source until reconciled
+        out = self.cli('--run', 'good', '--token', token, '--lint-ledger', code=2)
+        self.assertIn("run 'bad' is unreadable", out.stderr)
+        self.cli('--lint-ledger', code=2)
+
     def test_migration_preserves_old_baseline_and_does_not_autoselect(self):
         old = self.root / '.testcases/goalrun'
         old.mkdir(parents=True)
@@ -312,6 +329,14 @@ class RunCliTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cli('list').stdout), [])
         self.cli('--baseline')
         self.init()
+
+    def test_interrupted_lifecycle_command_reports_instead_of_tracing_back(self):
+        out = self.injected_cli("def stop(**kwargs):\n    raise KeyboardInterrupt\n"
+                                "goalrun.take_baseline = stop", 'init', 'export', '--goal', 'Export CSV',
+                                code=130)
+        self.assertIn('interrupted', out.stderr)
+        self.assertNotIn('Traceback', out.stderr)
+        self.assertFalse(self.folder().exists())
 
     def test_failed_migration_can_retry_and_preserves_legacy(self):
         self.cli('--baseline')

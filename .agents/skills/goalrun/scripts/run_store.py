@@ -207,7 +207,12 @@ class Store:
         for run_id in sorted(os.listdir(self.runs)):
             if re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}', run_id) and \
                     os.path.isdir(os.path.join(self.runs, run_id)):
-                view = self.inspect(run_id)
+                try:
+                    view = self.inspect(run_id)
+                except RunError as e:
+                    # one damaged run must not hide the others; callers that touch source refuse it
+                    summaries.append({'run_id': run_id, 'error': str(e)})
+                    continue
                 checkpoint = view['checkpoint']
                 summaries.append({'run_id': run_id, 'goal': view['manifest']['goal'],
                                   'phase': checkpoint['phase'], 'next_action': checkpoint['next_action'],

@@ -15,7 +15,9 @@ to prevent.
 
 ## Select the persistent run
 
-Before writing outputs, read `../goalrun/references/run-context.md`. Use an explicitly named
+Before writing outputs, read `../goalrun/references/run-context.md`. If `../goalrun/` is not
+installed, say so and ask the user to install it beside this skill (see README) instead of
+guessing run paths. Use an explicitly named
 existing run or initialize a standalone review run with `goalrun.py init <id> --goal ...
 --spec <path>` before edits, then `resume <id> --owner <label>`. Inspect the run; use its
 `paths.docs_review_dir` as `DOCS_REVIEW_DIR` and `paths.goalrun_dir` as `GOAL_DIR`.
@@ -81,8 +83,8 @@ then rediscovers one requirement per round, for as many rounds as you let it —
 says "your set is wrong" unless it was handed that question.
 
 **Check for a previous report** in the selected `DOCS_REVIEW_DIR` (or the explicit file
-the user names) in the same step. If one exists, load its `REQ-` and `DOC-` IDs — they are permanent, and this is
-the only moment you can preserve them.
+the user names) in the same step. If one exists, load its `REQ-` and `DOC-` IDs — they are
+permanent, and this is the only moment you can preserve them.
 
 **Measure the set** — do not eyeball it:
 

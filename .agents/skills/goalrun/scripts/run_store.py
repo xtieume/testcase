@@ -55,7 +55,7 @@ class Store:
             'goalrun_dir': os.path.join(run, 'goalrun'),
             'docs_review_dir': os.path.join(run, 'docs-review'),
             'testcase_dir': os.path.join(run, 'testcase'),
-            'testcases': os.path.join(self.root, 'docs', 'testcases', run_id, 'testcases.md'),
+            'testcases': os.path.join(run, 'testcase', 'testcases.md'),
         }
         for path in paths.values():
             self._safe(path)
@@ -143,10 +143,8 @@ class Store:
             self._atomic(os.path.join(staging, 'manifest.json'), manifest)
             self._atomic(os.path.join(staging, 'checkpoint.json'), checkpoint)
             if populate is not None:
-                staged_paths = dict(paths)
-                for key, path in paths.items():
-                    if key != 'testcases':
-                        staged_paths[key] = os.path.join(staging, os.path.relpath(path, paths['run_dir']))
+                staged_paths = {key: os.path.join(staging, os.path.relpath(path, paths['run_dir']))
+                                for key, path in paths.items()}
                 populate(staged_paths)
             # Cooperating creators hold the same lock; refuse rather than replace
             # any existing target, including an incomplete or symlinked run.

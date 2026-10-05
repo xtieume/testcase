@@ -308,7 +308,7 @@ class RunCliTests(unittest.TestCase):
         baseline = (old / 'baseline.json').read_bytes()
         self.cli('migrate', 'export', '--goal', 'Export CSV')
         self.assertEqual((self.folder() / 'goalrun/baseline.json').read_bytes(), baseline)
-        self.assertEqual((self.root / 'docs/testcases/export/testcases.md').read_text(), 'Existing TC-1\n')
+        self.assertEqual((self.folder() / 'testcase/testcases.md').read_text(), 'Existing TC-1\n')
         self.assertTrue((old / 'ledger.tsv').exists())
         self.cli(code=2)
 
@@ -372,82 +372,17 @@ class RunCliTests(unittest.TestCase):
         self.assertFalse(self.folder().exists())
         self.init()
 
-    def test_migration_refuses_existing_tracked_testcase_table(self):
-        self.cli('--baseline')
-        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
-        destination = self.root / 'docs/testcases/export/testcases.md'
-        destination.parent.mkdir(parents=True)
-        destination.write_text('Tracked TC-99\n')
-        self.cli('migrate', 'export', '--goal', 'Export CSV', code=2)
-        self.assertEqual(destination.read_text(), 'Tracked TC-99\n')
-        self.assertEqual((self.root / 'testcases.md').read_text(), 'Legacy TC-1\n')
-        self.assertFalse(self.folder().exists())
-        destination.unlink()
-        self.cli('migrate', 'export', '--goal', 'Export CSV')
-        self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-
-    def test_migration_late_table_collision_is_not_overwritten(self):
-        self.cli('--baseline')
-        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
-        self.injected_cli("real_link = run_cli.os.link\n"
-                          "def collide(source, destination):\n"
-                          "    run_cli.Path(destination).write_text('Tracked TC-99\\n')\n"
-                          "    real_link(source, destination)\nrun_cli.os.link = collide",
-                          'migrate', 'export', '--goal', 'Export CSV')
-        self.assertFalse(self.folder().exists())
-        self.assertEqual((self.root / 'docs/testcases/export/testcases.md').read_text(),
-                         'Tracked TC-99\n')
-
-    def test_failed_publication_removes_only_its_migrated_table(self):
+    def test_migration_copies_the_table_into_the_run_and_leaves_the_original(self):
         self.cli('--baseline')
         (self.root / 'testcases.md').write_text('Legacy TC-1\n')
         self.injected_cli("def fail(*args):\n    raise OSError('publish failed')\n"
                           "run_cli.os.rename = fail", 'migrate', 'export', '--goal', 'Export CSV')
         self.assertFalse(self.folder().exists())
-        self.assertFalse((self.root / 'docs/testcases/export/testcases.md').exists())
-        self.assertEqual((self.root / 'testcases.md').read_text(), 'Legacy TC-1\n')
+        self.assertFalse((self.root / 'docs').exists())
         self.cli('migrate', 'export', '--goal', 'Export CSV')
-
-    def test_killed_migration_after_table_link_can_retry(self):
-        self.killed_migration()
-
-    def test_killed_migration_preserves_intervening_table_edits(self):
-        self.killed_migration(edited=True)
-
-    def killed_migration(self, edited=False):
-        self.cli('--baseline')
-        (self.root / 'testcases.md').write_text('Legacy TC-1\n')
-        bootstrap = (f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r}); "
-                     "import goalrun, run_cli, time; from pathlib import Path\n"
-                     "real_link = run_cli.os.link\n"
-                     "def pause(*args):\n    real_link(*args)\n"
-                     "    Path('.testcases/migration-linked').touch()\n    time.sleep(30)\n"
-                     "run_cli.os.link = pause\n"
-                     f"sys.argv = {[str(SCRIPT), 'migrate', 'export', '--goal', 'Export CSV']!r}\n"
-                     "raise SystemExit(goalrun.main())\n")
-        proc = subprocess.Popen([sys.executable, '-c', bootstrap], cwd=self.root,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        try:
-            deadline = time.monotonic() + 5
-            while not (self.root / '.testcases/migration-linked').exists() and proc.poll() is None and time.monotonic() < deadline:
-                time.sleep(0.02)
-            self.assertTrue((self.root / '.testcases/migration-linked').exists())
-        finally:
-            proc.kill()
-            proc.wait(timeout=5)
-        self.assertFalse(self.folder().exists())
-        destination = self.root / 'docs/testcases/export/testcases.md'
-        self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-        if edited:
-            destination.write_text('User amendment TC-99\n')
-            self.cli('migrate', 'export', '--goal', 'Export CSV', code=2)
-            self.assertEqual(destination.read_text(), 'User amendment TC-99\n')
-            self.assertFalse(self.folder().exists())
-            self.assertTrue(list((self.root / '.testcases/runs').glob('.*-publication.json')))
-        else:
-            self.cli('migrate', 'export', '--goal', 'Export CSV')
-            self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-            self.assertTrue(self.folder().exists())
+        self.assertEqual((self.folder() / 'testcase/testcases.md').read_text(), 'Legacy TC-1\n')
+        self.assertEqual((self.root / 'testcases.md').read_text(), 'Legacy TC-1\n')
+        self.assertFalse((self.root / 'docs').exists())
 
     def test_partial_verify_is_not_whole_ledger_proof(self):
         token = self.init()

@@ -1,4 +1,4 @@
-"""Regressions for complete workspace inputs and durable migration publication."""
+"""Regressions for complete workspace inputs and migration of the test case table."""
 import json
 import os
 import shutil
@@ -430,10 +430,8 @@ class InputProvenanceTests(unittest.TestCase):
         (self.root / 'build/source.txt').write_text('changed')
         self.assertTrue(self.inspect()['proof_stale'])
 
-    def kill_after_publication(self):
-        (self.root / '.testcases/migration-published').unlink(missing_ok=True)
-        if not (self.root / '.testcases/goalrun/baseline.json').exists():
-            self.cli('--baseline')
+    def test_killed_migration_publishes_the_table_with_the_run(self):
+        self.cli('--baseline')
         (self.root / 'testcases.md').write_text('Legacy TC-1\n')
         bootstrap = (f"import sys; sys.path.insert(0, {str(SCRIPT.parent)!r}); "
                      "import goalrun, run_cli, time; from pathlib import Path\n"
@@ -447,66 +445,21 @@ class InputProvenanceTests(unittest.TestCase):
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         try:
             deadline = time.monotonic() + 5
-            while not (self.root / '.testcases/migration-published').exists() and proc.poll() is None and time.monotonic() < deadline:
+            while not (self.root / '.testcases/migration-published').exists() and proc.poll() is None \
+                    and time.monotonic() < deadline:
                 time.sleep(0.02)
             self.assertTrue((self.root / '.testcases/migration-published').exists())
         finally:
             proc.kill()
             proc.wait(timeout=5)
-        self.assertTrue(self.folder().exists())
-        return self.root / 'docs/testcases/export/testcases.md'
-
-    def test_published_migration_restores_deleted_destination_before_cleanup(self):
-        destination = self.kill_after_publication()
-        destination.unlink()
+        self.assertEqual((self.folder() / 'testcase/testcases.md').read_text(), 'Legacy TC-1\n')
         self.cli('resume', 'export', '--owner', 'A')
-        self.assertTrue(destination.exists(), 'recovery deleted the remaining table copy')
-        self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-        self.assertFalse((self.folder() / 'migrated-testcases.md').exists())
-        self.assertFalse(list((self.root / '.testcases/runs').glob('.*-publication.json')))
 
-    def test_published_migration_preserves_conflicting_destination_and_recovery_copy(self):
-        destination = self.kill_after_publication()
-        destination.unlink()
-        destination.write_text('User TC-99\n')
-        out = self.cli('resume', 'export', '--owner', 'A', code=2)
-        self.assertIn('conflict', out.stderr)
-        self.assertEqual(destination.read_text(), 'User TC-99\n')
-        self.assertEqual((self.folder() / 'migrated-testcases.md').read_text(), 'Legacy TC-1\n')
-        self.assertTrue(list((self.root / '.testcases/runs').glob('.*-publication.json')))
-
-    def test_destination_created_during_recovery_is_preserved_exclusively(self):
-        destination = self.kill_after_publication()
-        destination.unlink()
-        self.injected_cli("real_link = run_cli.os.link\n"
-                          "def collide(source, destination):\n"
-                          "    run_cli.Path(destination).write_text('User TC-99\\n')\n"
-                          "    real_link(source, destination)\nrun_cli.os.link = collide",
-                          'resume', 'export', '--owner', 'A')
-        self.assertEqual(destination.read_text(), 'User TC-99\n')
-        self.assertEqual((self.folder() / 'migrated-testcases.md').read_text(), 'Legacy TC-1\n')
-        self.assertTrue(list((self.root / '.testcases/runs').glob('.*-publication.json')))
-
-    def test_recovery_after_copy_or_journal_cleanup_is_idempotent(self):
-        for boundary in ('migrated-testcases.md', '.export-publication.json'):
-            with self.subTest(boundary=boundary):
-                # Each cleanup boundary gets an independent published migration.
-                if self.folder().exists():
-                    shutil.rmtree(self.folder())
-                    (self.root / 'docs/testcases/export/testcases.md').unlink()
-                destination = self.kill_after_publication()
-                destination.unlink()
-                patch = ("real_unlink = run_cli.Path.unlink\n"
-                         "def stop(path, *args, **kwargs):\n"
-                         "    result = real_unlink(path, *args, **kwargs)\n"
-                         f"    if path.name == {boundary!r}: run_cli.os._exit(91)\n"
-                         "    return result\nrun_cli.Path.unlink = stop")
-                self.injected_cli(patch, 'resume', 'export', '--owner', 'A', code=91)
-                self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-                self.cli('resume', 'export', '--owner', 'A')
-                self.assertEqual(destination.read_text(), 'Legacy TC-1\n')
-                self.assertFalse((self.folder() / 'migrated-testcases.md').exists())
-                self.assertFalse(list((self.root / '.testcases/runs').glob('.*-publication.json')))
+    def test_testcase_table_edit_invalidates_whole_proof(self):
+        self.prove()
+        table = self.folder() / 'testcase/testcases.md'
+        table.write_text('| ID | Req |\n')
+        self.assertTrue(self.inspect()['proof_stale'])
 
 
 if __name__ == '__main__':

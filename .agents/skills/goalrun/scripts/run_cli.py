@@ -441,6 +441,9 @@ def fingerprint(store, view, engine):
     for name in ('reqs.txt', 'ledger.tsv', 'baseline.json', 'signoff.tsv', engine.WAIVER_BINDINGS):
         full = store._safe(os.path.join(view['paths']['goalrun_dir'], name))
         inputs[name] = engine._mark(full) if os.path.exists(full) else 'absent'
+    # the test case table lives in the private run directory, outside the workspace walk
+    table = store._safe(view['paths']['testcases'])
+    inputs['testcases.md'] = engine._mark(table) if os.path.exists(table) else 'absent'
     # Local spec paths outside the workspace are read-only inputs too.
     spec = view['manifest']['spec']
     spec_mark = None
@@ -571,83 +574,8 @@ def restore_original(store, full, original, journal):
                         lambda: guard_original(store, full, original, record))
 
 
-def publication_path(store, run_id):
-    return store._safe(os.path.join(store.runs, '.' + store._id(run_id) + '-publication.json'))
-
-
-def recover_publications(store):
-    """Recover the tracked-table link and private staging after interrupted migration."""
-    store._safe(store.runs)
-    for journal in sorted(Path(store.runs).glob('.*-publication.json')):
-        record = store._read(str(journal))
-        run_id = record.get('run_id')
-        paths = store._paths(run_id)
-        staging, destination = record.get('staging'), record.get('destination')
-        # a hand-edited or truncated journal is a clean refusal, not a KeyError traceback
-        if not isinstance(staging, str) or not isinstance(destination, str):
-            raise RunError('invalid pending migration publication')
-        staging = store._safe(staging)
-        destination = store._safe(destination)
-        if record.get('version') != 1 or str(journal) != publication_path(store, run_id) or \
-                Path(staging).parent != Path(store.runs) or \
-                not Path(staging).name.startswith('.' + run_id + '-') or \
-                destination != paths['testcases']:
-            raise RunError('invalid pending migration publication')
-        published = os.path.exists(paths['run_dir'])
-        if not published and os.path.exists(staging):
-            manifest = store._read(os.path.join(staging, 'manifest.json'))
-            if manifest.get('run_id') != run_id or manifest.get('workspace') != store.root:
-                raise RunError('migration staging identity changed; journal retained')
-        if published:
-            store.inspect(run_id)
-            table = Path(paths['run_dir']) / 'migrated-testcases.md'
-        else:
-            table = Path(destination)
-
-        def validate(path):
-            store._safe(path)
-            if not os.path.lexists(path):
-                raise RunError('migration publication conflict; table missing; journal retained')
-            identity = (record.get('device'), record.get('inode'), record.get('hash'))
-            if not all(isinstance(v, int) for v in identity[:2]) or not isinstance(identity[2], str):
-                raise RunError('invalid pending migration publication')
-            current = os.stat(path, follow_symlinks=False)
-            if not stat.S_ISREG(current.st_mode) or \
-                    (current.st_dev, current.st_ino) != (identity[0], identity[1]) or \
-                    digest(Path(path).read_bytes()) != identity[2]:
-                raise RunError('migration publication conflict; preserve the table and reconcile the journal')
-
-        if published:
-            # The recovery hardlink is the only copy after destination deletion.
-            # Publish it exclusively and sync it before removing recovery state.
-            if os.path.lexists(table):
-                validate(table)
-                if not os.path.lexists(destination):
-                    os.makedirs(os.path.dirname(destination), exist_ok=True)
-                    try:
-                        os.link(table, destination)
-                    except FileExistsError:
-                        raise RunError('migration publication conflict; destination appeared; journal retained')
-                validate(destination)
-                store._sync_dir(os.path.dirname(destination))
-                table.unlink()
-                store._sync_dir(paths['run_dir'])
-            else:
-                # A kill after recovery-copy removal leaves only the journal.
-                validate(destination)
-        elif os.path.lexists(table):
-            validate(table)
-            table.unlink()
-            store._sync_dir(os.path.dirname(destination))
-        if not published and os.path.exists(staging):
-            shutil.rmtree(staging)
-        journal.unlink()
-        store._sync_dir(store.runs)
-
-
 def recover(store, engine):
     """Called under the workspace lock, across ALL runs before source is trusted."""
-    recover_publications(store)
     for summary in store.list():
         run_id = summary['run_id']
         if 'error' in summary:
@@ -929,11 +857,7 @@ def named_engine(engine, args):
 
 def initialize_run(store, engine, args):
     """Stage the complete payload before making the run visible to other controllers."""
-    destination = store._paths(args.run_id)['testcases']
     cases = Path(store.root) / 'testcases.md'
-    migrating_cases = args.action == 'migrate' and cases.exists()
-    if migrating_cases and os.path.lexists(destination):
-        raise RunError('migration testcase destination already exists; reconcile its permanent IDs first')
 
     def populate(paths):
         if args.action == 'init':
@@ -951,27 +875,11 @@ def initialize_run(store, engine, args):
             source = Path(store.root) / '.testcases' / name
             if source.exists():
                 shutil.copytree(source, paths[dest], dirs_exist_ok=True)
-        if migrating_cases:
-            staged_table = Path(paths['run_dir']) / 'migrated-testcases.md'
-            shutil.copy2(cases, staged_table)
-            store._safe(destination)
-            os.makedirs(os.path.dirname(destination), exist_ok=True)
-            identity = staged_table.stat()
-            atomic_json(store, publication_path(store, args.run_id), {
-                'version': 1, 'run_id': args.run_id, 'staging': paths['run_dir'],
-                'destination': destination, 'device': identity.st_dev, 'inode': identity.st_ino,
-                'hash': digest(staged_table.read_bytes()),
-            })
-            # Record ownership before linking, so SIGKILL cleanup is recoverable.
-            os.link(staged_table, destination)
-            store._sync_dir(os.path.dirname(destination))
+        if cases.exists():
+            # staged with the run, so it becomes visible exactly when the run does
+            shutil.copy2(cases, paths['testcases'])
 
-    try:
-        store.create(args.run_id, args.goal, args.spec, populate=populate)
-    except BaseException:
-        recover_publications(store)
-        raise
-    recover_publications(store)
+    store.create(args.run_id, args.goal, args.spec, populate=populate)
 
 
 def lifecycle(engine, argv):

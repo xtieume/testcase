@@ -38,7 +38,7 @@ class StoreTests(unittest.TestCase):
         self.assertEqual(view['checkpoint']['generation'], 0)
         self.assertIsNone(view['checkpoint']['token'])
         self.assertEqual(view['handoff'], '')
-        self.assertEqual(view['paths']['testcases'], str(self.root.resolve() / 'docs/testcases/one/testcases.md'))
+        self.assertEqual(view['paths']['testcases'], view['paths']['testcase_dir'] + '/testcases.md')
         for key in ('goalrun_dir', 'docs_review_dir', 'testcase_dir'):
             self.assertTrue(Path(view['paths'][key]).is_dir())
 
@@ -179,10 +179,12 @@ class StoreTests(unittest.TestCase):
         with self.assertRaises(RunError):
             self.store.require('one', token)
 
-    def test_tracked_artifact_parent_symlink_rejected(self):
+    def test_testcase_table_parent_symlink_rejected(self):
         self.create()
+        folder = Path(self.store.inspect('one')['paths']['testcase_dir'])
         with tempfile.TemporaryDirectory() as outside:
-            (self.root / 'docs').symlink_to(outside, target_is_directory=True)
+            folder.rmdir()
+            folder.symlink_to(outside, target_is_directory=True)
             with self.assertRaises(RunError):
                 self.store.inspect('one')
 

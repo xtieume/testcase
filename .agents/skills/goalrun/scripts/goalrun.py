@@ -338,6 +338,11 @@ def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
                                    f'test it matched was skipped')
     tail = [l.strip() for l in text.splitlines() if l.strip()]
     note = note if note is not None else tail[-1][:96] if tail else f'exit {code}'
+    if SESSION is not None and SESSION.token:
+        # the note is printed and journalled as-is from here on; a check that echoes
+        # its parent command line (ps) would otherwise carry the writer token into
+        # the run log and the terminal, not just the private evidence files
+        note = note.replace(SESSION.token, '[redacted]')
     if SESSION is not None:
         # Publish the interpreted outcome, retaining the raw process exit code.
         # A runner that matched nothing is already a failure at this boundary.

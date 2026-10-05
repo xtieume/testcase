@@ -183,8 +183,10 @@ class RunCliTests(unittest.TestCase):
         self.cli('--run', 'export', '--token', token, '--verify', code=1)
         self.assertNotIn(token, self.cli('inspect', 'export').stdout,
                          'a check echoing its parent command line leaked the writer token')
-        for evidence in (self.folder() / 'evidence').glob('*.json'):
-            self.assertNotIn(token, evidence.read_text())
+        for evidence in (self.folder() / 'evidence').rglob('*'):
+            if evidence.is_file():
+                self.assertNotIn(token, evidence.read_text(errors='replace'),
+                                 f'{evidence.name} still carries the writer token')
 
     def test_timeout_must_be_at_least_one_second(self):
         token = self.init()

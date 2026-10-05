@@ -684,6 +684,25 @@ def test_verify_flags_a_hollow_check():
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
 
 
+def test_verify_sees_a_same_size_break_python_cached_in_the_same_second():
+    """Bytecode caches key on source mtime in whole seconds and size. A planted break
+    of the same length, written in the second the measurement compiled it, reads as
+    unchanged and the old body runs."""
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, 'app.py'), 'w').write('def ready():\n    return 1\n')
+        open(os.path.join(tmp, 'test_app.py'), 'w').write(
+            'import unittest, app\n'
+            'class T(unittest.TestCase):\n'
+            '    def test_ready(self):\n'
+            '        self.assertEqual(app.ready(), 1)\n')
+        ledger(tmp, f'A\tready is 1\t{sys.executable} -m unittest -q test_app\t—\t'
+                    'app.py :: return 1 :: return 0\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
+        assert not os.path.exists(os.path.join(tmp, '__pycache__')), \
+            'checks must not leave bytecode that can outlive a restored source'
+
+
 def test_verify_restores_the_break_when_the_undo_journal_cannot_be_written():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
@@ -928,6 +947,11 @@ def test_lint_prints_the_coverage_ratio():
         open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\n')
         out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
         assert 'coverage: 2 requirement(s) · 1 carried by rows · 1 waived (50%)' in out.stdout, \
+            out.stdout
+        # a requirement no row names is a gap, not carried
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\nREQ-3\n')
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert 'coverage: 3 requirement(s) · 1 carried by rows · 1 waived (33%)' in out.stdout, \
             out.stdout
 
 

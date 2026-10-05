@@ -299,10 +299,24 @@ def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
     and a check's own output may legitimately end in the words "timed out".
 
     Output goes to a tempfile, not a pipe, so a backgrounded child that inherits stdout
-    cannot hold the run open; the whole session is killed on timeout."""
+    cannot hold the run open; the whole session is killed on timeout.
+
+    Each check gets its own bytecode cache: Python validates a cached module by source
+    mtime in whole seconds and size, so a same-length break planted or restored within
+    the second it was compiled would otherwise run the stale body."""
+    pycache = tempfile.mkdtemp(prefix='goalrun-pycache-')
+    try:
+        return _run_check(cmd, timeout, cwd, row_id, phase, pycache)
+    finally:
+        # a backgrounded child may still be writing here; never fail the run over it
+        shutil.rmtree(pycache, ignore_errors=True)
+
+
+def _run_check(cmd, timeout, cwd, row_id, phase, pycache):
     with tempfile.TemporaryFile() as out:
         p = subprocess.Popen(cmd, shell=True, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                              stderr=subprocess.STDOUT, start_new_session=True,
+                             env={**os.environ, 'PYTHONPYCACHEPREFIX': pycache},
                              pass_fds=(SESSION.workspace_fd,) if SESSION is not None else ())
         try:
             code = p.wait(timeout)
@@ -1219,7 +1233,9 @@ def run(a, locked=False):
             print(p)
         if reqs:
             skipped = sum(1 for r in reqs if r in waived['no-row-ok'])
-            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped} carried by '
+            unmeasured = sum(1 for r in reqs if any(p.startswith(f'{r}: no row measures it')
+                                                    for p in problems))
+            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped - unmeasured} carried by '
                   f'rows · {skipped} waived ({skipped * 100 // len(reqs)}%)')
         if not a.requirements:
             print('coverage not checked — no --requirements file; only the rows that exist '

@@ -457,8 +457,9 @@ def recover_publications(store):
         record = store._read(str(journal))
         run_id = record.get('run_id')
         paths = store._paths(run_id)
-        staging = store._safe(record['staging'])
-        destination = store._safe(record['destination'])
+        staging, destination = record.get('staging'), record.get('destination')
+        staging = store._safe(staging)
+        destination = store._safe(destination)
         if record.get('version') != 1 or str(journal) != publication_path(store, run_id) or \
                 Path(staging).parent != Path(store.runs) or \
                 not Path(staging).name.startswith('.' + run_id + '-') or \
@@ -575,6 +576,7 @@ class Session:
         self.store, self.run_id, self.token, self.engine, self.args = store, run_id, token, engine, args
         self.workspace_fd = workspace_fd
         self.active_row = None
+        self.after = None
         self.view = store.require(run_id, token)
         self.evidence_dir = store._safe(os.path.join(self.view['paths']['run_dir'], 'evidence'))
         os.makedirs(self.evidence_dir, exist_ok=True)
@@ -685,9 +687,18 @@ class Session:
             os.unlink(path)
         self.active_row = None
 
+    def outcome_fingerprint(self):
+        """One post-run fingerprint shared by the named-engine guard and finish():
+        computing it twice would let a late change pass the guard yet mark the
+        durable result unverified — and costs a full workspace walk for nothing."""
+        if self.after is None:
+            view = self.store.require(self.run_id, self.token)
+            self.after = fingerprint(self.store, view, self.engine)
+        return self.after
+
     def finish(self, code, log_path):
         view = self.store.require(self.run_id, self.token)
-        after = fingerprint(self.store, view, self.engine)
+        after = self.outcome_fingerprint()
         result = self.result()
         result.update({'exit_code': code, 'state': 'completed', 'fingerprint': after,
                        'inputs_changed': self.before != after, 'log': log_path,
@@ -766,7 +777,7 @@ def named_engine(engine, args):
                             code = 1
                             return code
                     code = engine.run(args, locked=True)
-                    if args.verify == '' and code == 0 and session.before != fingerprint(store, view, engine):
+                    if args.verify == '' and code == 0 and session.before != session.outcome_fingerprint():
                         print('NOT DONE — inputs changed during verification; rerun on stable inputs')
                         code = 1
                     return code

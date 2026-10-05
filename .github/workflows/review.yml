@@ -21,6 +21,8 @@ env:
   SKILLS_SHA: 08b6572ef108f22d4e8a3ecf9182a4bbef097744
   # Kept outside the workspace so a PR cannot shadow the reviewer's instructions.
   SKILLS_DIR: /tmp/review-skills
+  # Model API out of quota / rate-limited: skip the review with a warning instead of failing.
+  QUOTA_RE: '(^|[^0-9])429([^0-9]|$)|rate.?limit|quota|insufficient (balance|credit|funds)|credit balance|usage limit|resource package|余额不足'
 
 jobs:
   review:
@@ -50,6 +52,7 @@ jobs:
       # The agent sees untrusted PR content, so it runs with a read-only tool
       # whitelist and no GitHub token; the API token is scoped to this step only.
       - name: Review
+        id: review
         env:
           ANTHROPIC_BASE_URL: https://api.z.ai/api/anthropic
           ANTHROPIC_AUTH_TOKEN: ${{ secrets.ZAI_ANTHROPIC_TOKEN }}
@@ -91,11 +94,22 @@ jobs:
             (no P0/P1 findings outstanding). No preamble, no tool transcripts.
           EOF
 
+          code=0
           claude -p \
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(python3:*)" \
-            < /tmp/prompt.md > /tmp/review.out
+            < /tmp/prompt.md > /tmp/review.out 2> /tmp/review.err || code=$?
+          if [ "$code" -ne 0 ]; then
+            tail -n 20 /tmp/review.out /tmp/review.err
+            if grep -qiE "$QUOTA_RE" /tmp/review.out /tmp/review.err; then
+              echo "::warning::Bot review skipped: the model API is out of quota or rate-limited."
+              echo "skipped=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            exit "$code"
+          fi
 
       - name: Comment and gate
+        if: steps.review.outputs.skipped != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
@@ -104,6 +118,13 @@ jobs:
           tr -d '\r' < /tmp/review.out > /tmp/review.body
           # tolerate trailing whitespace / a closing code fence after the verdict
           verdict=$(grep -Ex 'VERDICT: (APPROVE|REQUEST_CHANGES) *' /tmp/review.body | tail -1 | tr -d ' ')
+
+          # an API error printed as the answer (exit 0) is no review either
+          if [ -z "$verdict" ] && grep -qiE "$QUOTA_RE" /tmp/review.body; then
+            cat /tmp/review.body
+            echo "::warning::Bot review skipped: the model API is out of quota or rate-limited."
+            exit 0
+          fi
 
           if [ -s /tmp/review.body ]; then
             { printf '## Bot review — %s\n\n' "$SHA"; cat /tmp/review.body; } > /tmp/review.md

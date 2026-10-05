@@ -17,7 +17,10 @@ VERDICT_HEADERS = {"verdict", "answer", "confidence"}
 # A verdict column alone is not enough: a findings table like `| Component | Answer | Notes |`
 # carries answers too, and linting its rows would flag `parser` as a requirement with no
 # valid verdict. Verdict rows live in tables whose first column names the requirement/Q ID.
-ID_HEADERS = {"id", "req", "req id", "requirement", "requirement id", "q id", "question", "question id"}
+ID_HEADERS = {"id", "req id", "requirement id", "q id", "question id"}
+# A plain `Requirement`/`Req` heading may head prose findings too; it keys a verdict table
+# only beside an explicit Verdict column.
+PLAIN_ID_HEADERS = {"requirement", "req"}
 
 
 def _cells(line):
@@ -47,7 +50,8 @@ def rows(path):
         if header is None:
             header = [c.lower() for c in cells]
             continue
-        if header and header[0] in ID_HEADERS and set(header) & VERDICT_HEADERS:
+        if header and (header[0] in ID_HEADERS and set(header) & VERDICT_HEADERS
+                       or header[0] in PLAIN_ID_HEADERS and "verdict" in header):
             yield n, cells, header
 
 
@@ -87,6 +91,14 @@ Searched the tree for: first, second, third — nothing outside the set.
 | Component | Answer | Notes |
 | --------- | ------ | ----- |
 | parser | Yes | findings may answer in their own words |
+
+| Question | Answer | Notes |
+| -------- | ------ | ----- |
+| What does the parser do? | It tokenizes | a prose question is not an ID |
+
+| Requirement | Answer | Notes |
+| ----------- | ------ | ----- |
+| The export must be fast | Unclear | prose under a plain heading, no verdict column |
 
 ## Round log
 
@@ -142,7 +154,8 @@ Searched the tree for: first, second, third — nothing outside the set.
                          '| REQ-A-003 | Undecided | TYPO |'),
           'has no valid verdict', 'requirement text equals a verdict')
 
-    # A verdict table keyed by a plain `Requirement` or `Req` heading is still a verdict table.
+    # A verdict table keyed by a plain `Requirement` or `Req` heading is still a verdict table;
+    # the same headings over prose answers (in the clean report above) are not.
     for heading in ("Requirement", "Req"):
         fires(report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
                              f"| {heading} | Requirement | Verdict | Evidence | Quote |")

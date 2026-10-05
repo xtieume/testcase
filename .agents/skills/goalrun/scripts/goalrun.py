@@ -44,7 +44,7 @@ Ordinary checks measure; subset checks prove only a phase.
 Exit 0 operation succeeded / checks pass, 1 not done, 2 misuse or broken ledger.
 """
 import stat
-import argparse, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
+import argparse, atexit, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
     signal, subprocess, sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
@@ -291,6 +291,21 @@ def _zero_tests_matched(text):
     return None
 
 
+# Python validates a cached module by source mtime in whole seconds and size, so a same-length
+# break planted or restored within the second it was compiled would run the stale body. Checks
+# share one bytecode cache per source state; planting or restoring a break starts a new one.
+_pycache = []
+
+
+def source_changed():
+    while _pycache:
+        # a backgrounded child may still be writing here; never fail the run over it
+        shutil.rmtree(_pycache.pop(), ignore_errors=True)
+
+
+atexit.register(source_changed)
+
+
 def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
     """Return (ok, one-line summary, timed_out). A check passes only on exit 0 and, if it
     looks like a test runner, only when it actually matched something to run.
@@ -299,24 +314,13 @@ def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
     and a check's own output may legitimately end in the words "timed out".
 
     Output goes to a tempfile, not a pipe, so a backgrounded child that inherits stdout
-    cannot hold the run open; the whole session is killed on timeout.
-
-    Each check gets its own bytecode cache: Python validates a cached module by source
-    mtime in whole seconds and size, so a same-length break planted or restored within
-    the second it was compiled would otherwise run the stale body."""
-    pycache = tempfile.mkdtemp(prefix='goalrun-pycache-')
-    try:
-        return _run_check(cmd, timeout, cwd, row_id, phase, pycache)
-    finally:
-        # a backgrounded child may still be writing here; never fail the run over it
-        shutil.rmtree(pycache, ignore_errors=True)
-
-
-def _run_check(cmd, timeout, cwd, row_id, phase, pycache):
+    cannot hold the run open; the whole session is killed on timeout."""
+    if not _pycache:
+        _pycache.append(tempfile.mkdtemp(prefix='goalrun-pycache-'))
     with tempfile.TemporaryFile() as out:
         p = subprocess.Popen(cmd, shell=True, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                              stderr=subprocess.STDOUT, start_new_session=True,
-                             env={**os.environ, 'PYTHONPYCACHEPREFIX': pycache},
+                             env={**os.environ, 'PYTHONPYCACHEPREFIX': _pycache[0]},
                              pass_fds=(SESSION.workspace_fd,) if SESSION is not None else ())
         try:
             code = p.wait(timeout)
@@ -731,16 +735,24 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
                 f'`# no-row-ok:` (>30%) — a ledger measuring {len(requirements) - len(skipped)} '
                 f'of them is not gated by this list; add rows, or cut the list down to what '
                 f'this run is about')
+    for req in unmeasured(rows, requirements, waived):
+        problems.append(f'{req}: no row measures it — a requirement with no row is a '
+                        f'permanent pass; add a row, or waive it in the ledger with '
+                        f'`# no-row-ok: {req} — <reason>`')
+    return problems
+
+
+def unmeasured(rows, requirements, waived):
+    """Requirements that no row names and no `# no-row-ok:` waiver excuses."""
+    missing = []
     for req in (requirements or []):
         if req in waived['no-row-ok']:
             continue
         # whole-token match, so REQ-1 is not satisfied by a row that names REQ-10
         pat = re.compile(rf'(?<![\w.-]){re.escape(req)}(?![\w.-])')
         if not any(pat.search(r.id) or pat.search(r.what) for r in rows):
-            problems.append(f'{req}: no row measures it — a requirement with no row is a '
-                            f'permanent pass; add a row, or waive it in the ledger with '
-                            f'`# no-row-ok: {req} — <reason>`')
-    return problems
+            missing.append(req)
+    return missing
 
 
 def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
@@ -874,6 +886,7 @@ def plant(brk, cwd=None, row_id=None):
             SESSION.delete(full)
         else:
             os.remove(full)
+        source_changed()
         return (full, was), None
     try:
         text = was.decode('utf-8')
@@ -892,6 +905,7 @@ def plant(brk, cwd=None, row_id=None):
     else:
         with open(full, 'wb') as fh:
             fh.write(planted)
+    source_changed()
     return (full, was), None
 
 
@@ -900,10 +914,11 @@ def restore(undo):
     full, was = undo
     if SESSION is not None:
         SESSION.restore(full, was)
-        return
-    os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
-    with open(full, 'wb') as fh:
-        fh.write(was)
+    else:
+        os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+        with open(full, 'wb') as fh:
+            fh.write(was)
+    source_changed()
 
 
 def keep_undo(row_id, undo, cwd=None):
@@ -1259,9 +1274,8 @@ def run(a, locked=False):
             print(p)
         if reqs:
             skipped = sum(1 for r in reqs if r in waived['no-row-ok'])
-            unmeasured = sum(1 for r in reqs if any(p.startswith(f'{r}: no row measures it')
-                                                    for p in problems))
-            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped - unmeasured} carried by '
+            gaps = len(unmeasured(rows, reqs, waived))
+            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped - gaps} carried by '
                   f'rows · {skipped} waived ({skipped * 100 // len(reqs)}%)')
         if not a.requirements:
             print('coverage not checked — no --requirements file; only the rows that exist '

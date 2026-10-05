@@ -267,56 +267,54 @@ def _read_text(path):
         return ''
 
 
+def _owning_repository(relative, repositories):
+    """The deepest recorded repository directory containing `relative`, or None."""
+    inside = [at for at in repositories
+              if at == os.curdir or relative == at or relative.startswith(at + os.sep)]
+    return max(inside, key=lambda at: 0 if at == os.curdir else len(at), default=None)
+
+
 def ignore_rules(root, engine):
     """Snapshot the Git ignore rules in effect at initialization, per repository.
 
     Output directories they ignored stay excluded for files created later, even
-    after force-adding those files or editing the rules. Empty outside Git.
+    after force-adding those files or editing the rules. Empty outside Git. Ignore
+    files come from the source selection: one inside an ignored tree has no effect.
     """
     root = os.path.abspath(root)
-    skip = {'.git', '.testcases'} | (engine.BASELINE_SKIP - engine.OUTPUT_DIRS)
+    entries = list(source_entries(root, engine))
+    repositories = [os.curdir] + [os.path.normpath(relative) for relative, full, directory in entries
+                                  if directory and os.path.lexists(os.path.join(full, '.git'))]
+    ignore_files = [(os.path.normpath(relative), full) for relative, full, directory in entries
+                    if not directory and os.path.basename(relative) == '.gitignore']
     rules = []
-
-    def collect(at):
-        top = _git_text(at, 'rev-parse', '--show-toplevel')
+    for at in repositories:
+        full_at = os.path.join(root, at)
+        top = _git_text(full_at, 'rev-parse', '--show-toplevel')
         if top is None:
-            return
-        top, real = os.path.realpath(top), os.path.realpath(at)
+            continue
+        top, real = os.path.realpath(top), os.path.realpath(full_at)
         files = {}
-        ancestor = real
-        while True:
+        ancestor = os.path.dirname(real)
+        # a workspace inside a larger worktree inherits the ignore files above it
+        while at == os.curdir and real != top and ancestor.startswith(top):
             if os.path.isfile(os.path.join(ancestor, '.gitignore')):
                 files[os.path.relpath(os.path.join(ancestor, '.gitignore'), top)] = \
                     _read_text(os.path.join(ancestor, '.gitignore'))
-            if ancestor == top or os.path.dirname(ancestor) == ancestor:
+            if ancestor == top:
                 break
             ancestor = os.path.dirname(ancestor)
-        nested = []
-        for base, dirs, names in os.walk(at):
-            descend = []
-            for name in dirs:
-                if name in skip:
-                    continue
-                if os.path.lexists(os.path.join(base, name, '.git')):
-                    nested.append(os.path.join(base, name))
-                else:
-                    descend.append(name)
-            dirs[:] = descend
-            if base != at and '.gitignore' in names:
-                files[os.path.relpath(os.path.realpath(os.path.join(base, '.gitignore')), top)] = \
-                    _read_text(os.path.join(base, '.gitignore'))
-        exclude = _git_text(at, 'rev-parse', '--git-path', 'info/exclude')
-        excludes_file = _git_text(at, 'config', '--path', 'core.excludesFile') or os.path.join(
+        for relative, full in ignore_files:
+            if _owning_repository(relative, repositories) == at:
+                files[os.path.relpath(os.path.realpath(full), top)] = _read_text(full)
+        exclude = _git_text(full_at, 'rev-parse', '--git-path', 'info/exclude')
+        excludes_file = _git_text(full_at, 'config', '--path', 'core.excludesFile') or os.path.join(
             os.environ.get('XDG_CONFIG_HOME') or os.path.expanduser('~/.config'), 'git', 'ignore')
-        rules.append({'at': os.path.normpath(os.path.relpath(at, root)),
+        rules.append({'at': at,
                       'base': os.path.normpath(os.path.relpath(real, top)),
                       'gitignore': files,
-                      'exclude': _read_text(os.path.join(at, exclude)) if exclude else '',
+                      'exclude': _read_text(os.path.join(full_at, exclude)) if exclude else '',
                       'global': _read_text(excludes_file)})
-        for child in nested:
-            collect(child)
-
-    collect(root)
     return rules
 
 
@@ -326,17 +324,13 @@ def baseline_ignores(rules):
     with tempfile.TemporaryDirectory() as tmp:
         answers = {}
 
-        def owner(relative):
-            inside = [(index, entry) for index, entry in enumerate(rules)
-                      if entry['at'] == os.curdir or relative == entry['at']
-                      or relative.startswith(entry['at'] + os.sep)]
-            return max(inside, key=lambda item: 0 if item[1]['at'] == os.curdir else len(item[1]['at']),
-                       default=(None, None))
+        repositories = [entry['at'] for entry in rules]
 
         def ignored(relative):
             if relative not in answers:
-                index, entry = owner(relative)
-                answers[relative] = entry is not None and _ignored_by(tmp, index, entry, relative)
+                at = _owning_repository(relative, repositories)
+                answers[relative] = at is not None and _ignored_by(
+                    tmp, repositories.index(at), rules[repositories.index(at)], relative)
             return answers[relative]
 
         yield ignored

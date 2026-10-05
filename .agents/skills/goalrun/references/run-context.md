@@ -110,8 +110,9 @@ Check evidence identifies the row and phase (`measurement`, `mutation`, or `blas
 expected failure under a planted defect does not count as a production regression.
 It retains the raw exit code and records `passed` after the runner gate: a silent runner
 or one matching no tests records `passed: false` even when its exit code is zero.
-Each check runs with its own Python bytecode cache, so a planted or restored source is never
-shadowed by bytecode compiled from the other version in the same second.
+Checks share a private Python bytecode cache that is replaced whenever a break is planted or
+restored, so a changed source is never shadowed by bytecode compiled from the other version
+in the same second.
 
 ### What stales a proof
 

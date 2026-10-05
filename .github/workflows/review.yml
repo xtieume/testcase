@@ -119,8 +119,9 @@ jobs:
           # tolerate trailing whitespace / a closing code fence after the verdict
           verdict=$(grep -Ex 'VERDICT: (APPROVE|REQUEST_CHANGES) *' /tmp/review.body | tail -1 | tr -d ' ')
 
-          # an API error printed as the answer (exit 0) is no review either
-          if [ -z "$verdict" ] && grep -qiE "$QUOTA_RE" /tmp/review.body; then
+          # an API error printed as the answer (exit 0) is no review either; match only the
+          # CLI's own error line, so a review that discusses rate limits still fails closed
+          if [ -z "$verdict" ] && grep -iE '^API Error' /tmp/review.body | grep -qiE "$QUOTA_RE"; then
             cat /tmp/review.body
             echo "::warning::Bot review skipped: the model API is out of quota or rate-limited."
             exit 0

@@ -703,6 +703,23 @@ def test_verify_sees_a_same_size_break_python_cached_in_the_same_second():
             'checks must not leave bytecode that can outlive a restored source'
 
 
+def test_checks_share_a_bytecode_cache_until_a_break_changes_source():
+    """Recompiling every module for every check made a sweep pay a full compile per check;
+    only a planted or restored break needs a fresh cache."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as notes:
+        make_tree(tmp)
+        seen = os.path.join(notes, 'seen.txt')
+        record = f'echo "$PYTHONPYCACHEPREFIX" >> {seen}'
+        ledger(tmp, f'A\tfirst\t{record}; grep -q old old.txt\t—\told.txt :: old :: new\n'
+                    f'B\tsecond\t{record}; grep -q old old.txt\t—\t—\n')
+        out = run_cli(tmp, '--verify', '--no-blast')
+        prefixes = open(seen).read().split()
+        assert len(prefixes) == 3, (prefixes, out.stdout)
+        assert prefixes[0] == prefixes[1], 'checks on unchanged source should share one cache'
+        assert prefixes[2] != prefixes[0], 'a planted break must not reuse the earlier cache'
+        assert not any(os.path.exists(p) for p in prefixes), 'caches are removed'
+
+
 def test_verify_restores_the_break_when_the_undo_journal_cannot_be_written():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)

@@ -209,6 +209,20 @@ class InputProvenanceTests(unittest.TestCase):
                 (nested / '.gitignore').write_text('target/\n')
                 path.unlink()
 
+    def test_parent_worktree_ignore_rules_are_recorded_for_a_subdirectory_workspace(self):
+        self.repository()
+        repository = self.root
+        self.root = repository / 'app'
+        self.root.mkdir()
+        (self.root / 'feature.txt').write_text('old\n')
+        token = self.exclusion_ledger('build/out.txt')
+        (repository / '.gitignore').write_text('.testcases/\n')
+        path = self.root / 'build/out.txt'
+        path.parent.mkdir()
+        path.write_text('generated after init')
+        out = self.cli('--run', 'export', '--token', token, '--only', 'REQ-A', code=1)
+        self.assertIn('excluded at baseline', out.stdout)
+
     def test_unignored_output_named_directory_ships_new_files(self):
         self.repository()
         (self.root / '.gitignore').write_text('.testcases/\n')

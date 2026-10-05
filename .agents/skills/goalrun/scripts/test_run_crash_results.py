@@ -23,11 +23,15 @@ from pathlib import Path
 import sys
 import time
 broken = Path('feature.txt').read_text() != 'old\\n'
-if sys.argv[1] != 'A' or not Path('.testcases/hollow').exists():
+if sys.argv[1] == 'A' and Path('.testcases/stuck').exists() and broken:
+    time.sleep(30)
+if not ((sys.argv[1] == 'A' and Path('.testcases/hollow').exists()) or
+        (sys.argv[1] == 'B' and Path('.testcases/sweep-block').exists())):
     assert not broken, 'planted defect detected'
 if sys.argv[1] == 'A' and Path('.testcases/trigger').exists():
     raise AssertionError('observed regression')
-if sys.argv[1] == 'B' and (Path('.testcases/trigger').exists() or Path('.testcases/block-only').exists()):
+if sys.argv[1] == 'B' and (Path('.testcases/trigger').exists() or Path('.testcases/block-only').exists()
+                           or (Path('.testcases/sweep-block').exists() and broken)):
     Path('.testcases/blocked').write_text(str(os.getpgrp()))
     time.sleep(30)
 ''')
@@ -154,6 +158,65 @@ if sys.argv[1] == 'B' and (Path('.testcases/trigger').exists() or Path('.testcas
         checks = [json.loads(p.read_text()) for p in (self.run / 'evidence').glob('*-check-*.json')]
         self.assertTrue(any(c['phase'] == 'blast' and c['row_id'] == 'REQ-B' and
                             c['mutation_row_id'] == 'REQ-A' and c['exit_code'] != 0 for c in checks))
+
+    def test_hollow_mutation_outcome_survives_sigkill_during_blast_sweep(self):
+        proof = self.inspect()['last_proof']['id']
+        (self.root / '.testcases/hollow').touch()
+        (self.root / '.testcases/sweep-block').touch()
+        process = self.spawn('--run', 'demo', '--token', self.token, '--verify', 'REQ-A', '--blast')
+        self.wait_for('blocked', process)
+        live = self.inspect()
+        self.assertTrue(live['proof_stale'], 'a HOLLOW row must stale the old proof before the sweep')
+        self.assertEqual(live['checkpoint']['failures'], {'REQ-A': 1})
+        self.assertEqual(live['last_evidence']['rows']['REQ-A']['status'], 'HOLLOW')
+        self.stop(process)
+        self.assertEqual(process.returncode, -signal.SIGKILL)
+        info = self.inspect()
+        self.assertTrue(info['proof_stale'],
+                        'a kill during the sweep must not restore the previous proof as current')
+        self.assertEqual(info['checkpoint']['failures'], {'REQ-A': 1})
+        self.assertEqual(info['last_evidence']['rows']['REQ-A']['status'], 'HOLLOW')
+        self.assertEqual(info['last_proof']['id'], proof)
+        self.cli('checkpoint', 'demo', '--token', self.token, '--phase', 'repair', '--next', 'Fix hollow')
+        self.assertEqual((self.root / 'feature.txt').read_text(), 'old\n')
+        self.assertEqual(self.inspect()['checkpoint']['failures'], {'REQ-A': 1})
+        (self.root / '.testcases/hollow').unlink()
+        (self.root / '.testcases/sweep-block').unlink()
+        self.cli('--run', 'demo', '--token', self.token, '--verify')
+        info = self.inspect()
+        self.assertFalse(info['proof_stale'])
+        self.assertEqual(info['checkpoint']['failures'], {'REQ-A': 1})
+
+    def test_stuck_mutation_outcome_is_durable_before_the_blast_sweep(self):
+        (self.root / '.testcases/stuck').touch()
+        patch = '''real_blast = goalrun.blast_radius
+def paused(*args, **kwargs):
+    Path('.testcases/sweep-entered').touch()
+    time.sleep(30)
+    return real_blast(*args, **kwargs)
+goalrun.blast_radius = paused
+'''
+        process = self.spawn('--run', 'demo', '--token', self.token,
+                             '--verify', 'REQ-A', '--blast', '--timeout', '1', patch=patch)
+        self.wait_for('sweep-entered', process)
+        live = self.inspect()
+        self.assertTrue(live['proof_stale'], 'a STUCK row must stale the old proof before the sweep')
+        self.assertEqual(live['checkpoint']['failures'], {'REQ-A': 1})
+        self.assertEqual(live['last_evidence']['rows']['REQ-A']['status'], 'STUCK')
+        self.stop(process)
+        self.assertEqual(process.returncode, -signal.SIGKILL)
+        info = self.inspect()
+        self.assertTrue(info['proof_stale'])
+        self.assertEqual(info['checkpoint']['failures'], {'REQ-A': 1})
+        self.assertEqual(info['last_evidence']['rows']['REQ-A']['status'], 'STUCK')
+        self.cli('checkpoint', 'demo', '--token', self.token, '--phase', 'repair', '--next', 'Fix stuck')
+        self.assertEqual((self.root / 'feature.txt').read_text(), 'old\n')
+        self.assertEqual(self.inspect()['checkpoint']['failures'], {'REQ-A': 1})
+        (self.root / '.testcases/stuck').unlink()
+        self.cli('--run', 'demo', '--token', self.token, '--verify')
+        info = self.inspect()
+        self.assertFalse(info['proof_stale'])
+        self.assertEqual(info['checkpoint']['failures'], {'REQ-A': 1})
 
     def test_raw_failed_check_stales_proof_before_row_is_finalized(self):
         (self.root / '.testcases/trigger').touch()

@@ -988,6 +988,13 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
         keep_undo(row.id, undo, cwd)
         try:
             ok, note, hung = run_check(row.check, timeout, cwd, row_id=row.id, phase='mutation')
+            # a HOLLOW or STUCK verdict is known the moment its own mutation check
+            # ends; the sweep after it can block for the whole budget, and a kill
+            # during that window must not bury the failure the way it buries an
+            # unfinished footnote. An expected failure stays unpublished until the
+            # sweep is done: it is not a witnessed regression.
+            if SESSION is not None and (hung or ok):
+                SESSION.record_row(row, 'STUCK' if hung else 'HOLLOW', note)
             if blast:
                 began = time.monotonic()
                 left = None if budget is None else max(0.0, budget - spent)

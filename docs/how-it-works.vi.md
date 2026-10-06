@@ -8,7 +8,8 @@ Bốn bức hình. Mọi thứ ở đây rút ra từ chính `SKILL.md` của c�
 
 `docs-review` nói **cần gì**, `testcase` nói **chứng minh thế nào**, `goalrun` nói **đã đạt
 chưa**. Mỗi chặng giao cho chặng sau một bộ id, và mỗi ranh giới có một cổng — hụt thì đỏ, chứ
-không im lặng cho qua.
+không im lặng cho qua. Cả ba chặng dùng cùng một run ID được chọn rõ ràng;
+requirement, report và đầu vào ledger được lưu riêng theo run đó.
 
 ```mermaid
 flowchart TD
@@ -36,7 +37,7 @@ flowchart TD
         GR1 --> GR2 --> GR3
     end
 
-    GATE{"goalrun --lint-ledger --requirements"}
+    GATE{"goalrun --run ID --token TOKEN --lint-ledger"}
     OUT["Exit 0 = ledger có đo một cái gì đó"]
 
     SPEC --> DR1
@@ -79,8 +80,8 @@ flowchart TD
     subgraph WITH["Có goalrun"]
         G1["Xong chưa?"]
         G2["Ledger: mỗi yêu cầu một row"]
-        G3["Chạy script"]
-        G4{"Mọi row PASS?"}
+        G3["Chạy --verify toàn ledger của run đã chọn"]
+        G4{"Toàn bộ proof đạt và bằng chứng còn hiệu lực?"}
         G5["DONE — exit 0"]
         G6["NOT DONE — bảng, gọi tên từng row đỏ và từng row đang chờ"]
         G1 --> G2 --> G3 --> G4
@@ -105,7 +106,7 @@ flowchart TD
     KIND{"check có dạng MANUAL:owner?"}
 
     SIG{"Đã ký trong signoff.tsv?"}
-    HASH{"Chữ ký khớp với câu chữ hiện tại?"}
+    HASH{"Chữ ký khớp với câu chữ và MANUAL owner hiện tại?"}
     WAIT["WAIT — đang chờ người chủ row đó"]
 
     RUN["Chạy check"]
@@ -122,7 +123,7 @@ flowchart TD
     KIND -->|"có"| SIG
     SIG -->|"chưa"| WAIT
     SIG -->|"rồi"| HASH
-    HASH -->|"không, câu chữ đã đổi"| WAIT
+    HASH -->|"không, câu chữ hoặc owner đã đổi"| WAIT
     HASH -->|"khớp"| PASS
 
     KIND -->|"không"| RUN
@@ -154,15 +155,17 @@ row có phân biệt nổi lỗi của nhau không. Nó tốn một check mỗi 
 
 ```mermaid
 flowchart TD
-    V["goalrun --verify"]
+    V["goalrun --run ID --token TOKEN --verify"]
     LOCK{"Có goalrun khác đang chạy check trên cây này?"}
     STOPL["Exit 2 — check tranh build với thứ khác thì đỏ vì lý do không phải của code"]
 
+    RECOVER["Khôi phục journal còn dở của mọi run; từ chối nếu có sửa đổi xung đột"]
+    LINT["Kiểm tra ledger bao phủ reqs.txt của run này"]
     PRE["Pre-pass: chạy mọi check trên cây"]
     RED{"Row đã đỏ sẵn?"}
     AR["ALREADY RED — đỏ thêm lần nữa chẳng chứng minh gì, và nó bị loại khỏi sweep"]
 
-    PLANT["Sửa đúng chỗ break mô tả"]
+    PLANT["Ghi journal byte gốc và byte trồng lỗi, rồi áp dụng break"]
     MOVED{"Có đúng một chỗ để sửa không?"}
     BF["BREAK FAILED — không có chỗ nào, hoặc có hai chỗ; không tốn check nào cho nó"]
 
@@ -171,7 +174,7 @@ flowchart TD
     HOLLOW["HOLLOW — vẫn xanh, tức mọi input nó thử đều là input mà lỗi này vô hình"]
     STUCK["STUCK — nó treo, không chứng minh được gì"]
     VERIFIED["VERIFIED — nó đỏ, đúng như phải thế"]
-    DROP["Ghi trả lại file, nguyên xi từng byte"]
+    DROP["Đối chiếu byte hiện tại, trả lại byte gốc, rồi xóa journal"]
 
     SWEEP["--blast: chạy mọi row khác dưới cùng cái break này"]
     SIB{"Row nào đỏ theo?"}
@@ -181,13 +184,14 @@ flowchart TD
 
     V --> LOCK
     LOCK -->|"có"| STOPL
-    LOCK -->|"không"| PRE
+    LOCK -->|"không"| RECOVER
+    RECOVER --> LINT --> PRE
     PRE --> RED
     RED -->|"đỏ sẵn"| AR
-    RED -->|"không"| PLANT
-    PLANT --> MOVED
+    RED -->|"không"| MOVED
     MOVED -->|"không"| BF
-    MOVED -->|"có"| CHECK
+    MOVED -->|"có"| PLANT
+    PLANT --> CHECK
     CHECK --> RESULT
     RESULT -->|"vẫn xanh"| HOLLOW
     RESULT -->|"treo"| STUCK
@@ -199,7 +203,10 @@ flowchart TD
     SWEEP -->|"hết giờ sweep"| BUDGET
     VERIFIED --> DROP
     HOLLOW --> DROP
-    BF --> DROP
+    STUCK --> DROP
+    SHARED --> DROP
+    BLAST --> DROP
+    BUDGET --> DROP
 
     style VERIFIED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style SHARED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
@@ -212,7 +219,11 @@ flowchart TD
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
-Mỗi ô ở trên là một chuỗi mà script **thật sự in ra**. `HOLLOW`, `STUCK`, `BLAST`,
+Row MANUAL chỉ đạt khi có chữ ký của owner hiện tại cho đúng câu chữ hiện tại. Waiver
+test-first gắn với row của nó: row đổi thì phải thấy test mới chạy đỏ và ghi một lý do
+`test-first ... seen red ...` mới; verify lại hay bàn giao không làm mới waiver.
+
+Verdict là kết quả script quan sát được. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` và `SWEEP STOPPED` đều exit 1: một lần chạy
 không chứng minh được gì thì không phải là pass.
 
@@ -220,3 +231,29 @@ không chứng minh được gì thì không phải là pass.
 khiếm khuyết — mọi input nó thử đều là input mà lỗi này vô hình. Đường về là **ngược lên
 `testcase`**, nơi cột `Distinguishes from` gọi tên implementation sai mà mỗi case loại trừ —
 chứ không phải đi xuôi vào ledger để sửa row.
+
+## 5. Run độc lập và bàn giao giữa agent
+
+Mỗi mục tiêu là một run: requirement, ledger, baseline, report, bảng test case và checkpoint
+nằm trong `.testcases/runs/<id>/`, ngoài git. Bảng test case chỉ vào repo khi bạn chỉ định
+đường dẫn.
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # trước khi sửa
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # lưu token từ JSON vào TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # nhận token mới
+```
+
+- `release` lưu ghi chú bàn giao và thu hồi token cũ. Baseline, ID và số lần lỗi được giữ.
+- Owner mới phải chạy lại `--verify` toàn ledger. Xong khi `inspect` cho
+  `last_proof.whole_ledger_verified: true` và `proof_stale: false`. Sửa source, spec, test
+  hoặc bảng test case làm proof cũ hết hiệu lực.
+- Quyền sở hữu không tự hết hạn. Agent trước dừng giữa chừng: xác nhận nó đã dừng, rồi
+  `resume --expected-generation <n>` với generation lấy từ `inspect`.
+- Chỉ tiếp tục trong cùng workspace. Sửa tay và build bên ngoài không đi qua lock của goalrun.
+
+Chi tiết (fingerprint, file bị loại trừ, khôi phục, migrate):
+[run context](../.agents/skills/goalrun/references/run-context.md).

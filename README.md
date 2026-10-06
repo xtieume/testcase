@@ -70,11 +70,28 @@ Four diagrams of the pipeline, and of how `goalrun` decides a row and proves a c
 > [!TIP]
 > **On Claude Code, start with `/goal`.** `/goal` sets a condition that is checked after every turn, and Claude keeps working until it holds — so the run doesn't stop halfway to ask whether to continue:
 > ```
-> /goal /goalrun build the export feature — done when goalrun.py exits 0 on the whole ledger
+> /goal /goalrun build the export feature — done when whole-ledger --verify exits 0 with current evidence
 > ```
 
 > [!TIP]
 > **Already think it's finished?** Ask *"is this actually done?"* — `goalrun` audits the work against its ledger and tells you what's still red.
+
+## Continue across agents
+
+Each goal is a named run under `.testcases/runs/<id>/`, out of git; its test case table goes
+into the repo only if you name a path. Another agent in the same workspace picks it up:
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # before any edit
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy the JSON token into TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # receives a new token
+```
+
+The new owner reruns the whole-ledger `--verify` before calling it done. Details:
+[How these skills work §5](docs/how-it-works.md#5-independent-runs-and-agent-handoff).
 
 ## Install
 
@@ -152,6 +169,7 @@ folders instead of symlinking. Install once per host; avoid loading the same
 catalog through both a plugin and native skill links.
 
 **One skill only** — copy `.agents/skills/<name>/` into the relevant directory.
+Include `goalrun/` alongside `docs-review/` or `testcase/` for their persistent run context.
 Skills trigger on natural language. Explicit invocation is host-specific:
 `$testcase` on Codex, `/<name>` where supported, or OpenCode's `skill` tool.
 

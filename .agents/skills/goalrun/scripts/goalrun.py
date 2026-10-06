@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Decide whether a goal is met. The exit code IS the answer.
 
-Reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (UTF-8, BOM tolerated):
+Named work: init/list/inspect/resume/checkpoint/release/migrate, then --run ID --token TOKEN.
+Each run binds its ledger, baseline, requirements, signatures and evidence independently.
+Legacy work without named runs reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (UTF-8, BOM tolerated):
 
     id<TAB>what must be true<TAB>check<TAB>deliverable<TAB>break
 
@@ -9,7 +11,7 @@ Reads `.testcases/goalrun/ledger.tsv` — one row per condition, tab-separated (
 `check`       a shell command, or `MANUAL:<owner>` when a human must decide. Never empty.
               A MANUAL row is decided by a person and cannot also name a deliverable.
 `deliverable` optional path this row must have produced; `—`, `-` or empty means none.
-`break`       the command that plants the defect `check` exists to catch (`--verify`).
+`break`       the guarded file edit that plants the defect `check` exists to catch (`--verify`).
               A row without one has never gone red; `--lint-ledger` says so unless the
               ledger waives it with a comment line `# verify-ok: <id> — <reason>` — the
               legitimate reason being that the test was written first and its red phase
@@ -19,10 +21,10 @@ Extra columns are ignored.
 Verdict per row:
   PASS  check exited 0 and (if named) the deliverable's content differs from the baseline
   FAIL  check exited non-zero, timed out, or the deliverable was not shipped
-  WAIT  MANUAL row without a valid signature in `.testcases/goalrun/signoff.tsv`
+  WAIT  MANUAL row without a valid signature in the selected run's signoff.tsv
 
 Modes (mutually exclusive):
-  --baseline          record the content of every file in the tree, in
+  --baseline          legacy only: record the content of every file in the tree, in
                        `.testcases/goalrun/baseline.json`. Taken once, before the first
                        edit, and before the ledger exists; refused when one is present
                        (--reset replaces it). A deliverable ships when it differs from
@@ -31,15 +33,18 @@ Modes (mutually exclusive):
   --only A,B          run a subset; prints PHASE OK / PHASE NOT OK, never DONE
   --verify [A,B]      for each row: make the edit its `break` describes, run the row's
                        `check`, demand red, and put the file back byte for byte
-  --lint-ledger       problems with the ledger itself; with --requirements FILE it also
-                       names requirements no row measures (waive: `# no-row-ok: <id> — <why>`)
+  --lint-ledger       problems with the ledger and missing requirements; named runs
+                       read their own reqs.txt; legacy uses --requirements FILE (waive: `# no-row-ok: <id> — <why>`)
 
 Only one goalrun runs checks in a tree at a time (`.testcases/goalrun.lock`): a check racing
 another build goes red for reasons that are not the code.
 
-Exit 0 done / phase ok, 1 not done, 2 misuse or broken ledger.
+Named completion requires a successful whole-ledger --verify with current evidence.
+Ordinary checks measure; subset checks prove only a phase.
+Exit 0 operation succeeded / checks pass, 1 not done, 2 misuse or broken ledger.
 """
-import argparse, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
+import stat
+import argparse, atexit, collections, datetime, fcntl, hashlib, json, os, re, shutil, \
     signal, subprocess, sys, tempfile, time
 
 GOAL_DIR = os.path.join('.testcases', 'goalrun')
@@ -53,6 +58,7 @@ NONE = ('', '—', '-')
 SWEEP_BUDGET = 900      # seconds of sweeping (not of the run) the default proof may spend
 
 BREAK_SEP = '::'
+SESSION = None  # run_cli binds this for the lifetime of a named CLI command
 UNDO_DIR = os.path.join(GOAL_DIR, 'undo')   # bytes a break replaced, until it is put back
 # a check that invokes one of these is a test; the zero-tests gate and the lint's
 # searches-text rule both key off it, so a lint that echoes "0 tests failed" is not a runner
@@ -119,6 +125,96 @@ def waivers(path):
             m = pat.match(raw)
             if m:
                 out[m.group(1)][m.group(2)] = m.group(3)
+    return out
+
+
+
+WAIVER_BINDINGS = 'verify-waivers.json'
+
+
+def waiver_hash(row):
+    """Bind an observation to every semantic field, including its check and break."""
+    return hashlib.sha256(json.dumps(list(row), ensure_ascii=False).encode()).hexdigest()
+
+
+def _waiver_bindings(path):
+    full = os.path.join(os.path.dirname(path), WAIVER_BINDINGS)
+    absolute = os.path.abspath(full)
+    if os.path.islink(full) or os.path.realpath(absolute) != absolute:
+        raise Misuse(f'waiver binding path is symlinked: {full}')
+    if not os.path.exists(full):
+        return full, {'version': 1, 'bindings': {}}
+    try:
+        with open(full, encoding='utf-8') as f:
+            data = json.load(f)
+        if data.get('version') != 1 or not isinstance(data.get('bindings'), dict):
+            raise ValueError('unknown binding schema')
+        for binding in data['bindings'].values():
+            if not isinstance(binding, dict) or not isinstance(binding.get('row_hash'), str) or \
+                    not isinstance(binding.get('reason'), str) or \
+                    not isinstance(binding.get('used_reasons'), list) or \
+                    not all(isinstance(reason, str) for reason in binding['used_reasons']):
+                raise ValueError('invalid binding')
+    except (ValueError, AttributeError, TypeError) as e:
+        raise Misuse(f'invalid waiver bindings at {full}: {e}')
+    return full, data
+
+
+def bind_waivers(path, rows=None):
+    """Adopt legacy observations once; refresh only an explicit new red observation.
+
+    Retain prior observations even when their row or comment disappears, so deleting and
+    reintroducing an ID or an already-used reason cannot make stale consent fresh.
+    Named commands call this before taking their input fingerprint.
+    """
+    rows = load(path) if rows is None else rows
+    full, data = _waiver_bindings(path)
+    reasons = waivers(path)['verify-ok']
+    changed = False
+    for row in rows:
+        if row.id not in reasons or row.brk or row.check.startswith('MANUAL:'):
+            continue
+        reason = reasons[row.id]
+        prior = data['bindings'].get(row.id)
+        fresh = (prior is not None and reason not in prior['used_reasons'] and
+                 re.search(r'\btest-first\b.*\bseen red\b', reason, re.IGNORECASE))
+        if prior is None or fresh:
+            used = prior['used_reasons'] + [reason] if prior else [reason]
+            data['bindings'][row.id] = {'row_hash': waiver_hash(row), 'reason': reason,
+                                        'used_reasons': used}
+            changed = True
+    if changed:
+        os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix='.verify-waivers-', dir=os.path.dirname(full) or '.')
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, sort_keys=True)
+                f.write('\n')
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temporary, full)
+            directory = os.open(os.path.dirname(full) or '.', os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+
+def authorized_waivers(path, rows=None):
+    """Keep lint diagnostics for malformed waiver targets; exclude stale observations."""
+    rows = load(path) if rows is None else rows
+    _, data = _waiver_bindings(path)
+    out = waivers(path)
+    for row in rows:
+        if row.id not in out['verify-ok'] or row.brk or row.check.startswith('MANUAL:'):
+            continue
+        prior = data['bindings'].get(row.id)
+        if prior is None or prior['row_hash'] != waiver_hash(row) or \
+                prior['reason'] != out['verify-ok'][row.id]:
+            del out['verify-ok'][row.id]
     return out
 
 
@@ -195,7 +291,22 @@ def _zero_tests_matched(text):
     return None
 
 
-def run_check(cmd, timeout=1800, cwd=None):
+# Python validates a cached module by source mtime in whole seconds and size, so a same-length
+# break planted or restored within the second it was compiled would run the stale body. Checks
+# share one bytecode cache per source state; planting or restoring a break starts a new one.
+_pycache = []
+
+
+def source_changed():
+    while _pycache:
+        # a backgrounded child may still be writing here; never fail the run over it
+        shutil.rmtree(_pycache.pop(), ignore_errors=True)
+
+
+atexit.register(source_changed)
+
+
+def run_check(cmd, timeout=1800, cwd=None, row_id=None, phase='measurement'):
     """Return (ok, one-line summary, timed_out). A check passes only on exit 0 and, if it
     looks like a test runner, only when it actually matched something to run.
 
@@ -204,32 +315,57 @@ def run_check(cmd, timeout=1800, cwd=None):
 
     Output goes to a tempfile, not a pipe, so a backgrounded child that inherits stdout
     cannot hold the run open; the whole session is killed on timeout."""
+    if not _pycache:
+        _pycache.append(tempfile.mkdtemp(prefix='goalrun-pycache-'))
     with tempfile.TemporaryFile() as out:
         p = subprocess.Popen(cmd, shell=True, cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
-                             stderr=subprocess.STDOUT, start_new_session=True)
+                             stderr=subprocess.STDOUT, start_new_session=True,
+                             env={**os.environ, 'PYTHONPYCACHEPREFIX': _pycache[0]},
+                             pass_fds=(SESSION.workspace_fd,) if SESSION is not None else ())
         try:
             code = p.wait(timeout)
         except subprocess.TimeoutExpired:
             _kill_group(p)
+            out.seek(0)
+            if SESSION is not None:
+                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), True,
+                                     row_id=row_id, phase=phase, passed=False,
+                                     note=f'timed out after {timeout}s')
             return False, f'timed out after {timeout}s', True
         except KeyboardInterrupt:
             _kill_group(p)
+            out.seek(0)
+            if SESSION is not None:
+                SESSION.record_check(cmd, p.returncode, out.read().decode('utf-8', errors='replace'), False,
+                                     row_id=row_id, phase=phase, passed=False, note='interrupted')
             raise
         out.seek(0)
         text = out.read().decode('utf-8', errors='replace')
+    ok, note = code == 0, None
     if code == 0 and RUNNER_RE.search(cmd):
         # a runner that ran anything says so. Silence with exit 0 means the command never
         # reached it — one ledger carried `cd dir \&\& dotnet test ...`, and `sh -c` ran the
         # `cd` with two stray arguments, exit 0, and never called dotnet
         if not text.strip():
-            return False, ('the test runner printed nothing — the command never reached it; '
-                           'a stray backslash before && or || in the ledger is the usual cause'), False
-        marker = _zero_tests_matched(text)
-        if marker:
-            return False, (f'ran no test ({marker}) — the filter matched nothing, or every '
-                           f'test it matched was skipped'), False
+            ok, note = False, ('the test runner printed nothing — the command never reached it; '
+                               'a stray backslash before && or || in the ledger is the usual cause')
+        else:
+            marker = _zero_tests_matched(text)
+            if marker:
+                ok, note = False, (f'ran no test ({marker}) — the filter matched nothing, or every '
+                                   f'test it matched was skipped')
     tail = [l.strip() for l in text.splitlines() if l.strip()]
-    return code == 0, (tail[-1][:96] if tail else f'exit {code}'), False
+    note = note if note is not None else tail[-1][:96] if tail else f'exit {code}'
+    if SESSION is not None and SESSION.token:
+        # the note is printed and journalled as-is from here on; a check that echoes
+        # its parent command line (ps) would otherwise carry the writer token into
+        # the run log and the terminal, not just the private evidence files
+        note = note.replace(SESSION.token, '[redacted]')
+    if SESSION is not None:
+        # Publish the interpreted outcome, retaining the raw process exit code.
+        # A runner that matched nothing is already a failure at this boundary.
+        SESSION.record_check(cmd, code, text, False, row_id=row_id, phase=phase, passed=ok, note=note)
+    return ok, note, False
 
 
 def _digest(path):
@@ -248,19 +384,16 @@ def _digest(path):
 
 
 def _tree_hashes(root):
-    out = {}
-    for base, dirs, files in os.walk(root):
-        # a symlinked directory is an entry, not a directory to walk into: os.walk lists it
-        # under `dirs` and never yields its contents, so without this it is invisible
-        for name in files + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            path = os.path.join(base, name)
-            out[os.path.relpath(path, root)] = _digest(path)
-    return out
+    from run_cli import source_entries
+    return {os.path.normpath(relative): _mark(full)
+            for relative, full, directory in source_entries(root, sys.modules[__name__]) if not directory}
 
 
 BASELINE_SKIP = {'.git', 'node_modules', '__pycache__', '.venv', '.tox', '.mypy_cache',
                  'obj', 'bin', 'target', 'dist', 'build', '.next', '.testcases', '.codegraph',
                  '.terraform', '.gradle', '.cache', '.pytest_cache', '.ruff_cache', 'coverage'}
+# output directories: excluded only where Git ignores them; the rest of BASELINE_SKIP always
+OUTPUT_DIRS = {'bin', 'obj', 'target', 'dist', 'build'}
 # a deliverable is never this big; a database dump or a cached asset is, and reading it is
 # most of the walk. Its size and mtime stand in for its content — a change still registers
 BIG_FILE = 32 << 20
@@ -272,6 +405,8 @@ def _mark(path):
     also moves the mtime buys nothing."""
     try:
         st = os.lstat(path)
+        if not (stat.S_ISREG(st.st_mode) or stat.S_ISLNK(st.st_mode)):
+            return f'type:{stat.S_IFMT(st.st_mode)}:{st.st_mode & 0o7777}:{st.st_rdev}'
         if not os.path.islink(path) and st.st_size > BIG_FILE:
             return f'big:{st.st_size}:{st.st_mtime_ns}'
     except OSError:
@@ -279,7 +414,7 @@ def _mark(path):
     return _digest(path)
 
 
-def take_baseline(cwd=None, path=BASELINE, reset=False):
+def take_baseline(cwd=None, path=None, reset=False):
     """Record the content id of every file in the tree — the mark this run's work is measured
     against — and return (data, count).
 
@@ -290,19 +425,18 @@ def take_baseline(cwd=None, path=BASELINE, reset=False):
 
     A second baseline is refused unless `reset`: retaking it mid-run moves every mark to now and
     erases the evidence that anything shipped."""
+    path = path or BASELINE
     full = os.path.join(cwd or '.', path)
     if os.path.exists(full) and not reset:
         raise Misuse(f'a baseline already exists at {path} — the marks this run is measured '
                      f'against. Retaking it would read every deliverable as unchanged; '
                      f'`--baseline --reset` if that is really what you want')
     root = cwd or '.'
-    files = {}
-    for base, dirs, names in os.walk(root):
-        dirs[:] = [d for d in dirs if d not in BASELINE_SKIP]
-        for name in names + [d for d in dirs if os.path.islink(os.path.join(base, d))]:
-            p = os.path.join(base, name)
-            files[os.path.normpath(os.path.relpath(p, root))] = _mark(p)
-    data = {'taken': int(time.time()), 'files': files}
+    files = _tree_hashes(root)
+    from run_cli import ignore_rules, source_exclusions
+    engine = sys.modules[__name__]
+    data = {'taken': int(time.time()), 'files': files,
+            'excluded': source_exclusions(root, engine), 'ignore_rules': ignore_rules(root, engine)}
     os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
     with open(full, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=1, sort_keys=True)
@@ -310,7 +444,8 @@ def take_baseline(cwd=None, path=BASELINE, reset=False):
     return data, len(files)
 
 
-def read_baseline(path=BASELINE, cwd=None):
+def read_baseline(path=None, cwd=None):
+    path = path or BASELINE
     full = os.path.join(cwd or '.', path)
     if not os.path.exists(full):
         return None
@@ -318,27 +453,92 @@ def read_baseline(path=BASELINE, cwd=None):
         return json.load(f)
 
 
-def not_shipped(path, baseline_files, cwd=None):
+def not_shipped(path, baseline_files, cwd=None, baseline_exclusions=None, baseline_rules=None):
     """'' when the deliverable exists and differs from the baseline, else the reason.
 
-    A file the baseline never saw is new since then, so it shipped. A directory shipped when
-    anything under it was added, removed or changed."""
+    An authoritative file the baseline never saw is new since then, so it shipped.
+    Excluded outputs cannot be deliverables. A directory shipped when an authoritative
+    file under it was added, removed or changed.
+
+    A path the baseline never saw is classified by the ignore rules recorded with it, so
+    force-adding a file or editing the rules later cannot turn output into new work."""
+    from run_cli import baseline_ignores
+    with baseline_ignores(baseline_rules or []) as ignored:
+        return _not_shipped(path, baseline_files, cwd, baseline_exclusions, baseline_rules, ignored)
+
+
+def _not_shipped(path, baseline_files, cwd, baseline_exclusions, baseline_rules, ignored):
+    from run_cli import source_entries
     norm = os.path.normpath(path)
     if os.path.isabs(norm) or norm.split(os.sep)[0] == '..':
         return 'path leaves the repository'
     full = os.path.join(cwd or '.', norm)
     if not os.path.lexists(full):
         return 'does not exist'
+    authoritative = set(baseline_files)
+    for relative in baseline_files:
+        parent = os.path.dirname(relative)
+        while parent:
+            authoritative.add(parent)
+            parent = os.path.dirname(parent)
+
+    legacy_candidates = BASELINE_SKIP - OUTPUT_DIRS
+    if baseline_rules is None:
+        # A workspace can sit inside a parent worktree without its own .git.
+        # Resolve that context once, rather than spawning Git for every file.
+        try:
+            context = subprocess.run(['git', '-C', os.path.abspath(cwd or '.'),
+                                      'rev-parse', '--is-inside-work-tree'],
+                                     capture_output=True, timeout=10)
+        except FileNotFoundError:
+            pass
+        else:
+            if context.returncode == 0 and context.stdout.strip() == b'true':
+                legacy_candidates = BASELINE_SKIP
+
+    def excluded_at_baseline(relative, directory):
+        if relative in authoritative:
+            return False
+        if baseline_exclusions is not None and any(
+                relative == boundary or relative.startswith(boundary + os.sep)
+                for boundary in baseline_exclusions):
+            return True
+        parts = relative.split(os.sep)
+        if baseline_rules is None:
+            # Older baselines have no record of the ignore rules. A late tracked
+            # override cannot prove such a target was absent at initialization.
+            candidates = legacy_candidates
+        else:
+            candidates = BASELINE_SKIP - OUTPUT_DIRS
+            outputs = parts if directory else parts[:-1]
+            if any(part in OUTPUT_DIRS and ignored(os.sep.join(parts[:index + 1]))
+                   for index, part in enumerate(outputs)):
+                return True
+        return any(part in candidates for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
+               parts[-1] == '.coverage' or parts[-1].startswith('.coverage.')
+
+    if norm != os.curdir and excluded_at_baseline(norm, os.path.isdir(full) and not os.path.islink(full)):
+        return 'excluded at baseline; later tracking or ignore edits cannot establish a new deliverable'
+    selected = {os.path.normpath(relative): (source, directory)
+                for relative, source, directory in source_entries(cwd or '.', sys.modules[__name__])
+                if not excluded_at_baseline(os.path.normpath(relative), directory)}
+    if norm != os.curdir and norm not in selected:
+        return 'excluded generated, cache or private path; use an authoritative deliverable'
     if os.path.isdir(full) and not os.path.islink(full):
-        now = {os.path.normpath(os.path.join(norm, rel)): h for rel, h in _tree_hashes(full).items()}
-        then = {k: v for k, v in baseline_files.items()
-                if k == norm or k.startswith(norm + os.sep)}
+        def inside(relative):
+            return norm == os.curdir or relative == norm or relative.startswith(norm + os.sep)
+        # Keep the workspace root's exclusions and tracked overrides. Walking
+        # only the deliverable directory loses ignored-output ancestor context.
+        now = {relative: _mark(source) for relative, (source, directory) in selected.items()
+               if not directory and inside(relative)}
+        then = {relative: mark for relative, mark in baseline_files.items() if inside(relative)}
         return '' if now != then else 'unchanged since baseline'
     return '' if _mark(full) != baseline_files.get(norm) else 'unchanged since baseline'
 
 
-def load_signatures(path=SIGNOFF):
+def load_signatures(path=None):
     """id -> {who, date, what_hash, note}. Last line for an id wins."""
+    path = path or SIGNOFF
     sigs = {}
     if not os.path.exists(path):
         return sigs
@@ -353,38 +553,44 @@ def load_signatures(path=SIGNOFF):
     return sigs
 
 
-def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None):
+def decide(row, signatures, baseline_files=None, timeout=1800, cwd=None, baseline_exclusions=None,
+           baseline_rules=None):
     """Resolve one row to (status, note); status is PASS, FAIL or WAIT."""
     if row.check.startswith('MANUAL:'):
         owner = owner_of(row) or 'unassigned'
         sig = signatures.get(row.id)
         if not sig:
             return 'WAIT', f'awaiting {owner}'
+        if ' '.join(sig['who'].split()) != owner_of(row):
+            return 'WAIT', f'awaiting {owner} — signature is from a different owner'
         if sig['what_hash'] != what_hash(row.what):
             return 'WAIT', f'awaiting {owner} — signature is for an older wording'
         return 'PASS', f'signed by {sig["who"]} on {sig["date"]} — {sig["note"]}'
-    ok, note, _ = run_check(row.check, timeout, cwd)
+    ok, note, _ = run_check(row.check, timeout, cwd, row_id=row.id)
     if not ok:
         return 'FAIL', note
     if row.deliverable:
-        why = not_shipped(row.deliverable, baseline_files or {}, cwd)
+        why = not_shipped(row.deliverable, baseline_files or {}, cwd, baseline_exclusions, baseline_rules)
         if why:
             return 'FAIL', f'deliverable not shipped: {row.deliverable} — {why}'
     return 'PASS', note
 
 
-def report(rows, signatures, baseline_files, timeout, cwd=None, times=None):
+def report(rows, signatures, baseline_files, timeout, cwd=None, times=None, baseline_exclusions=None,
+           baseline_rules=None):
     """Print the table. Return [(status, row)]. `times`, if given, collects how long each
     distinct check took, which is what lets a caller price the work it is about to do."""
     width = max(len(r.id) for r in rows)
     results = []
     for row in rows:
         began = time.monotonic()
-        status, note = decide(row, signatures, baseline_files, timeout, cwd)
+        status, note = decide(row, signatures, baseline_files, timeout, cwd, baseline_exclusions, baseline_rules)
         if times is not None and not row.check.startswith('MANUAL:'):
             times.setdefault(row.check, time.monotonic() - began)
         print(f'{row.id:<{width}}  {status}  {row.what} — {note}')
         results.append((status, row))
+        if SESSION is not None:
+            SESSION.record_row(row, status, note)
     return results
 
 
@@ -399,8 +605,9 @@ def summary(results):
     return ', '.join(parts)
 
 
-def sign(rows, row_id, who, note, path=SIGNOFF, today=None):
+def sign(rows, row_id, who, note, path=None, today=None):
     """Append a human signature. The signer must be the row's owner."""
+    path = path or SIGNOFF
     row = next((r for r in rows if r.id == row_id), None)
     if row is None:
         raise Misuse(f'no row {row_id!r} in the ledger')
@@ -441,7 +648,7 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
     # one subjective row is normal — there is usually something a human must eyeball.
     # more than one is worth a second look, and past 30% of rows the ledger is a
     # list of promises — hence both conditions below.
-    if len(manual) > 1 and len(manual) / len(rows) > 0.30:
+    if 1 < len(manual) < len(rows) and len(manual) / len(rows) > 0.30:
         problems.append(f'{len(manual)} of {len(rows)} rows are MANUAL (>30%) — this ledger '
                         f'is mostly promises, not checks')
     shipping = [r.id for r in rows if r.deliverable]
@@ -475,6 +682,8 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
         except Misuse as e:
             misshapen.append(f'{r.id} ({e})')
             continue
+        if old_text is None and re.match(r'^(?:sed|rm|cp|mv|echo|printf|perl|python[0-9.]*|sh|bash|node)\s', path):
+            misshapen.append(f'{r.id} (shell command instead of a path)')
         if old_text is not None and not old_text:
             misshapen.append(f'{r.id} (nothing to find in {path})')
     if misshapen:
@@ -526,16 +735,24 @@ def lint(rows, signatures=None, has_baseline=True, waived=None, requirements=Non
                 f'`# no-row-ok:` (>30%) — a ledger measuring {len(requirements) - len(skipped)} '
                 f'of them is not gated by this list; add rows, or cut the list down to what '
                 f'this run is about')
+    for req in unmeasured(rows, requirements, waived):
+        problems.append(f'{req}: no row measures it — a requirement with no row is a '
+                        f'permanent pass; add a row, or waive it in the ledger with '
+                        f'`# no-row-ok: {req} — <reason>`')
+    return problems
+
+
+def unmeasured(rows, requirements, waived):
+    """Requirements that no row names and no `# no-row-ok:` waiver excuses."""
+    missing = []
     for req in (requirements or []):
         if req in waived['no-row-ok']:
             continue
         # whole-token match, so REQ-1 is not satisfied by a row that names REQ-10
-        pat = re.compile(rf'(?<![\w-]){re.escape(req)}(?![\w-])')
+        pat = re.compile(rf'(?<![\w.-]){re.escape(req)}(?![\w.-])')
         if not any(pat.search(r.id) or pat.search(r.what) for r in rows):
-            problems.append(f'{req}: no row measures it — a requirement with no row is a '
-                            f'permanent pass; add a row, or waive it in the ledger with '
-                            f'`# no-row-ok: {req} — <reason>`')
-    return problems
+            missing.append(req)
+    return missing
 
 
 def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
@@ -572,7 +789,7 @@ def blast_radius(row, rows, timeout, waived=(), allowance=None, cwd=None):
                 seen[other.check] = 'unswept'
             else:
                 lim = timeout if left is None else min(timeout, int(left))
-                ok, _, hung = run_check(other.check, lim, cwd)
+                ok, _, hung = run_check(other.check, lim, cwd, row_id=other.id, phase='blast')
                 # hitting the sweep's own cap is the sweep running out of time, not the check
                 # hanging — calling that `stuck` would file a real BLAST as a footnote
                 seen[other.check] = ('unswept' if hung and lim < timeout else
@@ -604,7 +821,8 @@ def hold_lock(path=LOCK):
     try:
         # `a+`, never `w`: `w` truncates before the lock is taken, wiping the pid of whoever
         # is holding it. The truncate below happens after the lock is ours
-        fd = open(path, 'a+', encoding='utf-8')
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        fd = os.fdopen(descriptor, 'a+', encoding='utf-8')
     except OSError as e:
         raise Misuse(f'cannot open the run lock {path}: {e}')
     try:
@@ -650,7 +868,7 @@ def parse_break(text):
     return parts[0], parts[1], parts[2]
 
 
-def plant(brk, cwd=None):
+def plant(brk, cwd=None, row_id=None):
     """Make the edit. Return (undo, why-not): `undo` is what restore() needs, or None with a
     reason the break could not fire — which is a finding about the break, and is known before
     the check ever runs."""
@@ -663,7 +881,12 @@ def plant(brk, cwd=None):
     with open(full, 'rb') as fh:
         was = fh.read()
     if old is None:
-        os.remove(full)
+        if SESSION is not None:
+            SESSION.prepare(row_id, path, was, None)
+            SESSION.delete(full)
+        else:
+            os.remove(full)
+        source_changed()
         return (full, was), None
     try:
         text = was.decode('utf-8')
@@ -675,22 +898,34 @@ def plant(brk, cwd=None):
     if seen > 1:
         return None, (f'{path} contains {old!r} {seen} times — a break names one place, so '
                       f'that the defect it plants is the one the requirement describes')
-    with open(full, 'wb') as fh:
-        fh.write(text.replace(old, new).encode('utf-8'))
+    planted = text.replace(old, new).encode('utf-8')
+    if SESSION is not None:
+        SESSION.prepare(row_id, path, was, planted)
+        SESSION.plant(full, planted)
+    else:
+        with open(full, 'wb') as fh:
+            fh.write(planted)
+    source_changed()
     return (full, was), None
 
 
 def restore(undo):
     """Put back exactly the bytes that were there."""
     full, was = undo
-    os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
-    with open(full, 'wb') as fh:
-        fh.write(was)
+    if SESSION is not None:
+        SESSION.restore(full, was)
+    else:
+        os.makedirs(os.path.dirname(full) or '.', exist_ok=True)
+        with open(full, 'wb') as fh:
+            fh.write(was)
+    source_changed()
 
 
 def keep_undo(row_id, undo, cwd=None):
     """Write the original bytes where the next run will find them. A verify killed outright
     never reaches its own restore, and a file left broken is worse than a slow proof."""
+    if SESSION is not None:
+        return  # named runs journal before planting, never afterwards
     d = os.path.join(cwd or '.', UNDO_DIR)
     os.makedirs(d, exist_ok=True)
     full, was = undo
@@ -701,6 +936,9 @@ def keep_undo(row_id, undo, cwd=None):
 
 
 def drop_undo(row_id, cwd=None):
+    if SESSION is not None:
+        SESSION.restored(row_id)
+        return
     for suffix in ('', '.path'):
         try:
             os.remove(os.path.join(cwd or '.', UNDO_DIR, row_id + suffix))
@@ -738,7 +976,7 @@ def _dur(seconds):
 
 
 def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BUDGET,
-           signatures=None, baseline_files=None):
+           signatures=None, baseline_files=None, baseline_exclusions=None, baseline_rules=None):
     """Run the ledger, then plant each row's break, prove its check goes red under it, and
     put the file back. Return True if every row passed and every break was caught.
 
@@ -755,7 +993,8 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     # does not re-run every check to learn what the run already printed
     scan = everything if blast else rows
     cost = {}
-    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost)
+    results = report(scan, signatures or {}, baseline_files or {}, timeout, cwd, cost, baseline_exclusions,
+                     baseline_rules)
     already = {r.id for st, r in results if st != 'PASS'}
     print()
     live = [r for r in rows
@@ -777,25 +1016,45 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     all_ok, ran, sweeps, spent = True, 0, 0, 0.0
     incomplete = []
     for row in rows:
-        if not row.brk:
-            print(f'skip {row.id} — no break column')
-            continue
         if row.check.startswith('MANUAL:'):
             print(f'skip {row.id} — MANUAL row')
+            if SESSION is not None and row.id not in already:
+                SESSION.record_row(row, 'VERIFIED', 'current human signature')
+            continue
+        if not row.brk:
+            print(f'skip {row.id} — no break column')
+            if SESSION is not None and row.id not in already:
+                valid_waiver = not ids and row.id in waived
+                SESSION.record_row(row, 'VERIFIED' if valid_waiver else 'SKIPPED',
+                                   'test-first waiver' if valid_waiver else 'no break column')
+                if not valid_waiver:
+                    all_ok = False
             continue
         if row.id in already:
             all_ok = False
             print(f'ALREADY RED {row.id} — its check fails before the break is planted, so '
                   f'the break proves nothing; fix the row, then verify it')
             continue
-        undo, why = plant(row.brk, cwd)
+        undo, why = plant(row.brk, cwd, row.id)
         if not undo:
             all_ok, ran = False, ran + 1
+            if SESSION is not None:
+                SESSION.record_row(row, 'BREAK FAILED', why)
             print(f'BREAK FAILED {row.id} — {why}')
             continue
-        keep_undo(row.id, undo, cwd)
         try:
-            ok, note, hung = run_check(row.check, timeout, cwd)
+            # journaling the original can itself fail — an id shaped like a path, a full
+            # disk — and the tree is already mutated, so the journal write belongs inside
+            # the try whose finally restores the break this row never got to verify
+            keep_undo(row.id, undo, cwd)
+            ok, note, hung = run_check(row.check, timeout, cwd, row_id=row.id, phase='mutation')
+            # a HOLLOW or STUCK verdict is known the moment its own mutation check
+            # ends; the sweep after it can block for the whole budget, and a kill
+            # during that window must not bury the failure the way it buries an
+            # unfinished footnote. An expected failure stays unpublished until the
+            # sweep is done: it is not a witnessed regression.
+            if SESSION is not None and (hung or ok):
+                SESSION.record_row(row, 'STUCK' if hung else 'HOLLOW', note)
             if blast:
                 began = time.monotonic()
                 left = None if budget is None else max(0.0, budget - spent)
@@ -805,9 +1064,17 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 if unswept:
                     incomplete.append(row.id)
             else:
-                same, crossed, stuck = [], [], []
+                same, crossed, stuck, unswept = [], [], [], []
             # the row's own verdict first, its sweep footnotes after — printed the other way
             # round, `shared` reads as the previous row's fallout
+            if SESSION is not None:
+                if hung:
+                    verdict = 'STUCK'
+                elif ok:
+                    verdict = 'HOLLOW'
+                else:
+                    verdict = 'VERIFIED'
+                SESSION.record_row(row, verdict, note)
             if hung:
                 all_ok, ran = False, ran + 1
                 print(f'STUCK {row.id} — its check timed out under the break rather than '
@@ -821,11 +1088,18 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
                 print(f'VERIFIED {row.id} — {note}')
             if crossed:
                 all_ok = False
+                if SESSION is not None:
+                    SESSION.record_row(row, 'BLAST', ', '.join(crossed))
                 print(f'BLAST {row.id} — its break also reddens {", ".join(crossed)}, which '
                       f'ship elsewhere; those checks cannot tell this defect from their own')
             if stuck:
+                all_ok = False
+                if SESSION is not None:
+                    SESSION.record_row(row, 'STUCK', ', '.join(stuck))
                 print(f'stuck {row.id} — {", ".join(stuck)} timed out under its break; those '
                       f'checks hang rather than fail, which the sweep cannot read either way')
+            if unswept and SESSION is not None:
+                SESSION.record_row(row, 'UNSWEPT', ', '.join(unswept))
             if same:
                 print(f'shared {row.id} — {", ".join(same)} went red too, as rows delivering '
                       f'the same file do')
@@ -835,6 +1109,10 @@ def verify(rows, ids, timeout, cwd=None, blast=False, waived=(), budget=SWEEP_BU
     if already:
         all_ok = False
     if not ran:
+        if SESSION is not None and not ids and not already and all(
+                r.check.startswith('MANUAL:') or (not r.brk and r.id in waived) for r in rows):
+            print('no mutation required — current human signatures/test-first waivers validated')
+            return True
         # rule 2, turned on the script itself: a run that proved nothing is not a pass
         where = 'no row in this selection' if ids else 'no row'
         print(f'NOTHING VERIFIED — {where} ran a break; --verify proved nothing')
@@ -878,7 +1156,20 @@ def main():
     # nothing until exit — forty minutes of an empty log reads as a dead run, and gets restarted
     sys.stdout.reconfigure(line_buffering=True)
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('--ledger', default=LEDGER)
+    from run_cli import ACTIONS, lifecycle, named_engine
+    from run_store import RunError
+    if len(sys.argv) > 1 and sys.argv[1] in ACTIONS:
+        try:
+            return lifecycle(sys.modules[__name__], sys.argv[1:])
+        except KeyboardInterrupt:
+            sys.stderr.write('interrupted — evidence and pending journals retained\n')
+            return 130
+        except (Misuse, RunError, OSError, ValueError) as e:
+            sys.stderr.write(f'{e}\n')
+            return 2
+    ap.add_argument('--run', help='persistent work id (init/list/inspect/resume to manage)')
+    ap.add_argument('--token', help='current writer token returned by resume')
+    ap.add_argument('--ledger')
     ap.add_argument('--timeout', type=int, default=1800, help='seconds per check')
     ap.add_argument('--requirements', metavar='PATH',
                     help='file of requirement ids, one per line; with --lint-ledger, names '
@@ -915,8 +1206,11 @@ def main():
                             'skips it')
     a = ap.parse_args()
     try:
-        return run(a)
-    except Misuse as e:
+        return named_engine(sys.modules[__name__], a)
+    except KeyboardInterrupt:
+        sys.stderr.write('interrupted — evidence and pending journals retained\n')
+        return 130
+    except (Misuse, RunError) as e:
         sys.stderr.write(f'{e}\n')
         return 2
     except Exception as e:  # ponytail: any crash is a broken ledger or setup, never a verdict
@@ -924,7 +1218,8 @@ def main():
         return 2
 
 
-def run(a):
+def run(a, locked=False):
+    a.ledger = a.ledger or LEDGER
     if (a.who or a.note) and not a.sign:
         raise Misuse('--who/--note only mean something with --sign')
     if a.reset and a.baseline is None:
@@ -933,6 +1228,9 @@ def run(a):
         raise Misuse('--requirements is read by --lint-ledger')
     if a.blast is not None and a.verify is None:
         raise Misuse('--blast/--no-blast is read by --verify')
+    if a.timeout < 1:
+        raise Misuse('--timeout is seconds per check; 0 or less times out every check '
+                     'and files each sibling as stuck')
 
     if a.requirements and not os.path.exists(a.requirements):
         raise Misuse(f'no requirements file at {a.requirements}')
@@ -943,29 +1241,32 @@ def run(a):
                          f'drop {a.baseline!r}')
         # under the lock like the checks: two writers to the baseline file at once could
         # interleave and leave it holding neither write
-        lock = hold_lock()
+        lock = None if locked else hold_lock()
         try:
             _, count = take_baseline(reset=a.reset)
         finally:
-            drop_lock(lock)
+            if lock is not None:
+                drop_lock(lock)
         print(f'baseline: {count} file(s) recorded -> {BASELINE}')
         return 0
 
     rows = load(a.ledger)
+    bind_waivers(a.ledger, rows)
 
     if a.sign:
-        lock = hold_lock()
+        lock = None if locked else hold_lock()
         try:
             date = sign(rows, a.sign, a.who, a.note)
         finally:
-            drop_lock(lock)
+            if lock is not None:
+                drop_lock(lock)
         print(f'{a.sign} signed by {" ".join(a.who.split())} on {date}')
         return 0
 
     baseline = read_baseline()
 
     if a.lint_ledger:
-        waived = waivers(a.ledger)
+        waived = authorized_waivers(a.ledger, rows)
         reqs = read_requirements(a.requirements) if a.requirements else None
         problems = lint(rows, load_signatures(), has_baseline=baseline is not None,
                         waived=waived, requirements=reqs)
@@ -973,7 +1274,8 @@ def run(a):
             print(p)
         if reqs:
             skipped = sum(1 for r in reqs if r in waived['no-row-ok'])
-            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped} carried by '
+            gaps = len(unmeasured(rows, reqs, waived))
+            print(f'coverage: {len(reqs)} requirement(s) · {len(reqs) - skipped - gaps} carried by '
                   f'rows · {skipped} waived ({skipped * 100 // len(reqs)}%)')
         if not a.requirements:
             print('coverage not checked — no --requirements file; only the rows that exist '
@@ -985,27 +1287,43 @@ def run(a):
     if not rows:
         raise Misuse('ledger has no rows')
 
-    lock = hold_lock()      # from here on the modes that run checks; nothing else builds
+    lock = None if locked else hold_lock()      # from here on the modes that run checks; nothing else builds
     try:
         return _run_checks(a, rows, baseline)
     finally:
-        drop_lock(lock)
+        if lock is not None:
+            drop_lock(lock)
 
 
 def _run_checks(a, rows, baseline):
     if a.verify is not None:
-        undo_a_killed_run()
+        waived = authorized_waivers(a.ledger, rows)['verify-ok']
+        supplied = waivers(a.ledger)['verify-ok']
+        selected = select(rows, a.verify) if a.verify else rows
+        stale = [r.id for r in selected if not r.brk and not r.check.startswith('MANUAL:')
+                 and r.id in supplied and r.id not in waived]
+        if stale:
+            print(f'STALE WAIVER {", ".join(stale)} — witness the revised test red, then '
+                  'replace its verify-ok reason with a new test-first, seen red observation')
+            return 1
+        if SESSION is None:
+            undo_a_killed_run()
         # the sweep costs a check per row per row, which on a slow check is most of the run,
         # so it is asked for rather than assumed; bare --blast means no budget, --blast N sets
         # one, N=0 sweeps nothing rather than everything, and --no-blast (-1) is explicit
         blast = a.blast is not None and a.blast != -1
         budget = max(0, a.blast or 0)
         ok = verify(rows, a.verify, a.timeout, blast=blast, budget=budget,
-                    waived=waivers(a.ledger)['verify-ok'], signatures=load_signatures(),
-                    baseline_files=baseline['files'] if baseline else {})
+                    waived=waived, signatures=load_signatures(),
+                    baseline_files=baseline['files'] if baseline else {},
+                    baseline_exclusions=baseline.get('excluded') if baseline else None,
+                    baseline_rules=baseline.get('ignore_rules') if baseline else None)
         print()
-        print(f'DONE — the ledger passes and every break was caught' if ok else
-              'NOT DONE — the ledger is not proven')
+        if SESSION is not None and a.verify:
+            print('PHASE OK — selected rows verified' if ok else 'PHASE NOT OK — selected rows unproven')
+        else:
+            print(f'DONE — the ledger passes and every break was caught' if ok else
+                  'NOT DONE — the ledger is not proven')
         return 0 if ok else 1
 
     # `is not None`, not truthiness: `--only ''` names no row, and falling through to the
@@ -1016,7 +1334,9 @@ def _run_checks(a, rows, baseline):
         raise Misuse(f'rows {", ".join(shipping)} name deliverables but no baseline is '
                      f'recorded — run --baseline first')
 
-    results = report(chosen, load_signatures(), baseline['files'] if baseline else {}, a.timeout)
+    results = report(chosen, load_signatures(), baseline['files'] if baseline else {}, a.timeout,
+                     baseline_exclusions=baseline.get('excluded') if baseline else None,
+                     baseline_rules=baseline.get('ignore_rules') if baseline else None)
     passed = sum(1 for s, _ in results if s == 'PASS')
     print()
     if a.only is not None:
@@ -1033,7 +1353,8 @@ def _run_checks(a, rows, baseline):
         unproven = [r.id for r in chosen if r.brk and not r.check.startswith('MANUAL:')]
         tail = (f', 0 of {len(unproven)} break row(s) proven — run --verify'
                 if unproven else '')
-        print(f'DONE — all {passed} check(s) pass{tail}')
+        verdict = 'MEASURED' if SESSION is not None else 'DONE'
+        print(f'{verdict} — all {passed} check(s) pass{tail}')
         return 0
     print(f'NOT DONE — {summary(results)}')
     return 1

@@ -237,15 +237,15 @@ def test_a_check_whose_tests_were_all_skipped_is_not_a_pass():
 
 def test_lint_flags_a_check_that_searches_text_instead_of_running_a_test():
     rows = [goalrun.Row('TAX', 'REQ-1 the base includes the inline note',
-                        "grep -q 'AddedLine' src/tax.cs", '', 'rm -f x'),
+                        "grep -q 'AddedLine' src/tax.cs", '', 'x'),
             goalrun.Row('REAL', 'REQ-2 rounds half-up',
-                        'python3 -m unittest -q tests.test_tax.TC_002', '', 'rm -f x')]
+                        'python3 -m unittest -q tests.test_tax.TC_002', '', 'x')]
     problems = goalrun.lint(rows)
     assert any('rows TAX search text' in p for p in problems), problems
     assert not any('REAL' in p for p in problems), problems
     # a test runner whose command also greps its own output is still a test
     piped = [goalrun.Row('A', 'REQ-1 x', 'pytest -q tests/test_a.py | grep -q passed', '',
-                         'rm -f x')]
+                         'x')]
     assert not any('search text' in p for p in goalrun.lint(piped)), goalrun.lint(piped)
 
 
@@ -289,8 +289,8 @@ def test_a_runner_that_prints_nothing_is_not_a_pass():
 
 
 def test_lint_names_a_row_with_escaped_and_and():
-    rows = [goalrun.Row('A', 'REQ-1 x', 'cd src \\&\\& dotnet test --filter X', '', 'rm -f x'),
-            goalrun.Row('B', 'REQ-2 y', "grep -E 'a\\|b' f.txt | pytest -q", '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'REQ-1 x', 'cd src \\&\\& dotnet test --filter X', '', 'x'),
+            goalrun.Row('B', 'REQ-2 y', "grep -E 'a\\|b' f.txt | pytest -q", '', 'x')]
     problems = goalrun.lint(rows)
     assert any('rows A contain' in p for p in problems), problems
     assert not any('B' in p and 'contain' in p for p in problems), 'a single \\| is grep alternation'
@@ -324,6 +324,8 @@ def test_baseline_records_the_whole_tree_before_any_ledger_exists():
         os.makedirs(os.path.join(tmp, 'obj'))
         open(os.path.join(tmp, 'src/a.txt'), 'w').write('v1\n')
         open(os.path.join(tmp, 'obj/out.bin'), 'w').write('build output\n')
+        open(os.path.join(tmp, '.gitignore'), 'w').write('obj/\n')
+        subprocess.run(['git', 'init', '-q'], cwd=tmp, check=True)
         out = run_cli(tmp, '--baseline')                 # no ledger anywhere
         assert out.returncode == 0, out
         data = json.load(open(os.path.join(tmp, goalrun.BASELINE)))
@@ -399,7 +401,7 @@ def test_work_done_before_the_baseline_reads_unchanged_end_to_end():
         os.makedirs(os.path.join(tmp, 'src'))
         open(os.path.join(tmp, 'src/a.py'), 'w').write('done already\n')
         run_cli(tmp, '--baseline')
-        ledger(tmp, 'A\tREQ-1\ttrue\tsrc/a.py\trm -f src/a.py\n')
+        ledger(tmp, 'A\tREQ-1\ttrue\tsrc/a.py\tsrc/a.py\n')
         out = run_cli(tmp)
         assert 'unchanged since baseline' in out.stdout, out.stdout
 
@@ -603,7 +605,7 @@ def test_a_row_whose_own_check_hangs_under_the_break_is_not_verified():
 def test_a_check_whose_output_says_timed_out_is_still_a_red_sibling():
     """`curl: (28) Connection timed out` is a failing check, not a hung one; classifying it by
     wording would silently downgrade a BLAST finding."""
-    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     sib = goalrun.Row('SIB', 'y', 'echo "connection timed out."; exit 1', 'src/y.py', '')
     same, crossed, stuck, _, _ = goalrun.blast_radius(row, [row, sib], 5)
     assert crossed == ['SIB'] and stuck == [], (crossed, stuck)
@@ -680,6 +682,54 @@ def test_verify_flags_a_hollow_check():
         assert 'HOLLOW A' in out.stdout and 'VERIFIED B' in out.stdout, out.stdout
         assert run_cli(tmp, '--verify', 'B').returncode == 0
         assert run_cli(tmp, '--verify', 'NOPE').returncode == 2
+
+
+def test_verify_sees_a_same_size_break_python_cached_in_the_same_second():
+    """Bytecode caches key on source mtime in whole seconds and size. A planted break
+    of the same length, written in the second the measurement compiled it, reads as
+    unchanged and the old body runs."""
+    with tempfile.TemporaryDirectory() as tmp:
+        open(os.path.join(tmp, 'app.py'), 'w').write('def ready():\n    return 1\n')
+        open(os.path.join(tmp, 'test_app.py'), 'w').write(
+            'import unittest, app\n'
+            'class T(unittest.TestCase):\n'
+            '    def test_ready(self):\n'
+            '        self.assertEqual(app.ready(), 1)\n')
+        ledger(tmp, f'A\tready is 1\t{sys.executable} -m unittest -q test_app\t—\t'
+                    'app.py :: return 1 :: return 0\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 0 and 'VERIFIED A' in out.stdout, out.stdout
+        assert not os.path.exists(os.path.join(tmp, '__pycache__')), \
+            'checks must not leave bytecode that can outlive a restored source'
+
+
+def test_checks_share_a_bytecode_cache_until_a_break_changes_source():
+    """Recompiling every module for every check made a sweep pay a full compile per check;
+    only a planted or restored break needs a fresh cache."""
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as notes:
+        make_tree(tmp)
+        seen = os.path.join(notes, 'seen.txt')
+        record = f'echo "$PYTHONPYCACHEPREFIX" >> {seen}'
+        ledger(tmp, f'A\tfirst\t{record}; grep -q old old.txt\t—\told.txt :: old :: new\n'
+                    f'B\tsecond\t{record}; grep -q old old.txt\t—\t—\n')
+        out = run_cli(tmp, '--verify', '--no-blast')
+        prefixes = open(seen).read().split()
+        assert len(prefixes) == 3, (prefixes, out.stdout)
+        assert prefixes[0] == prefixes[1], 'checks on unchanged source should share one cache'
+        assert prefixes[2] != prefixes[0], 'a planted break must not reuse the earlier cache'
+        assert not any(os.path.exists(p) for p in prefixes), 'caches are removed'
+
+
+def test_verify_restores_the_break_when_the_undo_journal_cannot_be_written():
+    with tempfile.TemporaryDirectory() as tmp:
+        make_tree(tmp)
+        # an id shaped like a path cannot become a journal file, and the tree is
+        # already planted when that surfaces — the restore must still run
+        ledger(tmp, 'AUTH/LOGIN\tsign-in works\tgrep -q old old.txt\t—	old.txt :: old :: broken\n')
+        out = run_cli(tmp, '--verify')
+        assert out.returncode == 2, out
+        assert open(os.path.join(tmp, 'old.txt')).read() == 'old\n', \
+            'a break whose journal cannot be written must not stay planted in the tree'
 
 
 def test_break_editing_an_unrelated_file_is_still_hollow_in_the_clone():
@@ -764,14 +814,14 @@ def test_load_rejects_manual_without_colon():
 
 
 def test_lint_warns_when_mostly_manual_but_allows_one():
-    r = lambda i, c: goalrun.Row(i, 'x', c, '', '' if c.startswith('MANUAL:') else 'rm -f x')
+    r = lambda i, c: goalrun.Row(i, 'x', c, '', '' if c.startswith('MANUAL:') else 'x')
     assert any('30%' in p for p in goalrun.lint([r('A', 'MANUAL:me'), r('B', 'MANUAL:me'),
                                                  r('C', 'npm test')]))
     assert goalrun.lint([r('A', 'npm test'), r('B', 'npm run lint'), r('UX', 'MANUAL:t')]) == []
 
 
 def test_lint_deliverables_need_a_baseline():
-    row = goalrun.Row('DARK', 'x', 'npm test', 'src/t.ts', 'rm src/t.ts')
+    row = goalrun.Row('DARK', 'x', 'npm test', 'src/t.ts', 'src/t.ts')
     assert any('baseline' in p for p in goalrun.lint([row], has_baseline=False))
     assert goalrun.lint([row], has_baseline=True) == []
 
@@ -819,7 +869,7 @@ def test_a_reasonless_waiver_cannot_eat_its_own_id():
 
 def test_an_empty_requirements_file_is_misuse():
     with tempfile.TemporaryDirectory() as tmp:
-        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        ledger(tmp, 'A\tx\ttrue\t\tx\n')
         open(os.path.join(tmp, 'reqs.txt'), 'w').write('# only a comment\n\n')
         out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
         assert out.returncode == 2 and 'no requirement ids' in out.stderr, out.stderr
@@ -827,7 +877,7 @@ def test_an_empty_requirements_file_is_misuse():
 
 def test_lint_says_when_coverage_was_not_checked():
     with tempfile.TemporaryDirectory() as tmp:
-        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        ledger(tmp, 'A\tx\ttrue\t\tx\n')
         out = run_cli(tmp, '--lint-ledger')
         assert out.returncode == 0 and 'coverage not checked' in out.stdout, out.stdout
 
@@ -856,7 +906,7 @@ def test_blast_separates_shared_deliverables_from_crossed_ones():
 
 def test_blast_normalises_the_deliverable_before_comparing():
     """`./src/x` and `src/x` are one file; comparing raw strings flips shared into BLAST."""
-    a = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    a = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     b = goalrun.Row('B', 'y', 'false', './src/x.py', '')
     c = goalrun.Row('C', 'z', 'exit 1', 'src/other.py', '')
     same, crossed, stuck, swept, _ = goalrun.blast_radius(a, [a, b, c], 5)
@@ -866,7 +916,7 @@ def test_blast_normalises_the_deliverable_before_comparing():
 
 def test_blast_separates_a_hung_check_from_a_confused_one():
     slow = goalrun.Row('SLOW', 'y', 'sleep 5', 'src/other.py', '')
-    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     same, crossed, stuck, _, _ = goalrun.blast_radius(row, [row, slow], 1)
     assert stuck == ['SLOW'] and crossed == [] and same == [], (same, crossed, stuck)
 
@@ -874,7 +924,7 @@ def test_blast_separates_a_hung_check_from_a_confused_one():
 def test_blast_runs_one_identical_check_once():
     """Rows sharing a command share its result — the pathological ledger is also the
     expensive one, so the sweep must not pay for it twice."""
-    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     twins = [goalrun.Row(i, 'y', 'sleep 0.4; false', 'src/y.py', '') for i in ('B', 'C', 'D')]
     start = time.time()
     same, crossed, stuck, swept, _ = goalrun.blast_radius(row, [row] + twins, 5)
@@ -884,7 +934,7 @@ def test_blast_runs_one_identical_check_once():
 
 
 def test_lint_flags_a_waiver_pointing_at_nothing():
-    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'x')]
     waived = {'verify-ok': {'GONE': 'stale'}, 'no-row-ok': {'REQ-9': 'stale'}}
     problems = goalrun.lint(rows, waived=waived, requirements=['REQ-1'])
     assert any('verify-ok: GONE' in p for p in problems), problems
@@ -894,7 +944,7 @@ def test_lint_flags_a_waiver_pointing_at_nothing():
 
 
 def test_lint_refuses_a_ledger_that_waives_most_of_the_list():
-    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'x')]
     reqs = [f'REQ-{n}' for n in range(1, 11)]
     # nine ids waived one by one, each with its own reason — the shape that passed before
     waived = {'verify-ok': {}, 'no-row-ok': {r: f'reason {r}' for r in reqs[1:]}}
@@ -902,7 +952,7 @@ def test_lint_refuses_a_ledger_that_waives_most_of_the_list():
     assert any('9 of 10 requirements are waived' in p for p in problems), problems
     # a third of the list is still a gate
     ok = {'verify-ok': {}, 'no-row-ok': {r: 'ships elsewhere' for r in reqs[:2]}}
-    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'rm -f x') for r in reqs[2:]]
+    rows = [goalrun.Row(r, f'{r} holds', 'true', '', 'x') for r in reqs[2:]]
     assert not goalrun.lint(rows, waived=ok, requirements=reqs), goalrun.lint(
         rows, waived=ok, requirements=reqs)
 
@@ -914,6 +964,11 @@ def test_lint_prints_the_coverage_ratio():
         open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\n')
         out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
         assert 'coverage: 2 requirement(s) · 1 carried by rows · 1 waived (50%)' in out.stdout, \
+            out.stdout
+        # a requirement no row names is a gap, not carried
+        open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\nREQ-2\nREQ-3\n')
+        out = run_cli(tmp, '--lint-ledger', '--requirements', 'reqs.txt')
+        assert 'coverage: 3 requirement(s) · 1 carried by rows · 1 waived (33%)' in out.stdout, \
             out.stdout
 
 
@@ -927,7 +982,7 @@ def test_requirements_file_rejects_a_line_that_is_not_an_id():
 def test_a_sibling_starved_by_the_deadline_is_unswept_not_stuck():
     """A slow check the sweep ran out of time for has not hung — filing it as `stuck` would
     turn a real BLAST into a footnote and let verify exit 0."""
-    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     slow_red = goalrun.Row('SLOW-RED', 'y', 'sleep 3; exit 1', 'src/y.py', '')
     same, crossed, stuck, swept, unswept = goalrun.blast_radius(
         row, [row, slow_red], 60, allowance=1)
@@ -937,7 +992,7 @@ def test_a_sibling_starved_by_the_deadline_is_unswept_not_stuck():
 
 def test_the_allowance_bounds_the_whole_sweep_not_each_check():
     """Distinct slow commands inside one sweep must not each get the full budget."""
-    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'rm -f src/x.py')
+    row = goalrun.Row('A', 'x', 'true', 'src/x.py', 'src/x.py')
     slow = [goalrun.Row(f'S{i}', 'y', f'sleep 4; exit {i}', 'src/y.py', '') for i in range(1, 4)]
     began = time.monotonic()
     *_, unswept = goalrun.blast_radius(row, [row] + slow, 60, allowance=2)
@@ -1025,14 +1080,14 @@ def test_requirements_file_rejects_two_ids_before_a_colon():
 def test_lint_flags_a_verify_ok_on_a_row_that_has_a_break():
     """A verify-ok on a row that carries a break silently removes it from every sweep —
     the waiver turns off the detector."""
-    rows = [goalrun.Row('A', 'x', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'x', 'true', '', 'x')]
     waived = {'verify-ok': {'A': 'why'}, 'no-row-ok': {}}
     assert any('has a break' in p for p in goalrun.lint(rows, waived=waived))
 
 
 def test_lint_flags_a_verify_ok_on_a_manual_row():
     rows = [goalrun.Row('UX', 'looks ok', 'MANUAL:t', '', ''),
-            goalrun.Row('A', 'x', 'true', '', 'rm -f x')]
+            goalrun.Row('A', 'x', 'true', '', 'x')]
     waived = {'verify-ok': {'UX': 'no break needed'}, 'no-row-ok': {}}
     assert any('MANUAL row' in p and 'UX' in p for p in goalrun.lint(rows, waived=waived))
 
@@ -1061,8 +1116,8 @@ def test_the_sweep_stops_on_its_budget_and_says_so():
     lie as a proof that never ran."""
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
-        rows = [goalrun.Row(f'R{i}', 'x', 'sleep 0.3; test -f old.txt', '',
-                            f'rm -f old.txt; : {i}') for i in range(4)]
+        rows = [goalrun.Row(f'R{i}', 'x', f'sleep 0.3; grep -q old old.txt && : {i}', '',
+                            f'old.txt :: old :: broken{i}') for i in range(4)]
         here = os.getcwd()
         os.chdir(tmp)
         try:
@@ -1128,16 +1183,16 @@ def test_verify_says_the_selection_ran_nothing():
 
 
 def test_waived_shape_survives_a_requirements_call():
-    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'REQ-1 x', 'true', '', 'x')]
     with tempfile.TemporaryDirectory() as tmp:
-        path = ledger(tmp, '# no-row-ok: REQ-2 — out of scope\nA\tREQ-1 x\ttrue\t\trm -f x\n')
+        path = ledger(tmp, '# no-row-ok: REQ-2 — out of scope\nA\tREQ-1 x\ttrue\t\tx\n')
         problems = goalrun.lint(rows, waived=goalrun.waivers(path),
                                 requirements=['REQ-1', 'REQ-2'])
         assert problems == [], problems
 
 
 def test_lint_names_requirements_no_row_measures():
-    rows = [goalrun.Row('EXPORT', 'REQ-EXP-001 csv export', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('EXPORT', 'REQ-EXP-001 csv export', 'true', '', 'x')]
     problems = goalrun.lint(rows, requirements=['REQ-EXP-001', 'REQ-DOC-002'])
     assert any('REQ-DOC-002' in p for p in problems), problems
     assert not any('REQ-EXP-001' in p for p in problems), problems
@@ -1146,7 +1201,7 @@ def test_lint_names_requirements_no_row_measures():
 
 
 def test_lint_does_not_let_req_10_satisfy_req_1():
-    rows = [goalrun.Row('A', 'REQ-10 done', 'true', '', 'rm -f x')]
+    rows = [goalrun.Row('A', 'REQ-10 done', 'true', '', 'x')]
     assert any('REQ-1:' in p for p in goalrun.lint(rows, requirements=['REQ-1']))
     assert goalrun.lint(rows, requirements=['REQ-10']) == []
 
@@ -1160,7 +1215,7 @@ def test_read_requirements_takes_ids_or_id_plus_description():
 
 def test_cli_requirements_only_reads_with_lint():
     with tempfile.TemporaryDirectory() as tmp:
-        ledger(tmp, 'A\tx\ttrue\t\trm -f x\n')
+        ledger(tmp, 'A\tx\ttrue\t\tx\n')
         open(os.path.join(tmp, 'reqs.txt'), 'w').write('REQ-1\n')
         assert run_cli(tmp, '--requirements', 'reqs.txt').returncode == 2
         missing = run_cli(tmp, '--lint-ledger', '--requirements', 'nope.txt')
@@ -1190,40 +1245,13 @@ def test_cli_lint_ledger_end_to_end():
         bad = run_cli(tmp, '--lint-ledger')
         assert bad.returncode == 1 and 'no owner' in bad.stdout and 'baseline' in bad.stdout, bad.stdout
         run_cli(tmp, '--baseline')
-        ledger(tmp, 'A\tsuite\tnpm test\t—\trm -rf src\n'
-                    'B\tlint\tnpm run lint\t—\tprintf "x" >> src/a.js\n'
+        ledger(tmp, 'A\tsuite\tnpm test\t—\tsrc/a.js\n'
+                    'B\tlint\tnpm run lint\t—\tsrc/a.js :: x :: y\n'
                     'UX\tok\tMANUAL:t\t—\n')
         good = run_cli(tmp, '--lint-ledger')
         assert good.returncode == 0, good.stdout
         ledger(tmp, '# nothing\n')
         assert run_cli(tmp, '--lint-ledger').returncode == 1
-
-
-if __name__ == '__main__':
-    failures = 0
-    for name, fn in sorted(globals().items()):
-        if name.startswith('test_') and callable(fn):
-            # several tests exercise exit-2 paths that write to stderr on purpose;
-            # hold that output and only show it when the test actually fails.
-            real, sys.stderr = sys.stderr, io.StringIO()
-            try:
-                fn()
-                noise = sys.stderr.getvalue()
-                sys.stderr = real
-                print(f'PASS {name}')
-            except BaseException as e:
-                noise = sys.stderr.getvalue()
-                sys.stderr = real
-                if isinstance(e, KeyboardInterrupt):
-                    raise
-                failures += 1
-                print(f'FAIL {name}: {e}')
-                for line in noise.splitlines():
-                    print(f'    {line}')
-    print()
-    print(f'{failures} failure(s)' if failures else 'all green')
-    sys.exit(1 if failures else 0)
-
 
 def test_verify_says_what_it_will_cost_before_the_first_break():
     """The pre-pass times every check; a proof that then goes quiet for rows × checks has no
@@ -1232,10 +1260,10 @@ def test_verify_says_what_it_will_cost_before_the_first_break():
     with tempfile.TemporaryDirectory() as tmp:
         make_tree(tmp)
         ledger(tmp, 'A\ta\tgrep -q old old.txt\t—	old.txt :: old :: x\n'
-                    'B\tb\tgrep -q new new.txt\t—\techo x > new.txt\n')
+                    'B\tb\tgrep -q new new.txt\t—\tnew.txt :: new :: x\n')
         open(os.path.join(tmp, 'new.txt'), 'w').write('new\n')
         out = run_cli(tmp, '--verify').stdout
-        assert '2 break row(s); a check takes' in out and 'sweep ≈' in out, out
+        assert '2 break row(s); a check takes' in out and 'sweep ≈' not in out, out
         assert out.index('break row(s)') < out.index('VERIFIED A'), out
         tight = run_cli(tmp, '--verify', '--blast', '0').stdout
         assert 'stop short' in tight and '`--blast SECONDS` raises it' in tight, tight
@@ -1297,3 +1325,28 @@ def test_lint_names_a_break_that_is_still_a_shell_command():
     problems = ' '.join(goalrun.lint(rows))
     assert 'breaks that are not an edit: A' in problems, problems
     assert ' B ' not in problems, problems
+
+if __name__ == '__main__':
+    failures = 0
+    for name, fn in sorted(globals().items()):
+        if name.startswith('test_') and callable(fn):
+            # several tests exercise exit-2 paths that write to stderr on purpose;
+            # hold that output and only show it when the test actually fails.
+            real, sys.stderr = sys.stderr, io.StringIO()
+            try:
+                fn()
+                noise = sys.stderr.getvalue()
+                sys.stderr = real
+                print(f'PASS {name}')
+            except BaseException as e:
+                noise = sys.stderr.getvalue()
+                sys.stderr = real
+                if isinstance(e, KeyboardInterrupt):
+                    raise
+                failures += 1
+                print(f'FAIL {name}: {e}')
+                for line in noise.splitlines():
+                    print(f'    {line}')
+    print()
+    print(f'{failures} failure(s)' if failures else 'all green')
+    sys.exit(1 if failures else 0)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Lint a docs-review report: verdict validity, duplicate IDs, missing citations."""
+import argparse
 import os
 import re
 import sys
@@ -9,10 +10,17 @@ VERDICTS_A = {"Covered", "Partial", "Missing", "Contradict", "Conflict", "Stale"
               "Unspecified", "Undecided"}
 VERDICTS_B = {"Stated", "Inferred", "Conflicting", "Absent"}
 NO_EVIDENCE_NEEDED = {"Missing", "Undecided", "Absent"}
-ID_RE = re.compile(r"^(REQ|DOC|Q)-[A-Z0-9]+-\d{3}$|^Q-?\d+$", re.I)
+ID_RE = re.compile(r"[A-Za-z0-9][\w.-]*")
 
 
 VERDICT_HEADERS = {"verdict", "answer", "confidence"}
+# A verdict column alone is not enough: a findings table like `| Component | Answer | Notes |`
+# carries answers too, and linting its rows would flag `parser` as a requirement with no
+# valid verdict. Verdict rows live in tables whose first column names the requirement/Q ID.
+ID_HEADERS = {"id", "req id", "requirement id", "q id", "question id"}
+# A plain `Requirement`/`Req` heading may head prose findings too; it keys a verdict table
+# only beside an explicit Verdict column.
+PLAIN_ID_HEADERS = {"requirement", "req"}
 
 
 def _cells(line):
@@ -22,12 +30,18 @@ def _cells(line):
     return [c.replace("\\|", "|").strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
 
 
-def rows(path):
-    """Yield (line number, cells) for data rows of tables that have a verdict column.
+def _keyed(header):
+    return (header[0] in ID_HEADERS and bool(set(header) & VERDICT_HEADERS)
+            or header[0] in PLAIN_ID_HEADERS and "verdict" in header)
 
-    The report also contains the requirement checklist and the round log, whose rows carry
-    IDs but no verdict. Linting those reports every checklist row as a duplicate with a
-    missing verdict, so tables are selected by their header.
+
+def rows(path, unkeyed=None):
+    """Yield (line number, cells, header) for data rows of tables that have a verdict column.
+
+    The report also contains the requirement checklist, the round log and findings tables
+    whose rows carry IDs or component names but no verdict. Linting those reports every
+    checklist row as a duplicate with a missing verdict, so tables are selected by their
+    header: a verdict column under a recognized requirement/Q-ID heading.
     """
     header = None
     for n, line in enumerate(open(path, encoding="utf-8"), 1):
@@ -39,10 +53,12 @@ def rows(path):
             continue
         cells = _cells(line)
         if header is None:
-            header = {c.lower() for c in cells}
+            header = [c.lower() for c in cells]
+            if unkeyed is not None and "verdict" in header and not _keyed(header):
+                unkeyed.append(n)
             continue
-        if header & VERDICT_HEADERS:
-            yield n, cells
+        if header and _keyed(header):
+            yield n, cells, header
 
 
 def selfcheck():
@@ -78,6 +94,18 @@ Searched the tree for: first, second, third — nothing outside the set.
 
 ## Round findings
 
+| Component | Answer | Notes |
+| --------- | ------ | ----- |
+| parser | Yes | findings may answer in their own words |
+
+| Question | Answer | Notes |
+| -------- | ------ | ----- |
+| What does the parser do? | It tokenizes | a prose question is not an ID |
+
+| Requirement | Answer | Notes |
+| ----------- | ------ | ----- |
+| The export must be fast | Unclear | prose under a plain heading, no verdict column |
+
 ## Round log
 
 | Round | Status | New rows | Verdict changes | Citations rejected | Nits |
@@ -107,9 +135,79 @@ Searched the tree for: first, second, third — nothing outside the set.
     assert counts == Counter({"Covered": 1, "Missing": 1, "Undecided": 1,
                               "Unspecified": 1}), counts
 
-    # The checklist and the round log carry IDs and numbers but no verdict column.
-    # Counting their rows is the bug this header selection exists to prevent.
+    # Imported spec IDs must survive session handoff without forced renumbering.
+    problems, counts = run(report.replace('REQ-A-', 'REQ-'))
+    assert problems == [], problems
+    assert sum(counts.values()) == 4, 'short imported REQ IDs silently disappeared'
+
+    for imported in ('R1', 'AUTH-7', 'REQ-1', 'REQ-1234'):
+        imported_report = report.replace('REQ-A-001', imported)
+        problems, counts = run(imported_report)
+        assert problems == [], problems
+        assert sum(counts.values()) == 4, f'{imported} silently disappeared'
+        fires(imported_report.replace(f'| {imported} | first | Covered | D1:1 | "x" |',
+                                      f'| {imported} | first | Covered | | |'),
+              'with no evidence or quote', f'{imported} without evidence')
+        fires(imported_report.replace('| REQ-A-003 | third | Undecided | | |',
+                                      f'| {imported} | third | Undecided | | |'),
+              f'duplicate ID {imported}', f'{imported} duplicate')
+    fires(report.replace('REQ-A-001', 'bad/id'), 'invalid requirement ID', 'malformed ID')
+
+    fires(report.replace('REQ-A-003', 'Undecided').replace('| Undecided | third | Undecided |',
+                                                          '| Undecided | third | TYPO |'),
+          'has no valid verdict', 'ID equals a verdict')
+    fires(report.replace('| REQ-A-003 | third | Undecided |',
+                         '| REQ-A-003 | Undecided | TYPO |'),
+          'has no valid verdict', 'requirement text equals a verdict')
+
+    # A Verdict column under a heading the linter cannot key on is reported, not skipped.
+    fires(report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
+                         "| Verdict | Req ID | Requirement | Evidence | Quote |"),
+          "not an ID heading", "verdict column first")
+
+    # A verdict table keyed by a plain `Requirement` or `Req` heading is still a verdict table;
+    # the same headings over prose answers (in the clean report above) are not.
+    for heading in ("Requirement", "Req"):
+        fires(report.replace("| Req ID | Requirement | Verdict | Evidence | Quote |",
+                             f"| {heading} | Requirement | Verdict | Evidence | Quote |")
+                    .replace("| Covered |", "| Coverd |", 1),
+              "has no valid verdict", f"{heading} heading")
+
+    # The checklist and the round log carry IDs and numbers but no verdict column, and the
+    # findings table answers in its own words under a Component heading. Counting those
+    # rows is the bug this header selection exists to prevent.
     assert sum(counts.values()) == 4, "non-verdict tables were linted"
+
+    # Mode B answers sit under a Q-ID heading: the ID requirement must not drop them.
+    mode_b = """## Source inventory
+
+| Doc ID | Path | What it is |
+| ------ | ---- | ---------- |
+| D1 | a.md | a document |
+
+Searched the tree for: first, second, third — nothing outside the set.
+
+## Sub-question answers
+
+| Q ID | Sub-question | Answer | Confidence | Evidence (doc + section) | Quote |
+| ---- | ------------ | ------ | ---------- | ------------------------ | ----- |
+| Q-1 | first | Stated | Stated | D1:1 | "x" |
+| Q-2 | second | Absent | Absent | searched: x, y in D1 | |
+
+## Round findings
+
+## Round log
+
+| Round | Status | New rows | Verdict changes | Citations rejected | Nits |
+| ----- | ------ | -------- | --------------- | ------------------ | ---- |
+| 1 | merged | 0 | 0 | 0 | 0 |
+"""
+    problems, counts = run(mode_b, verdicts=VERDICTS_B)
+    assert problems == [], problems
+    assert counts == Counter({"Stated": 1, "Absent": 1}), counts
+    fires(mode_b.replace("| Q-1 | first | Stated | Stated | D1:1 | \"x\" |",
+                         "| Q-1 | first | Stated | Typo | D1:1 | \"x\" |"),
+          'has no valid verdict', 'mode B row without a valid confidence')
 
     fires(report.replace("| REQ-A-001 | first | Covered | D1:1 | \"x\" |",
                          "| REQ-A-001 | first | Coverd | D1:1 | \"x\" |"),
@@ -189,6 +287,16 @@ Searched the tree for: first, second, third — nothing outside the set.
     problems, counts = run(mode_b, VERDICTS_B)
     assert problems == [], f"clean mode B report should lint clean, got {problems}"
     assert sum(counts.values()) == 3, counts
+
+    confidence_report = mode_b.replace('| Q ID | Sub-question | Answer | Evidence | Quote |',
+                                       '| Q ID | Sub-question | Answer | Confidence | Evidence | Quote |')
+    confidence_report = confidence_report.replace('| first | Stated |', '| first | The doc states x | Stated |')
+    confidence_report = confidence_report.replace('| second | Absent |', '| second | No answer | Absent |')
+    confidence_report = confidence_report.replace('| third | Inferred |', '| third | Derived answer | Inferred |')
+    problems, counts = run(confidence_report, VERDICTS_B)
+    assert problems == [] and sum(counts.values()) == 3, problems
+    problems, _ = run(confidence_report.replace('| The doc states x | Stated |', '| Stated | TYPO |'), VERDICTS_B)
+    assert any('has no valid verdict' in problem for problem in problems), problems
 
     os.chdir(here)
     shutil.rmtree(work, ignore_errors=True)
@@ -301,20 +409,27 @@ def lint(path, verdicts=VERDICTS_A):
     text_all = open(path, encoding="utf-8").read()
     docs, base = inventory(text_all), os.getcwd()
 
-    for n, cells in rows(path):
-        if len(cells) < 3 or not ID_RE.match(cells[0]):
+    unkeyed = []
+    for n, cells, header in rows(path, unkeyed):
+        rid = re.split(r"\s*\[OBSOLETE", cells[0], maxsplit=1, flags=re.I)[0].strip()
+        if not ID_RE.fullmatch(rid) or not re.search(r'[A-Za-z]', rid):
+            problems.append(f"{path}:{n}: invalid requirement ID {rid!r}")
+            continue
+        if len(cells) < 3:
+            problems.append(f"{path}:{n}: {rid} has an incomplete verdict row")
             continue
         # a retired row keeps its id and says so; it has no verdict to lint
-        if "[OBSOLETE" in cells[0].upper() or (len(cells) > 1 and "[OBSOLETE" in cells[1].upper()):
-            seen[cells[0].split()[0]] += 1
+        if "[OBSOLETE" in cells[0].upper() or "[OBSOLETE" in cells[1].upper():
+            seen[rid] += 1
             continue
-        rid, verdict = cells[0], next((c for c in cells if c in verdicts), None)
+        column = next(header.index(name) for name in ('verdict', 'confidence', 'answer') if name in header)
+        verdict = cells[column] if column < len(cells) and cells[column] in verdicts else None
         seen[rid] += 1
         if verdict is None:
             problems.append(f"{path}:{n}: {rid} has no valid verdict (one of {sorted(verdicts)})")
             continue
         counts[verdict] += 1
-        rest = " ".join(cells[cells.index(verdict) + 1:])
+        rest = " ".join(cells[column + 1:])
         if verdict not in NO_EVIDENCE_NEEDED:
             if not rest.strip():
                 problems.append(f"{path}:{n}: {rid} is '{verdict}' with no evidence or quote")
@@ -324,7 +439,7 @@ def lint(path, verdicts=VERDICTS_A):
                 problems.append(f"{path}:{n}: {rid} is '{verdict}' citing no line or section "
                                 f"(D1:12, D1 §2.3) — a file name is not a citation")
             else:
-                after = cells[cells.index(verdict) + 1:]
+                after = cells[column + 1:]
                 why = check_citation(rid, after[0] if after else "",
                                      after[1] if len(after) > 1 else "", docs, base)
                 if why:
@@ -338,6 +453,8 @@ def lint(path, verdicts=VERDICTS_A):
                                 f"of the spec's own word is how a search failure becomes a gap")
 
     problems += [f"{path}: duplicate ID {rid} ({c} rows)" for rid, c in seen.items() if c > 1]
+    problems += [f"{path}:{n}: table has a Verdict column but its first column is not an ID heading "
+                 f"(Req ID, ID, Q ID, Requirement, Req); its rows were not linted" for n in unkeyed]
 
     if not counts:
         problems.append(f"{path}: no verdict rows found — is this the right file?")
@@ -361,12 +478,18 @@ def lint(path, verdicts=VERDICTS_A):
 
 
 def main():
-    if "--selfcheck" in sys.argv:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("report", nargs="?", help="docs-review report (markdown)")
+    parser.add_argument("--mode", type=str.lower, choices=("a", "b"), default="a",
+                        help="a: requirement verdicts (default), b: investigation answers")
+    parser.add_argument("--selfcheck", action="store_true", help="run the built-in self-checks")
+    args = parser.parse_args()
+    if args.selfcheck:
         selfcheck()
         return 0
-    path = sys.argv[1]
-    verdicts = VERDICTS_B if "--mode" in sys.argv and "b" in sys.argv[-1].lower() else VERDICTS_A
-    problems, counts = lint(path, verdicts)
+    if args.report is None or not os.path.isfile(args.report):
+        parser.error(f"report not found: {args.report}" if args.report else "a report path is required")
+    problems, counts = lint(args.report, VERDICTS_B if args.mode == "b" else VERDICTS_A)
 
     print(f"{sum(counts.values())} rows: " + ", ".join(f"{v}={c}" for v, c in counts.most_common()))
     for p in problems:

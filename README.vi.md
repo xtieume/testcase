@@ -70,11 +70,28 @@ Bốn sơ đồ về chuỗi đó, và về cách `goalrun` quyết định mộ
 > [!TIP]
 > **Trên Claude Code, mở đầu bằng `/goal`.** `/goal` đặt một điều kiện được kiểm sau mỗi lượt, và Claude cứ làm tiếp tới khi điều kiện đạt — nên phiên chạy không dừng giữa chừng để hỏi có làm tiếp không:
 > ```
-> /goal /goalrun build tính năng export — xong khi goalrun.py exit 0 trên toàn bộ ledger
+> /goal /goalrun build tính năng export — xong khi --verify toàn ledger exit 0 và bằng chứng còn hiệu lực
 > ```
 
 > [!TIP]
 > **Nghĩ là đã xong rồi?** Hỏi *"cái này xong thật chưa?"* — `goalrun` kiểm lại công việc theo ledger và chỉ ra chỗ nào còn đỏ.
+
+## Tiếp tục công việc qua nhiều agent
+
+Mỗi mục tiêu là một run có tên trong `.testcases/runs/<id>/`, ngoài git; bảng test case chỉ vào
+repo khi bạn chỉ định đường dẫn. Agent khác trong cùng workspace tiếp tục như sau:
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # trước khi sửa
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # lưu token từ JSON vào TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # nhận token mới
+```
+
+Owner mới chạy lại `--verify` toàn ledger trước khi báo xong. Chi tiết:
+[Các skill này làm việc thế nào §5](docs/how-it-works.vi.md#5-run-độc-lập-và-bàn-giao-giữa-agent).
 
 ## Cài đặt
 
@@ -151,6 +168,7 @@ copy folder thay cho symlink. Mỗi host chọn một cách cài, tránh nạp t
 qua cả plugin lẫn native skills.
 
 **Chỉ một skill** — copy `.agents/skills/<name>/` vào thư mục tương ứng.
+Khi dùng `docs-review/` hoặc `testcase/`, copy thêm `goalrun/` để giữ trạng thái run.
 Skill kích hoạt bằng ngôn ngữ tự nhiên. Cách gọi trực tiếp tùy host:
 `$testcase` trên Codex, `/<name>` nếu hỗ trợ, hoặc công cụ `skill` trên OpenCode.
 

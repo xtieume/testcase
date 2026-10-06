@@ -1,6 +1,7 @@
 # Review Mode — Auditing Existing Test Cases
 
 Read this when the user hands you an existing test case list to review, improve, or check.
+Use `TESTCASES`, `TESTCASE_DIR`, `GOAL_DIR` from `SKILL.md`. A supplied table is the selected input; keep its IDs.
 
 ## The trap
 
@@ -34,7 +35,7 @@ Findings table:
 | ID | Verdict | Problem | Suggested fix |
 | -- | ------- | ------- | ------------- |
 
-Then the missing cases, in the standard generation format from `SKILL.md`, numbered from the highest existing ID — never renumber the user's cases. The findings file is a working artifact: write it to `.testcases/testcase/` (excluded via `.git/info/exclude`), never into the docs tree, never committed.
+Then the missing cases, in the standard generation format from `SKILL.md`, numbered from the highest existing ID — never renumber the user's cases. The findings file is a working artifact: write it to `$TESTCASE_DIR` (excluded via `.git/info/exclude`), never into the docs tree, never committed.
 
 **5. Leave good cases alone.**
 
@@ -42,7 +43,9 @@ Do not rewrite a case that is fine. A review touching everything is indistinguis
 
 **6. Lint the merged list.**
 
-Run `scripts/summarize.py` on the combined file. Add `--requirements` with the step-2 IDs — the highest-value check in review mode: a list someone else wrote is exactly where a whole requirement has no case at all.
+Write the combined file to `$TESTCASES` (or the recorded explicit output). Run
+`python3 scripts/summarize.py "$TESTCASES" --requirements "$GOAL_DIR/reqs.txt"` with
+the step-2 IDs — the highest-value check in review mode: a list someone else wrote is exactly where a whole requirement has no case at all. Keep requirements outside this review's scope.
 
 ## Reporting
 

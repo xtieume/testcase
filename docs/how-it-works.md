@@ -8,7 +8,8 @@ Four pictures. Everything here is drawn from the skills' own `SKILL.md` files.
 
 `docs-review` says what is required, `testcase` says how it is proven, `goalrun` says whether
 it holds. Each stage hands the next a set of ids, and each boundary has a gate that fails
-rather than passing in silence.
+rather than passing in silence. All three stages use the same explicitly selected run ID;
+requirements, reports and ledger inputs stay inside that run.
 
 ```mermaid
 flowchart TD
@@ -36,7 +37,7 @@ flowchart TD
         GR1 --> GR2 --> GR3
     end
 
-    GATE{"goalrun --lint-ledger --requirements"}
+    GATE{"goalrun --run ID --token TOKEN --lint-ledger"}
     OUT["Exit 0 = the ledger measures something"]
 
     SPEC --> DR1
@@ -79,8 +80,8 @@ flowchart TD
     subgraph WITH["With goalrun"]
         G1["Is it done?"]
         G2["Ledger: one row per requirement"]
-        G3["Run the script"]
-        G4{"Every row PASS?"}
+        G3["Run whole-ledger --verify for the selected run"]
+        G4{"Whole proof passed and evidence still current?"}
         G5["DONE — exit 0"]
         G6["NOT DONE — the table, naming every red and waiting row"]
         G1 --> G2 --> G3 --> G4
@@ -105,7 +106,7 @@ flowchart TD
     KIND{"check is MANUAL:owner?"}
 
     SIG{"Signed in signoff.tsv?"}
-    HASH{"Signature matches the current wording?"}
+    HASH{"Signature matches the current wording and MANUAL owner?"}
     WAIT["WAIT — awaiting that owner"]
 
     RUN["Run the check"]
@@ -122,7 +123,7 @@ flowchart TD
     KIND -->|"yes"| SIG
     SIG -->|"no"| WAIT
     SIG -->|"yes"| HASH
-    HASH -->|"no, wording changed"| WAIT
+    HASH -->|"no, wording or owner changed"| WAIT
     HASH -->|"yes"| PASS
 
     KIND -->|"no"| RUN
@@ -155,15 +156,17 @@ is asked for rather than assumed.
 
 ```mermaid
 flowchart TD
-    V["goalrun --verify"]
+    V["goalrun --run ID --token TOKEN --verify"]
     LOCK{"Another goalrun running checks in this tree?"}
     STOPL["Exit 2 — a check racing another build goes red for reasons that are not the code"]
 
+    RECOVER["Recover pending journals from every run; refuse conflicting edits"]
+    LINT["Gate requirement coverage against this run’s reqs.txt"]
     PRE["Pre-pass: run every check on the tree"]
     RED{"Row already red?"}
     AR["ALREADY RED — it proves nothing by going red again, and stays out of the sweep"]
 
-    PLANT["Make the edit the row's break describes"]
+    PLANT["Journal original and planted bytes, then apply the break"]
     MOVED{"Was there exactly one place to change?"}
     BF["BREAK FAILED — nothing to change, or two places; no check is spent on it"]
 
@@ -172,7 +175,7 @@ flowchart TD
     HOLLOW["HOLLOW — it passed, so every input it tries is one this defect is invisible in"]
     STUCK["STUCK — it hung, which proves nothing either way"]
     VERIFIED["VERIFIED — it went red, as it must"]
-    DROP["Write the file back, byte for byte"]
+    DROP["Compare current bytes, restore the original, then clear the journal"]
 
     SWEEP["--blast: run every other row under this same break"]
     SIB{"Which rows went red?"}
@@ -182,13 +185,14 @@ flowchart TD
 
     V --> LOCK
     LOCK -->|"yes"| STOPL
-    LOCK -->|"no"| PRE
+    LOCK -->|"no"| RECOVER
+    RECOVER --> LINT --> PRE
     PRE --> RED
     RED -->|"yes"| AR
-    RED -->|"no"| PLANT
-    PLANT --> MOVED
+    RED -->|"no"| MOVED
     MOVED -->|"no"| BF
-    MOVED -->|"yes"| CHECK
+    MOVED -->|"yes"| PLANT
+    PLANT --> CHECK
     CHECK --> RESULT
     RESULT -->|"passed"| HOLLOW
     RESULT -->|"hung"| STUCK
@@ -200,7 +204,10 @@ flowchart TD
     SWEEP -->|"out of sweeping time"| BUDGET
     VERIFIED --> DROP
     HOLLOW --> DROP
-    BF --> DROP
+    STUCK --> DROP
+    SHARED --> DROP
+    BLAST --> DROP
+    BUDGET --> DROP
 
     style VERIFIED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
     style SHARED fill:#d6f5dd,stroke:#2f7d4f,color:#12351f
@@ -213,7 +220,11 @@ flowchart TD
     style BUDGET fill:#fff3cd,stroke:#8a6d1f,color:#3b2f08
 ```
 
-Every box above is a string the script actually prints. `HOLLOW`, `STUCK`, `BLAST`,
+A MANUAL row passes only with the current owner's signature on its current wording. A
+test-first waiver is bound to its row: after the row changes, watch the revised test go red and
+write a new `test-first ... seen red ...` reason; re-verify or handoff never renews it.
+
+Verdicts are what the script observed. `HOLLOW`, `STUCK`, `BLAST`,
 `ALREADY RED`, `BREAK FAILED`, `NOTHING VERIFIED` and `SWEEP STOPPED` all exit 1: a run that
 proved nothing is not a pass.
 
@@ -221,3 +232,31 @@ proved nothing is not a pass.
 behaviour from the defect — every input it tries is an input this defect is invisible in. The
 route back is into `testcase`, whose `Distinguishes from` column names the wrong implementation
 each case rules out, never forwards into the ledger by re-pointing the row.
+
+## 5. Independent runs and agent handoff
+
+Each goal is one run: its requirements, ledger, baseline, reports, test case table and
+checkpoint live under `.testcases/runs/<id>/`, out of git. The test case table goes into the
+repo only if you name a path.
+
+```bash
+GOALRUN=.agents/skills/goalrun/scripts/goalrun.py
+python3 "$GOALRUN" init export-v1 --goal "Ship CSV export" --spec spec.md   # before any edit
+python3 "$GOALRUN" resume export-v1 --owner agent-a   # copy the JSON token into TOKEN
+python3 "$GOALRUN" checkpoint export-v1 --token "$TOKEN" --phase build --next "Implement TC-EXP-004"
+python3 "$GOALRUN" release export-v1 --token "$TOKEN" --note "Continue TC-EXP-004"
+python3 "$GOALRUN" resume export-v1 --owner agent-b   # receives a new token
+```
+
+- `release` saves the handoff note and revokes the old token. Baseline, IDs and failure counts
+  stay.
+- A new owner reruns the whole-ledger `--verify`. Done means `inspect` shows
+  `last_proof.whole_ledger_verified: true` and `proof_stale: false`. Editing source, spec,
+  tests or the test case table stales the old proof.
+- Ownership never expires. If the previous agent stopped mid-way, confirm it has stopped, then
+  `resume --expected-generation <n>` with the generation from `inspect`.
+- Continue only in the same workspace. Direct edits and external builds do not take goalrun's
+  lock.
+
+Details (fingerprint, excluded files, recovery, migration):
+[run context](../.agents/skills/goalrun/references/run-context.md).

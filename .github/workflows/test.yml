@@ -12,6 +12,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: goalrun self-checks
         run: python3 .agents/skills/goalrun/scripts/test_goalrun.py
+      - name: Persistent run lifecycle and storage regressions
+        run: python3 -m unittest discover -s .agents/skills/goalrun/scripts -p 'test_run*.py'
+      - name: Report and testcase linters
+        run: |
+          python3 .agents/skills/docs-review/scripts/check_report.py --selfcheck
+          python3 .agents/skills/testcase/scripts/summarize.py --selfcheck
       - name: Plugin packaging checks
         run: |
           python3 scripts/sync_plugins.py --check

@@ -1,7 +1,7 @@
 {
   "name": "testcase",
   "description": "Agent skills for requirements review, test cases, verified implementation, prompt normalization, and Notion/Slack capture.",
-  "version": "1.17.0",
+  "version": "1.17.1",
   "author": {
     "name": "xtieume"
   },

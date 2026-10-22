@@ -189,6 +189,7 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 | Skill | Does | Trigger |
 | ----- | ---- | ------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Test cases from a requirement or a Figma design, attacks its own output for missed cases, then implements the automatable ones as runnable tests and files what fails | "write test cases for…" |
+| 🔎 [`deep-review`](.agents/skills/deep-review/SKILL.md) | Reviews local changes or PRs with independently verified P0–P3 findings and an APPROVE/REQUEST_CHANGES/COMMENT verdict; `--fix` repairs verified defects | "review this PR", "/deep-review --fix" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
 
 ### Capture
@@ -202,7 +203,7 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 Conventions every skill here follows, so a new one is predictable before you open it:
 
 - **`SKILL.md` stays small.** Detail goes in `references/`, loaded only when the task needs it.
-- **Review before returning.** Skills that produce a deliverable end with an independent subagent pass that re-derives the work and attacks it, repeating until a round adds nothing.
+- **Review before returning.** Skills that produce a deliverable use an independent subagent pass. Follow each skill's stopping rule: `deep-review` caps review at three rounds and reports unresolved findings; documentation and testcase audits use their own convergence rules.
 - **Scripts are stdlib.** Python or Node, no install step unless the skill says otherwise; they lint the output rather than trusting it.
 - **Verdicts carry evidence.** Any claim about a document or requirement cites the line it came from.
 

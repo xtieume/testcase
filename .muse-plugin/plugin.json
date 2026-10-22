@@ -11,6 +11,10 @@
   "capabilities": {
     "skills": [
       {
+        "id": "deep-review",
+        "path": ".agents/skills/deep-review/SKILL.md"
+      },
+      {
         "id": "docs-review",
         "path": ".agents/skills/docs-review/SKILL.md"
       },

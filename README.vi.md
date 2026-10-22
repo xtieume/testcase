@@ -188,6 +188,7 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 | Skill | Làm gì | Kích hoạt |
 | ----- | ------ | --------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Sinh test case từ requirement hoặc từ design Figma, tự tấn công output của mình để tìm case bị sót, rồi implement các case automatable thành test chạy được và viết bug report cho cái fail | "viết test case cho…" |
+| 🔎 [`deep-review`](.agents/skills/deep-review/SKILL.md) | Review local diff hoặc PR, xác minh findings P0–P3 độc lập và kết luận APPROVE/REQUEST_CHANGES/COMMENT; `--fix` sửa lỗi đã xác minh | "review PR này", "/deep-review --fix" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Đối chiếu tài liệu với spec: spec yêu cầu gì vs tài liệu thực sự viết gì, mỗi verdict kèm trích dẫn | "review docs theo spec.md" |
 
 ### Thu thập
@@ -201,7 +202,7 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 Quy ước mà mọi skill ở đây tuân theo, để đoán được một skill mới trước khi mở nó ra:
 
 - **`SKILL.md` giữ nhỏ.** Chi tiết nằm trong `references/`, chỉ load khi task cần.
-- **Review trước khi trả kết quả.** Skill nào tạo ra deliverable đều kết thúc bằng một vòng subagent độc lập: tự dựng lại công việc và tấn công nó, lặp đến khi một round không thêm được gì.
+- **Review trước khi trả kết quả.** Skill tạo deliverable dùng một lượt subagent độc lập. Theo điều kiện dừng của từng skill: `deep-review` giới hạn ba vòng và báo lỗi còn tồn đọng; audit tài liệu và testcase có quy tắc hội tụ riêng.
 - **Script chỉ dùng stdlib.** Python hoặc Node, không cần cài gì trừ khi skill nói rõ; script lint output thay vì tin vào nó.
 - **Verdict phải có bằng chứng.** Mọi khẳng định về tài liệu hay requirement đều trích dẫn dòng đã lấy ra.
 

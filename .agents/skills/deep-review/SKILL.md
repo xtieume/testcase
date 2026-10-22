@@ -84,8 +84,8 @@ unless confirmed blocking defects require `REQUEST_CHANGES`; do not claim indepe
 
 Use [report-format.md](references/report-format.md) for severity and verdict rules.
 Lead with counts and verdict; report confirmed findings in P0–P3 order. Keep unresolved
-questions, optional improvements, and pre-existing defects separate. State what was checked,
-what was not, and the verification evidence. Zero findings is a valid result.
+questions and pre-existing defects separate. Drop findings that are only about style,
+diagnostics, or cleanup unless the user asks for them. State what was checked, what was not, and the verification evidence. Zero findings is a valid result.
 
 Without fix authorization, deliver the report and stop. With `--fix`, read
 [fix-and-rereview.md](references/fix-and-rereview.md), fix verified in-scope defects, run
@@ -101,4 +101,4 @@ Count the initial review as round 1. After changes, review the delta since the l
 snapshot, prior findings, and affected contracts. Do not restart a whole-repo hunt or repeat
 resolved/rejected findings without new evidence. Stop early when there is nothing actionable
 left; cap this invocation at three review rounds. At the cap, report remaining defects or
-uncertainty and recommend the next decision. A cap is not a passing result.
+uncertainty and recommend stepping back to reconsider the approach instead of patching further. A cap is not a passing result.

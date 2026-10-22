@@ -10,7 +10,7 @@
 | P3 — Low | Minor actionable issue or explicit convention violation with limited impact. |
 
 Do not elevate a SOLID smell to P1 without corresponding impact. Rare catastrophic failures
-can still be P0. Keep optional stylistic preferences outside the defect count.
+can still be P0. Stylistic preferences are not findings; drop them.
 
 ## Verdict rules
 
@@ -52,7 +52,7 @@ claiming passing checks but does not by itself prove the change should be reject
 - Areas inspected; exclusions, unavailable checks, unresolved questions
 
 ### Other observations
-- Pre-existing defects, rejected candidate IDs/reasons for re-review, optional improvements
+- Pre-existing defects, rejected candidate IDs/reasons for re-review
 ```
 
 Omit empty sections. Say explicitly when there are zero confirmed findings. Do not list

@@ -216,6 +216,8 @@ cd .agents/skills/playwright-cdp/scripts && npm install   # một lần
 
 Bỏ một folder vào `.agents/skills/<name>/` gồm `SKILL.md` (frontmatter `name` + `description`), kèm `references/` và `scripts/` nếu cần. Host đọc thư mục sẽ tự nhận skill. Muse cần danh sách tường minh: chạy `python3 scripts/sync_plugins.py` sau khi thêm hoặc xóa skill; CI kiểm tra sai lệch. Thêm một dòng vào bảng bên trên. Version không sửa tay: merge vào `main` sẽ tự đồng bộ version cho mọi manifest plugin, marketplace, Gemini, Pi và Hermes, tạo tag và publish release — commit `feat:` bump minor, có `!` hoặc `BREAKING CHANGE` bump major, còn lại bump patch.
 
+Khi sửa `deep-review`, chấm điểm nó theo các case trong [`references/evaluation.md`](.agents/skills/deep-review/references/evaluation.md) trước và sau khi sửa.
+
 ## Cấu trúc
 
 ```

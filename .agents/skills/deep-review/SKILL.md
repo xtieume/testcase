@@ -1,6 +1,7 @@
 ---
 name: deep-review
-description: Review local Git changes or a pull request for correctness, security, reliability, and design risks, with independently verified findings, P0–P3 severity, and an APPROVE/REQUEST_CHANGES/COMMENT report. Use --fix to implement verified fixes and re-review them.
+description: Use when the user asks to review code changes before merging — a pull request, branch, commit range, staged or uncommitted diff — for bugs, regressions, security or reliability risks — "review this PR", "review this pull request", "review my changes", "check this diff for bugs", "is this safe to merge?", "deep review", "find bugs in this branch", "review and fix", "/deep-review --fix" — or wants found defects fixed and the fix re-reviewed. Not for auditing documentation against a spec (docs-review) or reviewing test cases (testcase).
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, Agent
 ---
 
 # Deep Review
@@ -9,6 +10,14 @@ Find actionable defects, verify them, and report the evidence. Match the user's 
 Default to review only. `--fix` or an explicit request to fix authorizes scoped edits and
 verification without asking again. Neither mode authorizes posting GitHub comments or
 approvals, committing, pushing, or merging unless the user also requests those actions.
+
+```
+- [ ] 1. Target and snapshot recorded ⚠️ REQUIRED
+- [ ] 2. Lenses selected, candidates collected
+- [ ] 3. Fresh-context verifier ran, or its absence disclosed ⛔ BLOCKING before the report
+- [ ] 4. Report per report-format.md
+- [ ] 5. With --fix: fixes applied and re-verified; review rounds ≤ 3
+```
 
 ## 1. Establish the review target
 
@@ -93,9 +102,3 @@ snapshot, prior findings, and affected contracts. Do not restart a whole-repo hu
 resolved/rejected findings without new evidence. Stop early when there is nothing actionable
 left; cap this invocation at three review rounds. At the cap, report remaining defects or
 uncertainty and recommend the next decision. A cap is not a passing result.
-
-## Maintaining this skill
-
-For changes to the reviewer, use [evaluation.md](references/evaluation.md) to compare it
-against known defects and clean changes. Improve from demonstrated misses and false positives,
-not the number of comments produced.

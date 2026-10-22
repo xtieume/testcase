@@ -217,6 +217,8 @@ cd .agents/skills/playwright-cdp/scripts && npm install   # once
 
 Drop a folder into `.agents/skills/<name>/` with a `SKILL.md` (frontmatter `name` + `description`), plus optional `references/` and `scripts/`. Directory-based hosts discover it automatically. Muse requires an explicit list: run `python3 scripts/sync_plugins.py` after adding or removing a skill; CI checks for drift. Add a row to the table above. Versions are not edited by hand: merging to `main` synchronizes versions across all plugin, marketplace, Gemini, Pi, and Hermes manifests, tags the commit and publishes a release — `feat:` gives a minor bump, `!` or `BREAKING CHANGE` a major one, anything else a patch.
 
+To change `deep-review`, score it against the cases in [`references/evaluation.md`](.agents/skills/deep-review/references/evaluation.md) before and after the edit.
+
 ## Layout
 
 ```

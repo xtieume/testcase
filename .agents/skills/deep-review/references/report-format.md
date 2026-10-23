@@ -6,11 +6,12 @@
 | --- | --- |
 | P0 — Critical | Catastrophic impact such as destructive data loss or broad security compromise; immediate action required. |
 | P1 — High | Serious functional, security, or reliability regression; fix before merge. |
-| P2 — Medium | Concrete localized defect or material maintainability problem; fix or explicitly track follow-up. |
+| P2 — Medium | Concrete localized defect: wrong behavior, a broken contract, or a violated binding project rule. A maintainability note is not a finding unless it cites that rule and the obligation it breaks. |
 | P3 — Low | Minor actionable issue or explicit convention violation with limited impact. |
 
-Do not elevate a SOLID smell to P1 without corresponding impact. Rare catastrophic failures
-can still be P0. Drop stylistic preferences unless the user asks for suggestions.
+A SOLID smell is not a finding at any severity without a broken contract or a cited binding
+rule. Rare catastrophic failures can still be P0. Drop stylistic preferences unless the user
+asks for suggestions.
 
 ## Verdict rules
 

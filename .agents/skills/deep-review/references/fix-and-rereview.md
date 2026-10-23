@@ -22,10 +22,10 @@ Do not ask again whether to fix them. User restrictions such as "P0/P1 only" nar
    If delegation is unavailable or fails, run the inline challenge pass on the repair delta and
    mark passing fixes `fixed (inline-verified)`. Disclose missing independent verification and do
    not issue APPROVE.
-6. Finish within three review rounds per target including the initial pass and prior rounds.
-   Do not edit again after the final verification round without another verification;
-   instead report open work when the budget is exhausted. Fixes without passing verification
-   remain open/unverified, not fixed.
+6. Fixes made in a round do not increment the round count. The re-review of that repair
+   delta is the next review round. Finish within three review rounds per target, including
+   the initial pass and prior rounds. On round 3, do not edit; report the remaining work.
+   Fixes without passing verification remain open/unverified, not fixed.
 
 Final output uses the standard report, includes changed files and check results, and says
 what remains. `--fix` does not promise APPROVE; missing checks or unresolved findings retain

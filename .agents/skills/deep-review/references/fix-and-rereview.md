@@ -1,7 +1,7 @@
 # Fix mode
 
-`--fix` authorizes implementation of verified, in-scope defects. Do not ask again whether
-to fix them. User restrictions such as "P0/P1 only" narrow this scope.
+`--fix` or an explicit request to fix authorizes implementation of verified, in-scope defects.
+Do not ask again whether to fix them. User restrictions such as "P0/P1 only" narrow this scope.
 
 1. Finish candidate verification before edits. Repair confirmed P0–P3 defects in severity
    order. Do not automatically implement optional refactors, speculative candidates, or
@@ -19,9 +19,13 @@ to fix them. User restrictions such as "P0/P1 only" narrow this scope.
    contracts. Revalidate findings and checks at the final snapshot. Preserve IDs and reject
    newly disproved findings with reasons. Keep rejected/deferred dispositions unless new
    evidence changes them.
-6. Finish within three review rounds including the initial pass. Do not edit again after the
-   final verification round without another verification; instead report open work when the
-   budget is exhausted. Fixes without passing verification remain open/unverified, not fixed.
+   If delegation is unavailable or fails, run the inline challenge pass on the repair delta and
+   mark passing fixes `fixed (inline-verified)`. Disclose missing independent verification and do
+   not issue APPROVE.
+6. Finish within three review rounds per target including the initial pass and prior rounds.
+   Do not edit again after the final verification round without another verification;
+   instead report open work when the budget is exhausted. Fixes without passing verification
+   remain open/unverified, not fixed.
 
 Final output uses the standard report, includes changed files and check results, and says
 what remains. `--fix` does not promise APPROVE; missing checks or unresolved findings retain

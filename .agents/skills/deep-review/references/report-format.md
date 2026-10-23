@@ -10,7 +10,7 @@
 | P3 — Low | Minor actionable issue or explicit convention violation with limited impact. |
 
 Do not elevate a SOLID smell to P1 without corresponding impact. Rare catastrophic failures
-can still be P0. Stylistic preferences are not findings; drop them.
+can still be P0. Drop stylistic preferences unless the user asks for suggestions.
 
 ## Verdict rules
 
@@ -36,7 +36,7 @@ claiming passing checks but does not by itself prove the change should be reject
 **Findings:** N confirmed — P0: n · P1: n · P2: n · P3: n
 **Remaining:** N open · N fixed · N deferred
 **Target:** base/head SHAs or local snapshot; scope and risk
-**Review:** round N/3; independent verification performed or limitation
+**Review:** round N/3 cumulative for this target; independent verification performed or limitation
 
 ### Findings
 
@@ -45,7 +45,7 @@ claiming passing checks but does not by itself prove the change should be reject
 - Trigger and impact: inputs/state → actual outcome versus required outcome
 - Evidence: code path, contract, or reproduction; independent verification result
 - Fix: smallest correction addressing the root cause
-- Disposition: open | fixed (proof) | deferred (owner decision and follow-up)
+- Disposition: open | fixed (proof) | fixed (inline-verified) | deferred (owner decision and follow-up)
 
 ### Verification and coverage
 - Checks actually run: command, result, snapshot; relevant current CI links if used
@@ -53,6 +53,7 @@ claiming passing checks but does not by itself prove the change should be reject
 
 ### Other observations
 - Pre-existing defects, rejected candidate IDs/reasons for re-review
+- Requested suggestions (only when the user asked)
 ```
 
 Omit empty sections. Say explicitly when there are zero confirmed findings. Do not list

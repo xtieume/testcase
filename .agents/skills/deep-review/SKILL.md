@@ -16,7 +16,7 @@ approvals, committing, pushing, or merging unless the user also requests those a
 - [ ] 2. Lenses selected, candidates collected
 - [ ] 3. Fresh-context verifier ran, or its absence disclosed ⛔ BLOCKING before the report
 - [ ] 4. Report per report-format.md
-- [ ] 5. With --fix: fixes applied and re-verified; review rounds ≤ 3
+- [ ] 5. With --fix or an explicit request to fix: fixes applied and re-verified; rounds ≤ 3
 ```
 
 ## 1. Establish the review target
@@ -24,6 +24,9 @@ approvals, committing, pushing, or merging unless the user also requests those a
 - Inspect Git status before any checkout or edit. Preserve existing user work.
 - Honor an explicit diff, commit range, or PR. For unspecified local changes, include
   staged, unstaged, and relevant untracked source files; `git diff` alone misses two of these.
+  If the branch has commits ahead of the merge-base with the default branch (e.g. origin/main),
+  not the branch's own upstream, include them or ask which scope to use. State the chosen
+  scope in the report.
   If nothing changed, ask for a target instead of auditing the entire repository.
 - For a PR, use available GitHub tools or `gh` to read its intent, base/head SHAs, diff,
   existing review threads, and check results. Review the merge-base-to-head change, not
@@ -73,8 +76,8 @@ findings, but include actual check failures in the verdict. Do not assume CI is 
 When a verifier discovers a new candidate, verify it before promotion. Deduplicate by root
 cause; multiple agents agreeing or a numeric confidence score cannot replace evidence.
 Severity reflects impact independently of confidence or frequency.
-If verification keeps introducing disputed candidates, retain them as unresolved within the
-three-round budget; do not recursively spawn verifiers until somebody agrees.
+Run at most three verifier passes per review round; then retain remaining disputed candidates
+as unresolved. Do not recursively spawn verifiers until somebody agrees.
 
 If delegation is unavailable or fails, perform an explicit inline challenge pass and disclose
 the missing independent verification. Report confirmed code evidence, but use `COMMENT`
@@ -85,11 +88,12 @@ unless confirmed blocking defects require `REQUEST_CHANGES`; do not claim indepe
 Use [report-format.md](references/report-format.md) for severity and verdict rules.
 Lead with counts and verdict; report confirmed findings in P0–P3 order. Keep unresolved
 questions and pre-existing defects separate. Drop findings that are only about style,
-diagnostics, or cleanup unless the user asks for them. State what was checked, what was not, and the verification evidence. Zero findings is a valid result.
+diagnostics, or cleanup unless the user asks for them. State what was checked, what was not,
+and the verification evidence. Zero findings is a valid result.
 
-Without fix authorization, deliver the report and stop. With `--fix`, read
-[fix-and-rereview.md](references/fix-and-rereview.md), fix verified in-scope defects, run
-relevant checks, and deliver the final report with each finding's disposition.
+Without fix authorization, deliver the report and stop. With `--fix` or an explicit request
+to fix, read [fix-and-rereview.md](references/fix-and-rereview.md), fix verified in-scope defects,
+run relevant checks, and deliver the final report with each finding's disposition.
 
 ## 5. Make review converge
 
@@ -97,8 +101,12 @@ Keep stable finding IDs, snapshot, trigger, disposition, and evidence in the rep
 later review can resume. Use the user's report path when provided; otherwise report in chat.
 Do not commit transient review artifacts by default.
 
-Count the initial review as round 1. After changes, review the delta since the last reviewed
+Count the initial review as round 1; when resuming a prior deep-review report for the same
+target, continue its round count. After changes, review the delta since the last reviewed
 snapshot, prior findings, and affected contracts. Do not restart a whole-repo hunt or repeat
 resolved/rejected findings without new evidence. Stop early when there is nothing actionable
-left; cap this invocation at three review rounds. At the cap, report remaining defects or
-uncertainty and recommend stepping back to reconsider the approach instead of patching further. A cap is not a passing result.
+left; cap each target at three review rounds. At the cap, report remaining defects or
+uncertainty and recommend stepping back to reconsider the approach instead of patching further.
+A cap is not a passing result. After the cap, on an explicit new user request, review only the
+delta since the capped snapshot and prior open findings; report it as beyond the cap, repeat
+the step-back recommendation, and do not reset the count.

@@ -28,7 +28,8 @@ Select checks relevant to the change; checklist coverage is not proof of a bug.
   interface obligations, extension points, and dependency direction. Apply only where useful
   for the language and design; do not force object-oriented patterns onto unrelated code.
 - Explain how a design choice breaks a contract or impedes a stated requirement before treating
-  it as a defect. Drop preference-based refactors unless the user asks for suggestions.
+  it as a defect. Drop stylistic preferences and preference-based refactors unless the user
+  asks for suggestions.
 - Before recommending deletion, check callers, dynamic registration, public APIs, and supported
   feature flags. No search matches alone does not prove code is unused.
 - Use scoped project conventions and comments as evidence; distinguish a binding requirement

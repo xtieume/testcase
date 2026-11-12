@@ -27,6 +27,10 @@
         "path": ".agents/skills/playwright-cdp/SKILL.md"
       },
       {
+        "id": "req-audit",
+        "path": ".agents/skills/req-audit/SKILL.md"
+      },
+      {
         "id": "testcase",
         "path": ".agents/skills/testcase/SKILL.md"
       }

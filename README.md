@@ -169,7 +169,7 @@ folders instead of symlinking. Install once per host; avoid loading the same
 catalog through both a plugin and native skill links.
 
 **One skill only** — copy `.agents/skills/<name>/` into the relevant directory.
-Include `goalrun/` alongside `docs-review/` or `testcase/` for their persistent run context.
+Include `goalrun/` alongside `docs-review/`, `testcase/` or `req-audit/` for their persistent run context.
 Skills trigger on natural language. Explicit invocation is host-specific:
 `$testcase` on Codex, `/<name>` where supported, or OpenCode's `skill` tool.
 
@@ -190,6 +190,7 @@ Each name links to its `SKILL.md`, which is the reference for that skill — tri
 | ----- | ---- | ------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Test cases from a requirement or a Figma design, attacks its own output for missed cases, then implements the automatable ones as runnable tests and files what fails | "write test cases for…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Audits docs against a spec: required vs actually written, with a citation per verdict | "review the docs against spec.md" |
+| 📊 [`req-audit`](.agents/skills/req-audit/SKILL.md) | Renders a goalrun run as REQ-AUDIT.html: status per requirement from the recorded `--verify`, evidence with hover preview, items awaiting sign-off | "build the REQ-AUDIT report for this run" |
 
 ### Capture
 

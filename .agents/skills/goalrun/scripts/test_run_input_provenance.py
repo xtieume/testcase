@@ -47,9 +47,10 @@ class InputProvenanceTests(unittest.TestCase):
         (self.root / '.env').write_text('changed')
         self.assertTrue(self.inspect()['proof_stale'])
 
-    def test_ignored_file_named_build_remains_an_ordinary_input(self):
+    def test_ignored_file_listed_in_goalrun_include_remains_an_input(self):
         self.repository()
         (self.root / '.gitignore').write_text('.testcases/\nbuild\n')
+        (self.root / '.goalrun-include').write_text('/build\n')
         (self.root / 'build').write_text('accepted')
         self.prove("assert open('build').read() == 'accepted'")
         (self.root / 'build').write_text('changed')
@@ -57,6 +58,7 @@ class InputProvenanceTests(unittest.TestCase):
 
     def test_preexisting_ignored_file_deliverable_cannot_pass_unchanged(self):
         self.repository()
+        (self.root / '.goalrun-include').write_text('schema.json\n')
         (self.root / 'schema.json').write_text('{"version": 1}')
         token = self.init()
         self.ledger()
@@ -348,9 +350,8 @@ class InputProvenanceTests(unittest.TestCase):
         self.git('update-index', '--assume-unchanged', 'feature.txt')
         self.assertTrue(self.inspect()['proof_stale'])
 
-    def test_removed_empty_ignored_directory_invalidates_whole_proof(self):
+    def test_removed_empty_directory_invalidates_whole_proof(self):
         self.repository()
-        (self.root / '.gitignore').write_text((self.root / '.gitignore').read_text() + 'required/\n')
         (self.root / 'required').mkdir()
         self.prove("import os; assert os.path.isdir('required')")
         (self.root / 'required').rmdir()

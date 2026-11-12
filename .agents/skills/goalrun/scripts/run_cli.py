@@ -167,19 +167,39 @@ def tracked_paths(root):
             p.split('/')[0] not in {'.git', '.testcases'}]
 
 
-def source_paths(root, engine):
-    """Walk ordinary inputs, including ignored files and empty directories.
+def _git_list(root, *args):
+    """NUL-separated `git ls-files` output under root; empty outside Git."""
+    try:
+        result = subprocess.run(['git', '-C', root, 'ls-files', '-z', *args], capture_output=True, timeout=30)
+    except FileNotFoundError:
+        return []
+    return [p for p in os.fsdecode(result.stdout).split('\0') if p] if result.returncode == 0 else []
 
-    Ignore rules identify common generated-output directories, not arbitrary
-    input files. Tracked paths override output/cache exclusions; private run and
-    Git state never participate.
+
+# ignored paths that are still inputs: environment files, and the workspace's own list
+INCLUDE_FILE = '.goalrun-include'
+INCLUDE_DEFAULT = ('.env', '.env.*')
+
+
+def source_paths(root, engine):
+    """Walk ordinary inputs, including empty directories.
+
+    Git-ignored paths are not inputs (`.gitignore` files at any depth,
+    `info/exclude`, the global excludes file), except `.env`, `.env.*` and the
+    gitignore-syntax patterns in `.goalrun-include`. Tracked paths override every
+    exclusion except private run and Git state; dependency and cache names are
+    excluded even when not ignored.
     """
     root = os.path.abspath(root)
     tracked = set(tracked_paths(root))
     caches = engine.BASELINE_SKIP - engine.OUTPUT_DIRS
     private = {'.git', '.testcases'}
     ancestors = {str(parent) for path in tracked for parent in Path(path).parents}
-    outputs = {}
+    listed = _git_list(root, '--others', '--ignored', '--exclude-standard', '--directory')
+    ignored = {p.rstrip('/') for p in listed}
+    included = set(_git_list(root, '--others', '--ignored', *('--exclude=' + p for p in INCLUDE_DEFAULT),
+                             '--exclude-per-directory=' + INCLUDE_FILE))
+    holders = {str(parent) for path in included for parent in Path(path).parents}
 
     def excluded(relative, directory=False):
         parts = Path(relative).parts
@@ -190,21 +210,10 @@ def source_paths(root, engine):
         if any(part in caches for part in parts) or parts[-1] in {'coverage.xml', 'junit.xml'} or \
                 parts[-1] == '.coverage' or parts[-1].startswith('.coverage.'):
             return True
-        for index, part in enumerate(parts if directory else parts[:-1]):
-            if part not in engine.OUTPUT_DIRS:
-                continue
-            prefix = str(Path(*parts[:index + 1]))
-            if prefix not in outputs:
-                try:
-                    result = subprocess.run(['git', '-C', root, 'check-ignore', '--no-index', '-q', prefix + '/'],
-                                            capture_output=True, timeout=10)
-                except FileNotFoundError:
-                    outputs[prefix] = False
-                else:
-                    outputs[prefix] = result.returncode == 0
-            if outputs[prefix]:
-                return True
-        return False
+        if relative in included or (directory and relative in holders):
+            return False
+        # a wholly ignored directory is listed once; an included file can sit beneath it
+        return any(str(Path(*parts[:index + 1])) in ignored for index in range(len(parts)))
 
     paths = set(tracked)
     for base, dirs, names in os.walk(root):

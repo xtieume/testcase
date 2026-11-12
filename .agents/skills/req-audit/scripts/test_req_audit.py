@@ -54,8 +54,8 @@ class ReqAuditTests(unittest.TestCase):
             self.assertEqual(out.returncode, code, out.stdout + out.stderr)
         return out
 
-    def audit(self):
-        out = subprocess.run([sys.executable, str(SCRIPT), 'demo'], cwd=self.root, text=True,
+    def audit(self, *args):
+        out = subprocess.run([sys.executable, str(SCRIPT), 'demo', *args], cwd=self.root, text=True,
                              capture_output=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         return json.loads(out.stdout), (self.run / 'audit/REQ-AUDIT.html').read_text()
@@ -70,7 +70,8 @@ class ReqAuditTests(unittest.TestCase):
         self.goalrun('--run', 'demo', '--token', self.token, '--verify', code=1)
         result, page = self.audit()
         self.assertEqual(result['verify']['stale_because'], [])
-        self.assertIsNone(result['verify']['subset'])
+        self.assertIsNotNone(result['verify']['whole_ledger'])
+        self.assertEqual(result['verify']['subsets_after'], 0)
         self.assertEqual(result['status_counts'], {'PASS': 2, 'DEVIATION': 2, 'AWAITING_SIGN': 1,
                                                    'NO_TEST': 1, 'MISSING': 1})
         self.assertNotIn('REQ-A1', result['gaps'])
@@ -81,12 +82,25 @@ class ReqAuditTests(unittest.TestCase):
         self.assertEqual(page.count('<strong>R1</strong>'), 1)  # REQ-A10's row is not REQ-A1's
         self.assertEqual((self.root / 'feature.txt').read_text(), 'old\n')
 
+    def test_subset_verify_overlays_the_whole_ledger_one(self):
+        self.goalrun('--run', 'demo', '--token', self.token, '--verify', code=1)
+        (self.run / 'goalrun/ledger.tsv').write_text(LEDGER.replace('R2\tREQ-A2 quotes cells\ttrue', 'R2\tREQ-A2 quotes cells\tpython3 check.py'))
+        self.goalrun('--run', 'demo', '--token', self.token, '--verify', 'R2', code=0)
+        result, page = self.audit('--no-stale-check')
+        self.assertEqual(result['verify']['subsets_after'], 1)
+        self.assertEqual(result['verify']['latest']['subset'], 'R2')
+        self.assertEqual(result['status_counts']['PASS'], 3)  # R1, R6 from the whole run, R2 from the subset
+        self.assertIn('overlaid by 1 later subset run', page)
+
     def test_reports_stale_inputs_after_verify(self):
         self.goalrun('--run', 'demo', '--token', self.token, '--verify', code=1)
         (self.run / 'goalrun/ledger.tsv').write_text(LEDGER + 'R7\tREQ-A5 later\ttrue\t-\t\n')
         result, page = self.audit()
         self.assertIn('run-inputs', result['verify']['stale_because'])
         self.assertIn('Stale', page)
+        result, page = self.audit('--no-stale-check')
+        self.assertIsNone(result['verify']['stale_because'])
+        self.assertIn('Not checked against the current workspace', page)
 
     def test_reqs_jsonl_overrides_reqs_txt(self):
         (self.run / 'audit/data/reqs.jsonl').write_text('\n'.join(json.dumps(x) for x in [

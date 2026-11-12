@@ -20,9 +20,12 @@ workspace.
    recorded and still reportable — the page shows which rows broke.
 3. Build, from the workspace root:
    ```sh
-   python3 <skills>/req-audit/scripts/req_audit.py "$RUN" [--audit-dir DIR] [--fresh YYYY-MM-DD] [--title T] [--out FILE]
+   python3 <skills>/req-audit/scripts/req_audit.py "$RUN" [--audit-dir DIR] [--fresh YYYY-MM-DD] [--title T] [--out FILE] [--no-stale-check]
    ```
-4. Read the JSON it prints. `verify` null → no verify recorded; `verify.stale_because` non-empty
+   The staleness check re-fingerprints the workspace the way goalrun does, including ignored
+   files and nested repositories; on a large tree that takes many minutes. `--no-stale-check`
+   skips it, and the page and JSON (`stale_because: null`) then say freshness was not checked.
+4. Read the JSON it prints. `verify` null → no verify recorded; `verify.stale_because` null → not checked; non-empty
    → source, run inputs or spec changed since: rerun step 2 before reporting; `verify.subset` set
    → only those rows were proven. `gaps` lists each requirement missing a verified break, an
    automated test or evidence.

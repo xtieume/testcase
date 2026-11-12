@@ -30,6 +30,10 @@ def esc(value):
     return html.escape(str(value if value not in (None, '') else '—'), quote=True)
 
 
+def stamp(at):
+    return datetime.fromtimestamp(at).strftime('%Y-%m-%d %H:%M') if at else '?'
+
+
 def jsonl(path):
     if not path.is_file():
         return []
@@ -69,7 +73,7 @@ def verify_subset(argv):
     return None
 
 
-def latest_verify(store, view):
+def latest_verify(store, view, check_stale=True):
     results = []
     for path in Path(view['paths']['run_dir'], 'evidence').glob('*.json'):
         if '-check-' not in path.name:
@@ -78,15 +82,28 @@ def latest_verify(store, view):
                 results.append(result)
     if not results:
         return None
-    result = max(results, key=lambda r: r.get('at', 0))
+    results.sort(key=lambda r: r.get('at', 0))
+    wholes = [i for i, r in enumerate(results) if verify_subset(r.get('argv', [])) is None]
+    base = wholes[-1] if wholes else 0
+    # each row keeps the outcome of the newest verify that ran it, on top of the newest whole-ledger one
+    rows = {}
+    for r in results[base:]:
+        rows.update({rid: {**o, 'at': r.get('at')} for rid, o in r.get('rows', {}).items()})
+    result = results[-1]
     if result.get('state') != 'completed':
         stale = ['unfinished']
+    elif not check_stale:
+        stale = None
     else:
         current = run_cli.fingerprint(store, view, goalrun)
         # runtime digests this process's environment, which differs from the shell that ran --verify
         stale = [g for g in current if g != 'runtime' and result['fingerprint'].get(g) != current[g]]
-    return {'id': result['id'], 'at': result.get('at'), 'exit_code': result.get('exit_code'),
-            'subset': verify_subset(result.get('argv', [])), 'rows': result.get('rows', {}), 'stale_because': stale}
+    return {'whole_ledger': {'id': results[base]['id'], 'at': results[base].get('at'),
+                             'exit_code': results[base].get('exit_code')} if wholes else None,
+            'subsets_after': len(results) - base - bool(wholes),
+            'latest': {'id': result['id'], 'at': result.get('at'), 'exit_code': result.get('exit_code'),
+                       'subset': verify_subset(result.get('argv', []))},
+            'rows': rows, 'stale_because': stale}
 
 
 def evidence_index(audit):
@@ -143,7 +160,7 @@ def texts(record, key, cls=''):
     return ''.join(f"<div class='{cls}'>{esc((lang + ': ') if lang else '')}{esc(t)}</div>" for lang, t in localized(record, key))
 
 
-def build(root, run_id, audit=None, out=None, title=None, fresh=None):
+def build(root, run_id, audit=None, out=None, title=None, fresh=None, check_stale=True):
     store = Store(root)
     view = store.inspect(run_id)
     goal_dir = Path(view['paths']['goalrun_dir'])
@@ -152,7 +169,7 @@ def build(root, run_id, audit=None, out=None, title=None, fresh=None):
     title = title or f'Requirement audit · {run_id}'
     rows = goalrun.load(str(goal_dir / 'ledger.tsv'))
     reqs = requirements(audit, goal_dir, rows)
-    verify = latest_verify(store, view)
+    verify = latest_verify(store, view, check_stale)
     outcome = verify['rows'] if verify else {}
     by_req = evidence_index(audit)
     adequacy_path = audit / 'data' / 'adequacy.json'
@@ -188,7 +205,8 @@ def build(root, run_id, audit=None, out=None, title=None, fresh=None):
             '<small>Evidence adequate</small>' if ad and ad.get('yes') else
             '<small>Evidence not adequate</small>' + ''.join(f'<small>{esc(b)}</small>' for b in (ad or {}).get('blockers', [])[:2]))
         checks = ''.join(f"<div title='{esc(e['check'])}'><strong>{esc(e['id'])}</strong> {esc(e['check'][:100])}"
-                         f"<small>goalrun: {esc(e['status'])}{' — ' + esc(e['note']) if e.get('note') else ''}</small></div>"
+                         f"<small>goalrun: {esc(e['status'])}{' · ' + stamp(e['at']) if e.get('at') else ''}"
+                         f"{' — ' + esc(e['note']) if e.get('note') else ''}</small></div>"
                          for e in entries) or 'No ledger row'
         reason = f"<small>Obsolete: {esc(r.get('obsolete_reason'))}</small>" if status == 'OBSOLETE' else ''
         group = 'Obsolete' if status == 'OBSOLETE' else (r.get('area') or 'Other')
@@ -210,10 +228,15 @@ def build(root, run_id, audit=None, out=None, title=None, fresh=None):
                      f"<th>Requirement</th><th>Status</th><th>Ledger rows</th><th>Evidence</th></tr></thead><tbody>{''.join(groups[g])}</tbody></table></details>"
                      for g in order)
     if verify:
-        when = datetime.fromtimestamp(verify['at']).strftime('%Y-%m-%d %H:%M') if verify.get('at') else '?'
-        scope = f"rows {verify['subset']}" if verify['subset'] else 'whole ledger'
-        source = f"Statuses from goalrun --verify ({scope}) at {esc(when)}, exit {esc(verify['exit_code'])}."
-        if verify['stale_because']:
+        whole = verify['whole_ledger']
+        source = (f"Statuses from the whole-ledger goalrun --verify at {stamp(whole['at'])} (exit {esc(whole['exit_code'])})"
+                  if whole else '<strong>⚠ No whole-ledger --verify recorded</strong>; statuses from subset runs')
+        if verify['subsets_after']:
+            source += f", overlaid by {verify['subsets_after']} later subset run(s), the newest at {stamp(verify['latest']['at'])}"
+        source += '. Each ledger row shows when it was last verified.'
+        if verify['stale_because'] is None:
+            source += ' <strong>⚠ Not checked against the current workspace (--no-stale-check).</strong>'
+        elif verify['stale_because']:
             source += f" <strong>⚠ Stale: {esc(', '.join(verify['stale_because']))} changed since — rerun --verify.</strong>"
     else:
         source = '<strong>⚠ This run has no recorded --verify: every ledger row shows "not run".</strong>'
@@ -270,8 +293,11 @@ def main():
     ap.add_argument('--out', help='output HTML (default: <audit-dir>/REQ-AUDIT.html)')
     ap.add_argument('--title')
     ap.add_argument('--fresh', metavar='YYYY-MM-DD', help='once a REQ has captures from this date, hide its older ones')
+    ap.add_argument('--no-stale-check', action='store_true',
+                    help="skip re-fingerprinting the workspace (goalrun's full walk; slow on large trees)")
     a = ap.parse_args()
-    print(json.dumps(build(a.root, a.run, a.audit_dir, a.out, a.title, a.fresh), ensure_ascii=False, indent=1))
+    print(json.dumps(build(a.root, a.run, a.audit_dir, a.out, a.title, a.fresh, not a.no_stale_check),
+                     ensure_ascii=False, indent=1))
 
 
 if __name__ == '__main__':

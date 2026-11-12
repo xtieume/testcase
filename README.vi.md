@@ -168,7 +168,7 @@ copy folder thay cho symlink. Mỗi host chọn một cách cài, tránh nạp t
 qua cả plugin lẫn native skills.
 
 **Chỉ một skill** — copy `.agents/skills/<name>/` vào thư mục tương ứng.
-Khi dùng `docs-review/` hoặc `testcase/`, copy thêm `goalrun/` để giữ trạng thái run.
+Khi dùng `docs-review/`, `testcase/` hoặc `req-audit/`, copy thêm `goalrun/` để giữ trạng thái run.
 Skill kích hoạt bằng ngôn ngữ tự nhiên. Cách gọi trực tiếp tùy host:
 `$testcase` trên Codex, `/<name>` nếu hỗ trợ, hoặc công cụ `skill` trên OpenCode.
 
@@ -189,6 +189,7 @@ Mỗi tên link tới `SKILL.md` của nó — đó là tài liệu tham chiếu
 | ----- | ------ | --------- |
 | 🧪 [`testcase`](.agents/skills/testcase/SKILL.md) | Sinh test case từ requirement hoặc từ design Figma, tự tấn công output của mình để tìm case bị sót, rồi implement các case automatable thành test chạy được và viết bug report cho cái fail | "viết test case cho…" |
 | 📋 [`docs-review`](.agents/skills/docs-review/SKILL.md) | Đối chiếu tài liệu với spec: spec yêu cầu gì vs tài liệu thực sự viết gì, mỗi verdict kèm trích dẫn | "review docs theo spec.md" |
+| 📊 [`req-audit`](.agents/skills/req-audit/SKILL.md) | Dựng REQ-AUDIT.html từ một run goalrun: trạng thái từng requirement theo kết quả `--verify` đã ghi, evidence ảnh/video xem trước khi hover, các mục chờ ký | "tạo report REQ-AUDIT cho run này" |
 
 ### Thu thập
 

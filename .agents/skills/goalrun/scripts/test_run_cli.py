@@ -830,6 +830,47 @@ with run_cli.workspace_lock(goalrun) as lock:
         implementation.write_text('changed')
         self.assertTrue(self.inspect()['evidence_stale'])
 
+    def verified_in_git(self, ignore, files):
+        subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        (self.root / '.gitignore').write_text(ignore)
+        for name, text in files.items():
+            (self.root / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.root / name).write_text(text)
+        token = self.init()
+        self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",
+                    brk='feature.txt :: old :: broken')
+        self.cli('--run', 'export', '--token', token, '--verify')
+        self.assertFalse(self.inspect()['evidence_stale'])
+        return json.loads((self.folder() / 'goalrun/baseline.json').read_text())['files']
+
+    def test_git_ignored_file_is_not_an_input(self):
+        # code-review-graph's hook rewrites graph.db on every tool call of any session,
+        # and ignores itself with a nested `*`
+        baseline = self.verified_in_git('', {'.code-review-graph/.gitignore': '*\n',
+                                             '.code-review-graph/graph.db': 'before'})
+        self.assertNotIn('.code-review-graph/graph.db', baseline)
+        (self.root / '.code-review-graph/graph.db').write_text('rewritten by another session')
+        self.assertFalse(self.inspect()['evidence_stale'])
+        (self.root / 'feature.txt').write_text('new\n')
+        self.assertEqual(self.inspect()['proof_stale_because'], ['source'])
+
+    def test_ignored_env_file_is_still_an_input(self):
+        baseline = self.verified_in_git('.env*\n', {'.env.local': 'FLAG=accepted'})
+        self.assertIn('.env.local', baseline)
+        (self.root / '.env.local').write_text('FLAG=changed')
+        self.assertEqual(self.inspect()['proof_stale_because'], ['source'])
+
+    def test_goalrun_include_keeps_an_ignored_path_an_input(self):
+        baseline = self.verified_in_git('generated/\n', {'.goalrun-include': 'generated/schema.sql\n',
+                                                          'generated/schema.sql': 'v1',
+                                                          'generated/noise.log': 'a'})
+        self.assertIn('generated/schema.sql', baseline)
+        self.assertNotIn('generated/noise.log', baseline)
+        (self.root / 'generated/noise.log').write_text('b')
+        self.assertFalse(self.inspect()['evidence_stale'])
+        (self.root / 'generated/schema.sql').write_text('v2')
+        self.assertEqual(self.inspect()['proof_stale_because'], ['source'])
+
     def test_mixed_subset_verify_cannot_hide_a_skipped_row(self):
         token = self.init()
         self.ledger(command="python3 -c \"assert open('feature.txt').read() == 'old\\n'\"",

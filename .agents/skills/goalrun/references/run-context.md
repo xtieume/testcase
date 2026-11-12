@@ -100,8 +100,8 @@ python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify
   passes.
 - New ownership epoch: whole-ledger rerun before completion even if source is unchanged.
   Previous proof is not current proof.
-- **Source files.** Ordinary ignored files (`.env`, pre-existing schema deliverables), empty
-  directories; init records that set. Symlink identity and target; follow directory links;
+- **Source files.** Untracked and tracked files, empty directories; init records that set.
+  Git-ignored paths are not inputs, except `.env`, `.env.*` and what `.goalrun-include` lists. Symlink identity and target; follow directory links;
   detect cycles. Spec directory read through, linked or not: add, edit, or remove a requirement
   file and proof stales. Modes count; removing executable access stales proof. Tests and spec
   stale proof.
@@ -122,11 +122,12 @@ python3 "$GOALRUN" --run "$RUN" --token "$TOKEN" --verify
 
 - Excluded: known dependency, cache, private-run dirs; `.coverage`, `.coverage.*`,
   `coverage.xml`, `junit.xml`.
-- Git-ignored `bin`, `obj`, `target`, `dist`, `build` exclude generated output; tracked files
-  override. Without Git those names never hide source. Keep output in a Git-ignored build path
-  or a recognized cache.
-- Directory deliverable: baseline authoritative files. An unchanged ignored ordinary file is not
-  shipped.
+- Git-ignored paths are excluded (`.gitignore` at any depth, `info/exclude`, global excludes):
+  tool caches a background hook rewrites cannot stale a proof. Tracked files override. Still
+  inputs when ignored: `.env`, `.env.*`, and the gitignore-syntax patterns in `.goalrun-include`
+  at the workspace root (an ordinary input itself, so editing it stales proofs). Without Git
+  nothing is ignored. Keep output in a Git-ignored path or a recognized cache.
+- Directory deliverable: baseline authoritative files.
 - No deliverable under an excluded output, cache, or private path. Ordinary authoritative path,
   or track it before `init`. Do not reset the baseline.
 - Init saves omitted file/subtree boundaries. Later staging or ignore edits are not new work.

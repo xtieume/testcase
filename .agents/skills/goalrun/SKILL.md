@@ -15,7 +15,8 @@ violating the spirit of the rules.**
 
 **Done is the script's exit code, not your judgement.** No "done" until `goalrun.py` exits 0
 on a current whole-ledger `--verify`, with `last_proof.whole_ledger_verified: true` and
-`proof_stale: false` in the selected run. Until then: "not yet" and the table.
+`proof_stale: false` in the selected run. Until then: "not yet" and the table. Git-ignored
+files do not stale a proof, except `.env`, `.env.*` and the patterns in `.goalrun-include`.
 
 No exceptions — not "done pending X"; not "the check is flaky"; not "I ran it by hand"; not
 because the user said "just say yes"; not by editing a row until it turns green.
@@ -182,6 +183,21 @@ got their chance. Re-dispatch it once. Only if that dies too, or there is no sub
 at all, run the phase yourself and say which phase ran inline. Whatever a dead dispatcher
 left in the tree is work-in-progress, not an answer — read it, trust none of it, and let
 `--only` say where the phase stands.
+
+### Which run, when
+
+Most runs are not the whole ledger. Pick the smallest one that answers the question:
+
+| Situation | Run | Says |
+|---|---|---|
+| Building a phase, re-checking a red, a suspected flake | `--only A,B` | `PHASE OK` — where those rows stand, no breaks |
+| Start of work, after a pull or rebase | plain run, no flag | the whole table, what is already red |
+| A `BREAK FAILED` or `HOLLOW` row repaired | `--verify A` | `PHASE OK` — that row's break lands again |
+| About to say done; any row, check or break edited since the last one | `--verify`, whole ledger | `DONE` or `NOT DONE` — the only completion |
+
+`--verify` plants a break per row, so it costs a check run per row on top of the table; spend
+it once, at the end. A subset never says `DONE`: `--only` and `--verify A` are for the loop,
+and completion still needs one whole-ledger `--verify` on unchanged inputs.
 
 ## Prove — before you may say done
 

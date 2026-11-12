@@ -28,8 +28,8 @@ if an authoritative file under it was added, removed or changed. `touch` counts 
 absolute paths and `..` never count. Else `FAIL — deliverable not shipped`. Work finished before the run has no deliverable to
 name: nothing can differ from a baseline that already contains it.
 
-Ordinary ignored files are authoritative inputs. A deliverable in an excluded generated, cache,
-or private path fails and is not new: use an ordinary source path, or track that target before
+Git-ignored files are not inputs unless `.env`, `.env.*` or listed in `.goalrun-include`. A deliverable in an
+excluded ignored, generated, cache, or private path fails and is not new: use an ordinary source path, or track that target before
 `init`. Do not reset the baseline. Directory comparisons use the baseline selection, including
 original tracked overrides, so an excluded generated sibling is not shipped. Init saves omitted
 file/subtree boundaries and the ignore rules then in effect (`.gitignore` files,

@@ -401,7 +401,11 @@ async function downloadPage(page, url, idx, total) {
 
   const { rm, spaceId: chunkSpaceId } = await fetchRecordMap(page, pid);
   const root = unwrap(rm.block[pid]);
-  if (!root) { log(`[${idx}/${total}] FAIL no root block: ${url}`); return; }
+  if (!root) {
+    // an expired session gets the login page, and the API answers it with nothing
+    const hint = /login|signin/.test(page.url()) ? ' — session expired: run scripts/agent-browser.sh --headed and sign in' : ' (not signed in? scripts/agent-browser.sh --headed)';
+    log(`[${idx}/${total}] FAIL no root block: ${url}${hint}`); return;
+  }
 
   setPageContext(rm, url.split('#')[0]);
 

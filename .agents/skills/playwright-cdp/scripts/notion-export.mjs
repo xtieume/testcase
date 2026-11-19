@@ -8,7 +8,7 @@
 import { chromium } from 'playwright-core';
 import fs from 'fs';
 import path from 'path';
-import { readUrls } from './doc.mjs';
+import { readUrls, sessionHint } from './doc.mjs';
 import { execFileSync } from 'child_process';
 
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -117,8 +117,8 @@ async function exportOne(page, url, idx, total) {
     return { error: 'export task timed out after 3 minutes', title };
   }, { pid: pageId, recursive: RECURSIVE });
 
-  if (res.error) { log(`[${idx}/${total}] FAIL ${res.title || url}: ${res.error}`); return false; }
-  if (!res.url) { log(`[${idx}/${total}] FAIL ${url}: no export URL`); return false; }
+  if (res.error) { log(`[${idx}/${total}] FAIL ${res.title || url}: ${res.error}${sessionHint(page)}`); return false; }
+  if (!res.url) { log(`[${idx}/${total}] FAIL ${url}: no export URL${sessionHint(page)}`); return false; }
 
   // Download through the browser context so the signed URL keeps its session.
   const resp = await page.request.get(res.url);

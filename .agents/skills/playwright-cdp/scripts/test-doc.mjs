@@ -88,4 +88,11 @@ assert.strictEqual(w2.comments, null);
 assert.ok(!fsp.existsSync(pathp.join(dir, 'Bare.comments.md')));
 
 fsp.rmSync(dir, { recursive: true, force: true });
+
+// only Notion's login path means an expired session, not a page slug containing the word
+const { sessionHint } = await import('./doc.mjs');
+const at = (u) => sessionHint({ url: () => u });
+assert.match(at('https://www.notion.so/login?from=x'), /--headed/);
+assert.strictEqual(at('https://www.notion.so/ws/SSO-signin-redesign-abc'), '');
+assert.strictEqual(at('about:blank'), '');
 console.log('ok (doc)');

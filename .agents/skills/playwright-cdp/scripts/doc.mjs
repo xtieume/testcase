@@ -121,6 +121,16 @@ export function readUrls(arg) {
   return arg ? [arg] : [];
 }
 
+// An expired session lands on Notion's login page, where the API answers with
+// errors or nothing. Only the path counts: a page slug can contain "login" too.
+export function sessionHint(page) {
+  let where = '';
+  try { where = new URL(page.url()).pathname; } catch {}
+  return /^\/(login|signin)(\/|$)/.test(where)
+    ? ' — session expired: run scripts/agent-browser.sh --headed and sign in'
+    : '';
+}
+
 // Attaching fails outright when the browser has no page open - closing the last
 // window leaves the process alive with an empty target list - so make one first.
 export async function connectCdp(port) {

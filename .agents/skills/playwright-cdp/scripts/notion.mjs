@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls, connectCdp } from './doc.mjs';
+import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls, connectCdp, sessionHint } from './doc.mjs';
 
 // usage: node download.mjs <urls-file> <out-dir> [cdp-port]
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -402,8 +402,7 @@ async function downloadPage(page, url, idx, total) {
   const { rm, spaceId: chunkSpaceId } = await fetchRecordMap(page, pid);
   const root = unwrap(rm.block[pid]);
   if (!root) {
-    // an expired session gets the login page, and the API answers it with nothing
-    const hint = /login|signin/.test(page.url()) ? ' — session expired: run scripts/agent-browser.sh --headed and sign in' : ' (not signed in? scripts/agent-browser.sh --headed)';
+    const hint = sessionHint(page) || ' (not shared with this account, or signed out: scripts/agent-browser.sh --headed)';
     log(`[${idx}/${total}] FAIL no root block: ${url}${hint}`); return;
   }
 

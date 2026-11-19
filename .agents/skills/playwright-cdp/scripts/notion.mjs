@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls, connectCdp } from './doc.mjs';
+import { commentBook, writeDoc, saveAsset, docName, stamp, readUrls, connectCdp, sessionHint } from './doc.mjs';
 
 // usage: node download.mjs <urls-file> <out-dir> [cdp-port]
 const URLS_FILE = process.argv[2] || './urls.txt';
@@ -401,7 +401,10 @@ async function downloadPage(page, url, idx, total) {
 
   const { rm, spaceId: chunkSpaceId } = await fetchRecordMap(page, pid);
   const root = unwrap(rm.block[pid]);
-  if (!root) { log(`[${idx}/${total}] FAIL no root block: ${url}`); return; }
+  if (!root) {
+    const hint = sessionHint(page) || ' (not shared with this account, or signed out: scripts/agent-browser.sh --headed)';
+    log(`[${idx}/${total}] FAIL no root block: ${url}${hint}`); return;
+  }
 
   setPageContext(rm, url.split('#')[0]);
 

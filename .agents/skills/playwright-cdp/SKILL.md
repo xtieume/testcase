@@ -48,16 +48,19 @@ Skipping either one wastes an hour. Both were verified by failure on macOS.
 scripts/agent-browser.sh          # headless; opens a window only on first run
 ```
 
-It launches the Chrome for Testing that ships with Playwright against a profile under `~/.cache/playwright-cdp-profile`, so **the everyday browser is never touched**. The first run shows a window: sign in to Notion and Slack there once. Every run after that is headless and the session persists.
+It launches its own Chrome for Testing against its own profile, so **the everyday browser is never touched**. The first run shows a window: sign in to Notion and Slack there once. Every run after that is headless and the session persists.
+
+The browser lives in `~/.cache/playwright-cdp/browsers`, not the shared Playwright cache that other tools and cache cleanups empty. Its version is pinned to one Playwright release (`~/.cache/playwright-cdp/playwright-version`, 1.65.1 by default), because another Chromium may not read the cookies the old one wrote. Missing → the script copies that revision from the shared cache when it is there, else installs it (`installing Chrome for Testing ...`, needs `npx` and the network). The profile is `~/.cache/playwright-cdp-profile` when it exists (it holds the current logins), else `~/.cache/playwright-cdp/profile`. A profile last opened by another browser version gets a warning that the logins may be gone; one opened by a *newer* version is refused, since an older browser would lose the session.
 
 | Need | Command |
 |---|---|
-| Sign in again (session expired) | `scripts/agent-browser.sh --headed` |
+| Sign in again (session expired, an extract hits the login screen) | `scripts/agent-browser.sh --headed` |
+| Move to the latest browser (needs the network; may need a re-login) | `scripts/agent-browser.sh --stop && scripts/agent-browser.sh --upgrade` |
 | Stop it | `scripts/agent-browser.sh --stop` |
 | Throw the profile away (loses the login) | `scripts/agent-browser.sh --reset` |
 | Check CDP is up | `curl -s http://127.0.0.1:9222/json/version` |
 
-No automation browser on the machine → `npx playwright install chromium`, or point `CDP_BROWSER_BIN` at a Chromium-family binary.
+Overrides: `PLAYWRIGHT_CDP_HOME` (browser directory), `CDP_PROFILE_DIR` (profile), `CDP_BROWSER_BIN` (any Chromium-family binary; skips the install, and `--upgrade` refuses), `NOTION_HEADED=1` (same as `--headed`).
 
 `scripts/start-browser.sh [brave|chrome|edge]` remains for the one case the owned profile cannot cover: a page reachable only from the personal profile. It **closes the user's browser** (the profile lock blocks the debug port) — say so before running it. If it reports `remote debugging requires a non-default data directory`, that build refuses CDP on its default profile dir; Brave commonly works where Chrome refuses.
 
